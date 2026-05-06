@@ -80,12 +80,42 @@ st.markdown("""
 st_autorefresh(interval=10000, key="refresh")
 
 # CONFIG
-NIFTY_LOT = 65
 CAPITAL   = 20_000
 MAX_LOSS  = 500
 DAILY_TGT = 1_000
 
-st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
+# ── INDEX SELECTOR ──
+col_idx, col_title = st.columns([2, 5])
+with col_idx:
+    selected_index = st.selectbox(
+        "📊 Index", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="selected_index_key",
+        help="Switch between Nifty 50, Bank Nifty, and Fin Nifty"
+    )
+with col_title:
+    st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
+
+# Reset state when index changes
+if "last_index" not in st.session_state:
+    st.session_state.last_index = selected_index
+if st.session_state.last_index != selected_index:
+    st.session_state.last_index     = selected_index
+    st.session_state.signal_buffer  = []
+    st.session_state.pcr_history    = []
+    st.session_state.spot_history   = []
+    st.session_state.prev_df        = None
+    st.session_state.last_signal    = "WAIT"
+    st.session_state.last_played    = "WAIT"
+
+# Index config
+INDEX_CONFIG = {
+    "NIFTY":     {"step": 50,  "lot": 75,  "range": 300},
+    "BANKNIFTY": {"step": 100, "lot": 30,  "range": 600},
+    "FINNIFTY":  {"step": 50,  "lot": 65,  "range": 300},
+}
+IDX       = INDEX_CONFIG[selected_index]
+IDX_STEP  = IDX["step"]
+IDX_LOT   = IDX["lot"]
+IDX_RANGE = IDX["range"]
 
 # FILES
 today        = datetime.datetime.now().strftime('%Y-%m-%d')
@@ -118,26 +148,26 @@ if "signal_buffer" not in st.session_state: st.session_state.signal_buffer = []
 
 # FETCH
 @st.cache_data(ttl=8)
-def get_data():
+def get_data(index_name):
     try:
         n = NSELive()
-        d = n.index_option_chain("NIFTY")
+        d = n.index_option_chain(index_name)
         if "records" in d: return d
     except: pass
     return None
 
-data = get_data()
+data = get_data(selected_index)
 if data is None:
     st.error("❌ NSE data unavailable. Retrying..."); st.stop()
 
 records = data["records"]["data"]
 spot    = data["records"]["underlyingValue"]
-atm     = round(spot / 50) * 50
+atm     = round(spot / IDX_STEP) * IDX_STEP
 
 rows = []
 for item in records:
     s = item["strikePrice"]
-    if abs(s - atm) <= 300:
+    if abs(s - atm) <= IDX_RANGE:
         ce = item.get("CE", {}); pe = item.get("PE", {})
         rows.append({"Strike":s,"CE LTP":ce.get("lastPrice",0),"CE OI":ce.get("openInterest",0),
                      "PE LTP":pe.get("lastPrice",0),"PE OI":pe.get("openInterest",0)})
@@ -261,9 +291,9 @@ def calc_trade(ep):
     tgt_u = round(ep * 1.0,  2)
     sl_p  = round(ep - sl_u, 2)
     tgt_p = round(ep + tgt_u, 2)
-    qty   = max(NIFTY_LOT, (int(MAX_LOSS / sl_u) // NIFTY_LOT) * NIFTY_LOT) if sl_u > 0 else NIFTY_LOT
+    qty   = max(IDX_LOT, (int(MAX_LOSS / sl_u) // IDX_LOT) * IDX_LOT) if sl_u > 0 else IDX_LOT
     if ep * qty > CAPITAL:
-        qty = max(NIFTY_LOT, (int(CAPITAL / ep) // NIFTY_LOT) * NIFTY_LOT)
+        qty = max(IDX_LOT, (int(CAPITAL / ep) // IDX_LOT) * IDX_LOT)
     return qty, sl_p, tgt_p, round(sl_u*qty,2), round(tgt_u*qty,2)
 
 # ── CHECK OPEN TRADES FOR SL / TARGET HIT ──
@@ -311,8 +341,8 @@ if changed:
 # KPI CARDS — CSS Grid (auto-wraps on mobile)
 st.markdown(f"""
 <div class="kpi-grid">
-  <div class="card"><div class="label">SPOT</div><div class="kpi">{round(spot,2)}</div></div>
-  <div class="card"><div class="label">ATM Strike</div><div class="kpi">{atm_actual}</div></div>
+  <div class="card"><div class="label">{selected_index} SPOT</div><div class="kpi">{round(spot,2)}</div></div>
+  <div class="card"><div class="label">{selected_index} ATM</div><div class="kpi">{atm_actual}</div></div>
   <div class="card"><div class="label">PCR</div><div class="kpi">{pcr}</div></div>
   <div class="card"><div class="label">BIAS</div><div class="kpi">{bias}</div></div>
   <div class="card"><div class="label">SUPPORT</div><div class="kpi">{support}</div></div>
