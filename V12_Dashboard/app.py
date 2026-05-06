@@ -6,18 +6,59 @@ import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 from jugaad_data.nse import NSELive
 
-st.set_page_config(layout="wide", page_title="V12 PRO MAX Dashboard")
+st.set_page_config(page_title="V12 PRO MAX Dashboard", page_icon="🧠")
 st.markdown("""
 <style>
-.card{padding:16px;border-radius:14px;background:#111827;color:white;box-shadow:0 4px 14px rgba(0,0,0,.3);margin-bottom:8px;}
-.kpi{font-size:26px;font-weight:700;}
-.label{color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em;}
+/* ─── BASE ─── */
+* { box-sizing: border-box; }
+.card{
+    padding:14px;border-radius:14px;background:#111827;
+    color:white;box-shadow:0 4px 14px rgba(0,0,0,.3);margin-bottom:8px;
+}
+.kpi{font-size:22px;font-weight:700;word-break:break-word;}
+.label{color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}
 .signal-green{background:linear-gradient(135deg,#064E3B,#065F46);}
-.signal-red{background:linear-gradient(135deg,#7F1D1D,#991B1B);}
+.signal-red  {background:linear-gradient(135deg,#7F1D1D,#991B1B);}
 .signal-yellow{background:linear-gradient(135deg,#78350F,#92400E);}
-.trap-alert{background:#DC2626;color:white;font-weight:bold;padding:10px;border-radius:8px;text-align:center;margin-bottom:15px;}
+.trap-alert{background:#DC2626;color:white;font-weight:bold;padding:12px;
+            border-radius:8px;text-align:center;margin-bottom:15px;font-size:14px;}
 .pnl-green{color:#34D399;font-weight:700;}
-.pnl-red{color:#F87171;font-weight:700;}
+.pnl-red  {color:#F87171;font-weight:700;}
+
+/* ─── RESPONSIVE GRID ─── */
+.kpi-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
+    gap:8px;margin-bottom:8px;
+}
+.filter-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+    gap:8px;margin-bottom:8px;
+}
+.tracker-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+    gap:8px;margin-bottom:8px;
+}
+.pos-grid{
+    display:flex;flex-wrap:wrap;gap:20px;
+}
+.pos-item{min-width:100px;flex:1 1 120px;}
+
+/* ─── MOBILE ─── */
+@media(max-width:640px){
+    h1{font-size:20px !important;}
+    h2{font-size:18px !important;}
+    .kpi{font-size:18px;}
+    .label{font-size:10px;}
+    .kpi-grid{grid-template-columns:repeat(2,1fr);}
+    .filter-grid{grid-template-columns:repeat(2,1fr);}
+    .tracker-grid{grid-template-columns:repeat(2,1fr);}
+    .pos-item{min-width:80px;}
+    .card{padding:10px;}
+    [data-testid="stDataFrame"]{font-size:12px;}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -242,22 +283,43 @@ for trade in st.session_state.trade_log:
 if changed:
     save_log()
 
-# KPI CARDS
-c1,c2,c3,c4,c5,c6 = st.columns(6)
-for col,lbl,val in [(c1,"SPOT",round(spot,2)),(c2,"ATM Strike",atm_actual),(c3,"PCR",pcr),
-                    (c4,"BIAS",bias),(c5,"SUPPORT",support),(c6,"RESISTANCE",resistance)]:
-    col.markdown(f'<div class="card"><div class="label">{lbl}</div><div class="kpi">{val}</div></div>', unsafe_allow_html=True)
+# KPI CARDS — CSS Grid (auto-wraps on mobile)
+st.markdown(f"""
+<div class="kpi-grid">
+  <div class="card"><div class="label">SPOT</div><div class="kpi">{round(spot,2)}</div></div>
+  <div class="card"><div class="label">ATM Strike</div><div class="kpi">{atm_actual}</div></div>
+  <div class="card"><div class="label">PCR</div><div class="kpi">{pcr}</div></div>
+  <div class="card"><div class="label">BIAS</div><div class="kpi">{bias}</div></div>
+  <div class="card"><div class="label">SUPPORT</div><div class="kpi">{support}</div></div>
+  <div class="card"><div class="label">RESISTANCE</div><div class="kpi">{resistance}</div></div>
+</div>
+""", unsafe_allow_html=True)
 
-# FILTER STATUS ROW
-f1,f2,f3,f4 = st.columns(4)
-tw_color  = "#34D399" if in_window   else "#F87171"
-oi_color  = "#34D399" if oi_active   else "#F87171"
-vw_color  = "#34D399" if spot_vs_vwap == "ABOVE" else "#F87171"
-pm_color  = "#34D399" if pcr_momentum != "FLAT"  else "#F59E0B"
-f1.markdown(f'<div class="card" style="padding:10px;"><div class="label">⏰ Time Filter</div><div style="color:{tw_color};font-weight:700;">{"✅ IN WINDOW" if in_window else "❌ CLOSED"}</div></div>', unsafe_allow_html=True)
-f2.markdown(f'<div class="card" style="padding:10px;"><div class="label">📊 OI Activity</div><div style="color:{oi_color};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ LOW OI"}</div></div>', unsafe_allow_html=True)
-f3.markdown(f'<div class="card" style="padding:10px;"><div class="label">📈 Spot vs VWAP ({vwap_proxy})</div><div style="color:{vw_color};font-weight:700;">{spot_vs_vwap}</div></div>', unsafe_allow_html=True)
-f4.markdown(f'<div class="card" style="padding:10px;"><div class="label">🔄 PCR Momentum</div><div style="color:{pm_color};font-weight:700;">{pcr_momentum}</div></div>', unsafe_allow_html=True)
+# FILTER STATUS — CSS Grid
+tw_color = "#34D399" if in_window   else "#F87171"
+oi_color = "#34D399" if oi_active   else "#F87171"
+vw_color = "#34D399" if spot_vs_vwap=="ABOVE" else "#F87171"
+pm_color = "#34D399" if pcr_momentum!="FLAT"  else "#F59E0B"
+st.markdown(f"""
+<div class="filter-grid">
+  <div class="card" style="padding:10px;">
+    <div class="label">⏰ Time Filter</div>
+    <div style="color:{tw_color};font-weight:700;">{"✅ IN WINDOW" if in_window else "❌ CLOSED"}</div>
+  </div>
+  <div class="card" style="padding:10px;">
+    <div class="label">📊 OI Activity</div>
+    <div style="color:{oi_color};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ LOW OI"}</div>
+  </div>
+  <div class="card" style="padding:10px;">
+    <div class="label">📈 Spot vs VWAP ({vwap_proxy})</div>
+    <div style="color:{vw_color};font-weight:700;">{spot_vs_vwap}</div>
+  </div>
+  <div class="card" style="padding:10px;">
+    <div class="label">🔄 PCR Momentum</div>
+    <div style="color:{pm_color};font-weight:700;">{pcr_momentum}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 st.write("")
 
@@ -316,36 +378,36 @@ else:
         st.session_state.last_played = final_signal
 
 # INVESTMENT TRACKER
-tracker_col, reset_col = st.columns([5, 1])
-with tracker_col:
+tracker_hdr, reset_col = st.columns([5,1])
+with tracker_hdr:
     st.subheader("💼 Investment Tracker (₹20,000 Capital)")
 with reset_col:
     st.write("")
-    if st.button("🔄 Reset", type="primary", help="Clear all trades and start fresh"):
+    if st.button("🔄 Reset", type="primary", help="Clear all trades and start fresh", use_container_width=True):
         st.session_state.trade_log     = []
         st.session_state.last_signal   = "WAIT"
         st.session_state.last_played   = "WAIT"
         st.session_state.signal_buffer = []
-        # Delete today's CSV
-        for f in [log_file]:
-            if os.path.exists(f):
-                os.remove(f)
+        if os.path.exists(log_file): os.remove(log_file)
         st.success("✅ Tracker reset! Starting fresh.")
         st.rerun()
 
-log_df       = pd.DataFrame(st.session_state.trade_log) if st.session_state.trade_log else pd.DataFrame(columns=LOG_COLS)
-closed_only  = log_df[log_df["Status"]=="CLOSED"] if not log_df.empty else pd.DataFrame()
-realized_pnl = closed_only["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce").sum() if not closed_only.empty else 0
-running_cap  = CAPITAL + realized_pnl
-progress     = max(0.0, min(1.0, realized_pnl / DAILY_TGT))
-pc           = "pnl-green" if realized_pnl >= 0 else "pnl-red"
+log_df      = pd.DataFrame(st.session_state.trade_log) if st.session_state.trade_log else pd.DataFrame(columns=LOG_COLS)
+closed_only = log_df[log_df["Status"]=="CLOSED"] if not log_df.empty else pd.DataFrame()
+realized_pnl= closed_only["Actual P&L ₹"].apply(pd.to_numeric,errors="coerce").sum() if not closed_only.empty else 0
+running_cap = CAPITAL + realized_pnl
+progress    = max(0.0, min(1.0, realized_pnl / DAILY_TGT))
+pc          = "pnl-green" if realized_pnl >= 0 else "pnl-red"
 
-t1,t2,t3,t4,t5 = st.columns(5)
-t1.markdown(f'<div class="card"><div class="label">Capital</div><div class="kpi">₹{CAPITAL:,}</div></div>', unsafe_allow_html=True)
-t2.markdown(f'<div class="card"><div class="label">Closed Trades</div><div class="kpi">{len(closed_only)}</div></div>', unsafe_allow_html=True)
-t3.markdown(f'<div class="card"><div class="label">Realized P&L</div><div class="kpi {pc}">₹{realized_pnl:,.0f}</div></div>', unsafe_allow_html=True)
-t4.markdown(f'<div class="card"><div class="label">Running Capital</div><div class="kpi">₹{running_cap:,.0f}</div></div>', unsafe_allow_html=True)
-t5.markdown(f'<div class="card"><div class="label">Daily Progress</div><div class="kpi">{round(progress*100)}%</div></div>', unsafe_allow_html=True)
+st.markdown(f"""
+<div class="tracker-grid">
+  <div class="card"><div class="label">Capital</div><div class="kpi">₹{CAPITAL:,}</div></div>
+  <div class="card"><div class="label">Closed Trades</div><div class="kpi">{len(closed_only)}</div></div>
+  <div class="card"><div class="label">Realized P&L</div><div class="kpi {pc}">₹{realized_pnl:,.0f}</div></div>
+  <div class="card"><div class="label">Running Capital</div><div class="kpi">₹{running_cap:,.0f}</div></div>
+  <div class="card"><div class="label">Daily Progress</div><div class="kpi">{round(progress*100)}%</div></div>
+</div>
+""", unsafe_allow_html=True)
 st.progress(progress, text=f"₹{realized_pnl:,.0f} / ₹{DAILY_TGT:,} daily target")
 
 
