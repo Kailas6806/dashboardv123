@@ -1,0 +1,17 @@
+# Secrets — never commit these
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Trade CSV logs
+trade_log_*.csv
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
