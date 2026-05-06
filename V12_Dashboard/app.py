@@ -1,567 +1,400 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import os
-import requests
+import datetime, os, requests
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 from jugaad_data.nse import NSELive
 
-# ─── TELEGRAM ALERT ───
-def send_telegram(msg: str):
-    """Send alert to Telegram. Set TELEGRAM_TOKEN & TELEGRAM_CHAT_ID in st.secrets."""
+# ── TELEGRAM ──
+def send_telegram(msg):
     try:
-        token   = st.secrets.get("TELEGRAM_TOKEN", "")
-        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
-        if not token or not chat_id:
-            return  # silently skip if not configured
-        url  = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, data={"chat_id": chat_id, "text": msg,
-                                  "parse_mode": "Markdown"}, timeout=5)
-    except Exception:
-        pass  # never crash dashboard due to notification failure
+        token   = st.secrets.get("TELEGRAM_TOKEN","")
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID","")
+        if not token or not chat_id: return
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                      data={"chat_id":chat_id,"text":msg,"parse_mode":"Markdown"},timeout=5)
+    except: pass
 
-st.set_page_config(page_title="V12 PRO MAX Dashboard", page_icon="🧠")
+st.set_page_config(page_title="V12 PRO MAX", page_icon="🧠", layout="wide")
 st.markdown("""
 <style>
-/* ─── BASE ─── */
-* { box-sizing: border-box; }
-.card{
-    padding:14px;border-radius:14px;background:#111827;
-    color:white;box-shadow:0 4px 14px rgba(0,0,0,.3);margin-bottom:8px;
-}
-.kpi{font-size:22px;font-weight:700;word-break:break-word;}
+*{box-sizing:border-box;}
+.card{padding:12px;border-radius:12px;background:#111827;color:white;
+      box-shadow:0 4px 14px rgba(0,0,0,.3);margin-bottom:8px;}
+.kpi{font-size:20px;font-weight:700;word-break:break-word;}
 .label{color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:.05em;}
 .signal-green{background:linear-gradient(135deg,#064E3B,#065F46);}
-.signal-red  {background:linear-gradient(135deg,#7F1D1D,#991B1B);}
+.signal-red{background:linear-gradient(135deg,#7F1D1D,#991B1B);}
 .signal-yellow{background:linear-gradient(135deg,#78350F,#92400E);}
-.trap-alert{background:#DC2626;color:white;font-weight:bold;padding:12px;
-            border-radius:8px;text-align:center;margin-bottom:15px;font-size:14px;}
+.trap-alert{background:#DC2626;color:white;font-weight:bold;padding:10px;
+            border-radius:8px;text-align:center;margin-bottom:12px;font-size:13px;}
 .pnl-green{color:#34D399;font-weight:700;}
-.pnl-red  {color:#F87171;font-weight:700;}
-
-/* ─── RESPONSIVE GRID ─── */
-.kpi-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
-    gap:8px;margin-bottom:8px;
-}
-.filter-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
-    gap:8px;margin-bottom:8px;
-}
-.tracker-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
-    gap:8px;margin-bottom:8px;
-}
-.pos-grid{
-    display:flex;flex-wrap:wrap;gap:20px;
-}
-.pos-item{min-width:100px;flex:1 1 120px;}
-
-/* ─── MOBILE ─── */
+.pnl-red{color:#F87171;font-weight:700;}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:8px;}
+.filter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:8px;}
+.tracker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:8px;}
 @media(max-width:640px){
-    h1{font-size:20px !important;}
-    h2{font-size:18px !important;}
-    .kpi{font-size:18px;}
-    .label{font-size:10px;}
-    .kpi-grid{grid-template-columns:repeat(2,1fr);}
-    .filter-grid{grid-template-columns:repeat(2,1fr);}
-    .tracker-grid{grid-template-columns:repeat(2,1fr);}
-    .pos-item{min-width:80px;}
-    .card{padding:10px;}
-    [data-testid="stDataFrame"]{font-size:12px;}
+  .kpi{font-size:16px;}.kpi-grid,.filter-grid,.tracker-grid{grid-template-columns:repeat(2,1fr);}
+  .card{padding:8px;}[data-testid="stDataFrame"]{font-size:11px;}
 }
 </style>
 """, unsafe_allow_html=True)
 
 st_autorefresh(interval=10000, key="refresh")
 
-# CONFIG
+# ── CONFIG ──
 CAPITAL   = 20_000
 MAX_LOSS  = 500
 DAILY_TGT = 1_000
+IST       = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
-# ── INDEX SELECTOR ──
-col_idx, col_title = st.columns([2, 5])
-with col_idx:
-    selected_index = st.selectbox(
-        "📊 Index", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="selected_index_key",
-        help="Switch between Nifty 50, Bank Nifty, and Fin Nifty"
-    )
-with col_title:
-    st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
-
-# Reset state when index changes
-if "last_index" not in st.session_state:
-    st.session_state.last_index = selected_index
-if st.session_state.last_index != selected_index:
-    st.session_state.last_index     = selected_index
-    st.session_state.signal_buffer  = []
-    st.session_state.pcr_history    = []
-    st.session_state.spot_history   = []
-    st.session_state.prev_df        = None
-    st.session_state.last_signal    = "WAIT"
-    st.session_state.last_played    = "WAIT"
-
-# Index config
 INDEX_CONFIG = {
-    "NIFTY":     {"step": 50,  "lot": 75,  "range": 300},
-    "BANKNIFTY": {"step": 100, "lot": 30,  "range": 600},
-    "FINNIFTY":  {"step": 50,  "lot": 65,  "range": 300},
+    "NIFTY":     {"step":50,  "lot":75,  "rng":300},
+    "BANKNIFTY": {"step":100, "lot":30,  "rng":600},
+    "FINNIFTY":  {"step":50,  "lot":65,  "rng":300},
 }
-IDX       = INDEX_CONFIG[selected_index]
-IDX_STEP  = IDX["step"]
-IDX_LOT   = IDX["lot"]
-IDX_RANGE = IDX["range"]
 
-# FILES
-today        = datetime.datetime.now().strftime('%Y-%m-%d')
-log_file     = f"trade_log_{today}.csv"
-
-LOG_COLS = ["Entry Time","Exit Time","Signal","Spot","Strike",
+LOG_COLS = ["Entry Time","Exit Time","Index","Signal","Spot","Strike",
             "Entry Price","Live Price","Exit Price",
             "Stop Loss","Target","Qty","Max Loss ₹","Target P&L ₹",
             "Actual P&L ₹","Status","Result"]
 
-def load_log():
-    if os.path.exists(log_file):
-        df = pd.read_csv(log_file)
-        for c in LOG_COLS:
-            if c not in df.columns:
-                df[c] = None
-        return df[LOG_COLS].to_dict("records")
-    return []
+st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
 
-def save_log():
-    if st.session_state.trade_log:
-        pd.DataFrame(st.session_state.trade_log)[LOG_COLS].to_csv(log_file, index=False)
-
-# SESSION STATE
-if "prev_df"     not in st.session_state: st.session_state.prev_df     = None
-if "trade_log"   not in st.session_state: st.session_state.trade_log   = load_log()
-if "last_signal" not in st.session_state: st.session_state.last_signal = "WAIT"
-if "last_played" not in st.session_state: st.session_state.last_played = "WAIT"
-if "signal_buffer" not in st.session_state: st.session_state.signal_buffer = []
-
-# FETCH
+# ── FETCH (cached per index) ──
 @st.cache_data(ttl=8)
-def get_data(index_name):
+def get_data(idx_name):
     try:
-        n = NSELive()
-        d = n.index_option_chain(index_name)
+        d = NSELive().index_option_chain(idx_name)
         if "records" in d: return d
     except: pass
     return None
 
-data = get_data(selected_index)
-if data is None:
-    st.error("❌ NSE data unavailable. Retrying..."); st.stop()
-
-records = data["records"]["data"]
-spot    = data["records"]["underlyingValue"]
-atm     = round(spot / IDX_STEP) * IDX_STEP
-
-rows = []
-for item in records:
-    s = item["strikePrice"]
-    if abs(s - atm) <= IDX_RANGE:
-        ce = item.get("CE", {}); pe = item.get("PE", {})
-        rows.append({"Strike":s,"CE LTP":ce.get("lastPrice",0),"CE OI":ce.get("openInterest",0),
-                     "PE LTP":pe.get("lastPrice",0),"PE OI":pe.get("openInterest",0)})
-
-df = pd.DataFrame(rows).sort_values("Strike").reset_index(drop=True)
-if df.empty: st.error("No data. Market may be closed."); st.stop()
-
-df["dist"]   = (df["Strike"] - spot).abs()
-atm_actual   = int(df.loc[df["dist"].idxmin(), "Strike"])
-atm_row      = df[df["Strike"] == atm_actual].iloc[0]
-
-# OI CHANGE
-if st.session_state.prev_df is not None:
-    merged = pd.merge(df, st.session_state.prev_df, on="Strike", how="left", suffixes=("","_p"))
-    df["CE OI Δ"] = (merged["CE OI"] - merged["CE OI_p"]).fillna(0)
-    df["PE OI Δ"] = (merged["PE OI"] - merged["PE OI_p"]).fillna(0)
-else:
-    df["CE OI Δ"] = 0; df["PE OI Δ"] = 0
-st.session_state.prev_df = df[["Strike","CE OI","PE OI"]].copy()
-
-# PCR / BIAS
-tot_ce = df["CE OI"].sum(); tot_pe = df["PE OI"].sum()
-pcr    = round(tot_pe/tot_ce, 2) if tot_ce else 0
-bias   = "Bullish" if pcr>1.2 else ("Bearish" if pcr<0.8 else "Neutral")
-
-resistance = int(df.loc[df["CE OI"].idxmax(),"Strike"])
-support    = int(df.loc[df["PE OI"].idxmax(),"Strike"])
-ce_build   = int(df.loc[df["CE OI Δ"].idxmax(),"Strike"])
-pe_build   = int(df.loc[df["PE OI Δ"].idxmax(),"Strike"])
-
-# ══════════════════════════════════════════
-# 🔰 FILTER 1 — TIME WINDOW (9:30 AM – 2:30 PM)
-# ══════════════════════════════════════════
-IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-now_ist    = datetime.datetime.now(IST)
-now_time   = now_ist.time()
-mkt_open   = datetime.time(9, 30)
-mkt_close  = datetime.time(14, 30)
-in_window  = mkt_open <= now_time <= mkt_close
-
-# ══════════════════════════════════════════
-# 🔰 FILTER 2 — MIN OI CHANGE THRESHOLD (ignore noise < 500 contracts)
-# ══════════════════════════════════════════
-MIN_OI_CHANGE = 500
-total_ce_delta = df["CE OI Δ"].sum()
-total_pe_delta = df["PE OI Δ"].sum()
-oi_active = abs(total_ce_delta) >= MIN_OI_CHANGE or abs(total_pe_delta) >= MIN_OI_CHANGE
-
-# ══════════════════════════════════════════
-# 🔰 FILTER 3 — PCR MOMENTUM (PCR must be trending, not flat)
-# ══════════════════════════════════════════
-if "pcr_history" not in st.session_state:
-    st.session_state.pcr_history = []
-st.session_state.pcr_history.append(pcr)
-st.session_state.pcr_history = st.session_state.pcr_history[-5:]  # keep last 5
-
-pcr_momentum = "FLAT"
-if len(st.session_state.pcr_history) >= 3:
-    recent = st.session_state.pcr_history
-    if recent[-1] > recent[-3] + 0.05:
-        pcr_momentum = "RISING"   # bullish
-    elif recent[-1] < recent[-3] - 0.05:
-        pcr_momentum = "FALLING"  # bearish
-
-# ══════════════════════════════════════════
-# 🔰 FILTER 4 — VWAP PROXY (rolling spot avg as VWAP approximation)
-# ══════════════════════════════════════════
-if "spot_history" not in st.session_state:
-    st.session_state.spot_history = []
-st.session_state.spot_history.append(spot)
-st.session_state.spot_history = st.session_state.spot_history[-20:]  # ~3 min of data
-
-vwap_proxy   = round(sum(st.session_state.spot_history) / len(st.session_state.spot_history), 2)
-spot_vs_vwap = "ABOVE" if spot > vwap_proxy else "BELOW"
-
-# ══════════════════════════════════════════
-# 🚦 SIGNAL LOGIC (with all filters)
-# ══════════════════════════════════════════
-signal = "WAIT"; confidence = "LOW"; filter_reason = ""
-
-if not in_window:
-    signal = "WAIT"; filter_reason = "⏰ Outside trading hours (9:30–2:30)"
-elif not oi_active:
-    signal = "WAIT"; filter_reason = "📉 OI change too small (noise)"
-elif pe_build > ce_build and spot > support and spot_vs_vwap == "ABOVE" and pcr_momentum in ("RISING","FLAT"):
-    signal = "BUY CE"; confidence = "HIGH"
-elif ce_build > pe_build and spot < resistance and spot_vs_vwap == "BELOW" and pcr_momentum in ("FALLING","FLAT"):
-    signal = "BUY PE"; confidence = "HIGH"
-elif bias == "Neutral":
-    signal = "⚠️ SIDEWAYS"; confidence = "AVOID"
-
-# TRAP
-trap = "NONE"
-if spot > resistance and total_ce_delta > total_pe_delta: trap = "🚨 BULL TRAP"
-elif spot < support and total_pe_delta > total_ce_delta:  trap = "🚨 BEAR TRAP"
-
-# ── SIGNAL CONFIRMATION BUFFER (needs 2/3 refreshes to confirm) ──
-st.session_state.signal_buffer.append(signal)
-st.session_state.signal_buffer = st.session_state.signal_buffer[-3:]
-
-buf = st.session_state.signal_buffer
-if buf.count("BUY CE") >= 2:
-    final_signal = "BUY CE";   final_confidence = "HIGH"
-elif buf.count("BUY PE") >= 2:
-    final_signal = "BUY PE";   final_confidence = "HIGH"
-else:
-    final_signal = "WAIT";     final_confidence = "LOW"
-
-# ── BLOCK NEW SIGNAL IF OPEN TRADE EXISTS (one trade at a time) ──
-open_trade_exists = any(t.get("Status") == "OPEN" for t in st.session_state.trade_log)
-if open_trade_exists and final_signal in ("BUY CE", "BUY PE"):
-    final_signal     = "WAIT"
-    final_confidence = "LOW"
-
-# PRICES
-ce_price = round(float(atm_row["CE LTP"]), 2)
-pe_price = round(float(atm_row["PE LTP"]), 2)
-
-def calc_trade(ep):
-    sl_u  = round(ep * 0.25, 2)
-    tgt_u = round(ep * 1.0,  2)
-    sl_p  = round(ep - sl_u, 2)
-    tgt_p = round(ep + tgt_u, 2)
-    qty   = max(IDX_LOT, (int(MAX_LOSS / sl_u) // IDX_LOT) * IDX_LOT) if sl_u > 0 else IDX_LOT
-    if ep * qty > CAPITAL:
-        qty = max(IDX_LOT, (int(CAPITAL / ep) // IDX_LOT) * IDX_LOT)
+# ── CALC TRADE ──
+def calc_trade(ep, lot):
+    sl_u  = round(ep*0.25,2); tgt_u = round(ep*1.0,2)
+    sl_p  = round(ep-sl_u,2); tgt_p = round(ep+tgt_u,2)
+    qty   = max(lot,(int(MAX_LOSS/sl_u)//lot)*lot) if sl_u>0 else lot
+    if ep*qty>CAPITAL: qty=max(lot,(int(CAPITAL/ep)//lot)*lot)
     return qty, sl_p, tgt_p, round(sl_u*qty,2), round(tgt_u*qty,2)
 
-# ── CHECK OPEN TRADES FOR SL / TARGET HIT ──
-def get_live_price(sig):
-    """Get current option price for an open trade by signal type."""
-    return ce_price if sig == "BUY CE" else pe_price
+# ── PER-INDEX SESSION KEYS ──
+def sk(idx, key): return f"{idx}_{key}"
 
-changed = False
-for trade in st.session_state.trade_log:
-    if trade.get("Status") == "OPEN":
-        lp  = get_live_price(trade.get("Signal",""))
-        sl  = float(trade.get("Stop Loss") or 0)
-        tgt = float(trade.get("Target") or 0)
-        ep  = float(trade.get("Entry Price") or 0)
-        qty = int(trade.get("Qty") or 0)
-        trade["Live Price"] = lp
-        now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-        if lp <= sl:
-            trade["Status"]       = "CLOSED"
-            trade["Result"]       = "🔴 LOSS"
-            trade["Exit Price"]   = lp
-            trade["Exit Time"]    = now_str
-            trade["Actual P&L ₹"] = round((lp - ep) * qty, 2)
-            changed = True
-            send_telegram(
-                f"🔴 *SL HIT — {trade.get('Signal')}*\n"
-                f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`"
-            )
-        elif lp >= tgt:
-            trade["Status"]       = "CLOSED"
-            trade["Result"]       = "🟢 WIN"
-            trade["Exit Price"]   = lp
-            trade["Exit Time"]    = now_str
-            trade["Actual P&L ₹"] = round((lp - ep) * qty, 2)
-            changed = True
-            send_telegram(
-                f"🟢 *TARGET HIT — {trade.get('Signal')}*\n"
-                f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`"
-            )
-if changed:
-    save_log()
+def init_state(idx):
+    for k,v in [("trade_log",[]),("last_signal","WAIT"),("last_played","WAIT"),
+                ("signal_buffer",[]),("pcr_history",[]),("spot_history",[]),("prev_df",None)]:
+        if sk(idx,k) not in st.session_state:
+            st.session_state[sk(idx,k)] = v
 
-# KPI CARDS — CSS Grid (auto-wraps on mobile)
-st.markdown(f"""
+def load_log(idx):
+    f = f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+    if os.path.exists(f):
+        df = pd.read_csv(f)
+        for c in LOG_COLS:
+            if c not in df.columns: df[c]=None
+        return df[LOG_COLS].to_dict("records")
+    return []
+
+def save_log(idx):
+    log = st.session_state[sk(idx,"trade_log")]
+    if log:
+        f = f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+        pd.DataFrame(log)[LOG_COLS].to_csv(f,index=False)
+
+# Init all indices
+for idx in INDEX_CONFIG:
+    init_state(idx)
+    if not st.session_state[sk(idx,"trade_log")]:
+        st.session_state[sk(idx,"trade_log")] = load_log(idx)
+
+# ── MAIN RENDER FUNCTION ──
+def render_index(idx):
+    cfg   = INDEX_CONFIG[idx]
+    lot   = cfg["lot"]; step = cfg["step"]; rng = cfg["rng"]
+    tlog_key = sk(idx,"trade_log")
+
+    data = get_data(idx)
+    if data is None:
+        st.error(f"❌ {idx} data unavailable. Retrying..."); return
+
+    records = data["records"]["data"]
+    spot    = data["records"]["underlyingValue"]
+    atm     = round(spot/step)*step
+
+    rows=[]
+    for item in records:
+        s=item["strikePrice"]
+        if abs(s-atm)<=rng:
+            ce=item.get("CE",{}); pe=item.get("PE",{})
+            rows.append({"Strike":s,"CE LTP":ce.get("lastPrice",0),"CE OI":ce.get("openInterest",0),
+                         "PE LTP":pe.get("lastPrice",0),"PE OI":pe.get("openInterest",0)})
+    df=pd.DataFrame(rows).sort_values("Strike").reset_index(drop=True)
+    if df.empty: st.warning(f"No {idx} data. Market may be closed."); return
+
+    df["dist"]=(df["Strike"]-spot).abs()
+    atm_actual=int(df.loc[df["dist"].idxmin(),"Strike"])
+    atm_row=df[df["Strike"]==atm_actual].iloc[0]
+
+    # OI Delta
+    prev=st.session_state[sk(idx,"prev_df")]
+    if prev is not None:
+        m=pd.merge(df,prev,on="Strike",how="left",suffixes=("","_p"))
+        df["CE OI Δ"]=(m["CE OI"]-m["CE OI_p"]).fillna(0)
+        df["PE OI Δ"]=(m["PE OI"]-m["PE OI_p"]).fillna(0)
+    else:
+        df["CE OI Δ"]=0; df["PE OI Δ"]=0
+    st.session_state[sk(idx,"prev_df")]=df[["Strike","CE OI","PE OI"]].copy()
+
+    tot_ce=df["CE OI"].sum(); tot_pe=df["PE OI"].sum()
+    pcr=round(tot_pe/tot_ce,2) if tot_ce else 0
+    bias="Bullish" if pcr>1.2 else ("Bearish" if pcr<0.8 else "Neutral")
+    resistance=int(df.loc[df["CE OI"].idxmax(),"Strike"])
+    support=int(df.loc[df["PE OI"].idxmax(),"Strike"])
+    ce_build=int(df.loc[df["CE OI Δ"].idxmax(),"Strike"])
+    pe_build=int(df.loc[df["PE OI Δ"].idxmax(),"Strike"])
+    total_ce_delta=df["CE OI Δ"].sum(); total_pe_delta=df["PE OI Δ"].sum()
+
+    # Filters
+    now_ist=datetime.datetime.now(IST); now_time=now_ist.time()
+    in_window=datetime.time(9,30)<=now_time<=datetime.time(14,30)
+    oi_active=abs(total_ce_delta)>=500 or abs(total_pe_delta)>=500
+
+    ph=st.session_state[sk(idx,"pcr_history")]
+    ph.append(pcr); ph=ph[-5:]
+    st.session_state[sk(idx,"pcr_history")]=ph
+    pcr_momentum="FLAT"
+    if len(ph)>=3:
+        if ph[-1]>ph[-3]+0.05: pcr_momentum="RISING"
+        elif ph[-1]<ph[-3]-0.05: pcr_momentum="FALLING"
+
+    sh=st.session_state[sk(idx,"spot_history")]
+    sh.append(spot); sh=sh[-20:]
+    st.session_state[sk(idx,"spot_history")]=sh
+    vwap_proxy=round(sum(sh)/len(sh),2)
+    spot_vs_vwap="ABOVE" if spot>vwap_proxy else "BELOW"
+
+    # Signal logic
+    signal="WAIT"; confidence="LOW"; filter_reason=""
+    if not in_window:
+        filter_reason="⏰ Outside trading hours (9:30–2:30)"
+    elif not oi_active:
+        filter_reason="📉 OI change too small"
+    elif pe_build>ce_build and spot>support and spot_vs_vwap=="ABOVE" and pcr_momentum in ("RISING","FLAT"):
+        signal="BUY CE"; confidence="HIGH"
+    elif ce_build>pe_build and spot<resistance and spot_vs_vwap=="BELOW" and pcr_momentum in ("FALLING","FLAT"):
+        signal="BUY PE"; confidence="HIGH"
+    elif bias=="Neutral":
+        signal="⚠️ SIDEWAYS"; confidence="AVOID"
+
+    trap="NONE"
+    if spot>resistance and total_ce_delta>total_pe_delta: trap="🚨 BULL TRAP"
+    elif spot<support and total_pe_delta>total_ce_delta:  trap="🚨 BEAR TRAP"
+
+    buf=st.session_state[sk(idx,"signal_buffer")]
+    buf.append(signal); buf=buf[-3:]
+    st.session_state[sk(idx,"signal_buffer")]=buf
+
+    if buf.count("BUY CE")>=2:   final_signal="BUY CE";  final_conf="HIGH"
+    elif buf.count("BUY PE")>=2: final_signal="BUY PE";  final_conf="HIGH"
+    else:                         final_signal="WAIT";    final_conf="LOW"
+
+    open_exists=any(t.get("Status")=="OPEN" for t in st.session_state[tlog_key])
+    if open_exists and final_signal in ("BUY CE","BUY PE"):
+        final_signal="WAIT"; final_conf="LOW"
+
+    ce_price=round(float(atm_row["CE LTP"]),2)
+    pe_price=round(float(atm_row["PE LTP"]),2)
+
+    # Check SL/Target on open trades
+    changed=False
+    for trade in st.session_state[tlog_key]:
+        if trade.get("Status")=="OPEN":
+            lp=ce_price if trade.get("Signal")=="BUY CE" else pe_price
+            sl=float(trade.get("Stop Loss") or 0)
+            tgt=float(trade.get("Target") or 0)
+            ep_t=float(trade.get("Entry Price") or 0)
+            qty_t=int(trade.get("Qty") or 0)
+            trade["Live Price"]=lp
+            now_str=datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+            if lp<=sl:
+                trade.update({"Status":"CLOSED","Result":"🔴 LOSS","Exit Price":lp,
+                               "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
+                changed=True
+                send_telegram(f"🔴 *SL HIT — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+            elif lp>=tgt:
+                trade.update({"Status":"CLOSED","Result":"🟢 WIN","Exit Price":lp,
+                               "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
+                changed=True
+                send_telegram(f"🟢 *TARGET HIT — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+    if changed: save_log(idx)
+
+    # ── KPI ──
+    st.markdown(f"""
 <div class="kpi-grid">
-  <div class="card"><div class="label">{selected_index} SPOT</div><div class="kpi">{round(spot,2)}</div></div>
-  <div class="card"><div class="label">{selected_index} ATM</div><div class="kpi">{atm_actual}</div></div>
+  <div class="card"><div class="label">{idx} SPOT</div><div class="kpi">{round(spot,2)}</div></div>
+  <div class="card"><div class="label">ATM</div><div class="kpi">{atm_actual}</div></div>
   <div class="card"><div class="label">PCR</div><div class="kpi">{pcr}</div></div>
   <div class="card"><div class="label">BIAS</div><div class="kpi">{bias}</div></div>
   <div class="card"><div class="label">SUPPORT</div><div class="kpi">{support}</div></div>
   <div class="card"><div class="label">RESISTANCE</div><div class="kpi">{resistance}</div></div>
-</div>
-""", unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
-# FILTER STATUS — CSS Grid
-tw_color = "#34D399" if in_window   else "#F87171"
-oi_color = "#34D399" if oi_active   else "#F87171"
-vw_color = "#34D399" if spot_vs_vwap=="ABOVE" else "#F87171"
-pm_color = "#34D399" if pcr_momentum!="FLAT"  else "#F59E0B"
-st.markdown(f"""
+    # ── FILTERS ──
+    tw_c="#34D399" if in_window else "#F87171"
+    oi_c="#34D399" if oi_active else "#F87171"
+    vw_c="#34D399" if spot_vs_vwap=="ABOVE" else "#F87171"
+    pm_c="#34D399" if pcr_momentum!="FLAT" else "#F59E0B"
+    st.markdown(f"""
 <div class="filter-grid">
-  <div class="card" style="padding:10px;">
-    <div class="label">⏰ Time Filter</div>
-    <div style="color:{tw_color};font-weight:700;">{"✅ IN WINDOW" if in_window else "❌ CLOSED"}</div>
-  </div>
-  <div class="card" style="padding:10px;">
-    <div class="label">📊 OI Activity</div>
-    <div style="color:{oi_color};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ LOW OI"}</div>
-  </div>
-  <div class="card" style="padding:10px;">
-    <div class="label">📈 Spot vs VWAP ({vwap_proxy})</div>
-    <div style="color:{vw_color};font-weight:700;">{spot_vs_vwap}</div>
-  </div>
-  <div class="card" style="padding:10px;">
-    <div class="label">🔄 PCR Momentum</div>
-    <div style="color:{pm_color};font-weight:700;">{pcr_momentum}</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+  <div class="card" style="padding:10px;"><div class="label">⏰ Time</div>
+    <div style="color:{tw_c};font-weight:700;">{"✅ IN WINDOW" if in_window else "❌ CLOSED"}</div></div>
+  <div class="card" style="padding:10px;"><div class="label">📊 OI</div>
+    <div style="color:{oi_c};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ LOW"}</div></div>
+  <div class="card" style="padding:10px;"><div class="label">📈 vs VWAP ({vwap_proxy})</div>
+    <div style="color:{vw_c};font-weight:700;">{spot_vs_vwap}</div></div>
+  <div class="card" style="padding:10px;"><div class="label">🔄 PCR Momentum</div>
+    <div style="color:{pm_c};font-weight:700;">{pcr_momentum}</div></div>
+</div>""", unsafe_allow_html=True)
 
-st.write("")
-
-# TRAP / SIGNAL BANNER
-if trap != "NONE":
-    st.markdown(f'<div class="trap-alert">{trap} DETECTED!</div>', unsafe_allow_html=True)
-
-cc = "signal-green" if "CE" in final_signal else ("signal-red" if "PE" in final_signal else "signal-yellow")
-reason_html = f'<p style="font-size:12px;color:#F87171;">{filter_reason}</p>' if filter_reason else ""
-st.markdown(
-    f'<div class="card {cc}"><h2>{final_signal}</h2><p>Confidence: {final_confidence}</p>'
-    f'<p style="font-size:11px;color:#9CA3AF;">Raw: {signal} | Buffer: {", ".join(st.session_state.signal_buffer[-3:])}'
-    f'{"|" + filter_reason if filter_reason else ""}</p></div>',
-    unsafe_allow_html=True
-)
-
-# ── LOG / DISPLAY TRADE ──
-if final_signal in ("BUY CE","BUY PE") and final_confidence == "HIGH":
-    ep      = ce_price if final_signal == "BUY CE" else pe_price
-    lbl     = "CE LTP" if final_signal == "BUY CE" else "PE LTP"
-    qty, sl_p, tgt_p, ml, tp = calc_trade(ep)
-
+    # ── TRAP / SIGNAL ──
+    if trap!="NONE":
+        st.markdown(f'<div class="trap-alert">{trap} DETECTED!</div>',unsafe_allow_html=True)
+    cc="signal-green" if "CE" in final_signal else ("signal-red" if "PE" in final_signal else "signal-yellow")
     st.markdown(
-        f'<div style="margin-top:10px;padding:10px;background:#1F2937;border-radius:10px;">'
-        f'<strong>📌 {lbl} @ {atm_actual}:</strong> {ep} &nbsp;|&nbsp; '
-        f'<strong>💰 SL:</strong> {sl_p} &nbsp;|&nbsp; '
-        f'<strong>🎯 Target:</strong> {tgt_p} &nbsp;|&nbsp; '
-        f'<strong>📦 Qty:</strong> {qty} &nbsp;|&nbsp; '
-        f'<strong>🔴 Max Loss:</strong> ₹{ml} &nbsp;|&nbsp; '
-        f'<strong>🟢 Target P&L:</strong> ₹{tp}'
-        f'</div><br>', unsafe_allow_html=True)
+        f'<div class="card {cc}"><h2>{final_signal}</h2><p>Confidence: {final_conf}</p>'
+        f'<p style="font-size:11px;color:#9CA3AF;">{idx} Raw: {signal} | Buffer: {", ".join(buf[-3:])}'
+        f'{" | "+filter_reason if filter_reason else ""}</p></div>',
+        unsafe_allow_html=True)
 
-    # Log ONCE per new confirmed signal
-    if final_signal != st.session_state.last_signal:
-        now = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-        st.session_state.trade_log.insert(0, {
-            "Entry Time": now, "Exit Time": None, "Signal": final_signal,
-            "Spot": round(spot,2), "Strike": atm_actual,
-            "Entry Price": ep, "Live Price": ep, "Exit Price": None,
-            "Stop Loss": sl_p, "Target": tgt_p, "Qty": qty,
-            "Max Loss ₹": ml, "Target P&L ₹": tp,
-            "Actual P&L ₹": None, "Status": "OPEN", "Result": "⏳ OPEN"
-        })
-        save_log()
-        st.session_state.last_signal = final_signal
+    # ── LOG SIGNAL ──
+    if final_signal in ("BUY CE","BUY PE") and final_conf=="HIGH":
+        ep=ce_price if final_signal=="BUY CE" else pe_price
+        lbl="CE LTP" if final_signal=="BUY CE" else "PE LTP"
+        qty,sl_p,tgt_p,ml,tp=calc_trade(ep,lot)
+        st.markdown(
+            f'<div style="margin-top:8px;padding:10px;background:#1F2937;border-radius:10px;">'
+            f'<strong>📌 {lbl} @ {atm_actual}:</strong> {ep} &nbsp;|&nbsp;'
+            f'<strong>💰 SL:</strong> {sl_p} &nbsp;|&nbsp;<strong>🎯 Tgt:</strong> {tgt_p} &nbsp;|&nbsp;'
+            f'<strong>📦 Qty:</strong> {qty} &nbsp;|&nbsp;<strong>🔴 MaxLoss:</strong> ₹{ml} &nbsp;|&nbsp;'
+            f'<strong>🟢 TgtP&L:</strong> ₹{tp}</div><br>',unsafe_allow_html=True)
 
-        # 📨 TELEGRAM ALERT — new signal
-        emoji = "🟢" if "CE" in final_signal else "🔴"
-        send_telegram(
-            f"{emoji} *V12 SIGNAL: {final_signal}*\n"
-            f"📍 Strike: `{atm_actual}` | Spot: `{round(spot,2)}`\n"
-            f"💰 Entry: `{ep}` | SL: `{sl_p}` | Target: `{tgt_p}`\n"
-            f"📦 Qty: `{qty}` | Max Loss: `₹{ml}` | Target P&L: `₹{tp}`\n"
-            f"⏰ Time: `{now}`"
-        )
+        if final_signal!=st.session_state[sk(idx,"last_signal")]:
+            now=datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+            st.session_state[tlog_key].insert(0,{
+                "Entry Time":now,"Exit Time":None,"Index":idx,"Signal":final_signal,
+                "Spot":round(spot,2),"Strike":atm_actual,"Entry Price":ep,"Live Price":ep,
+                "Exit Price":None,"Stop Loss":sl_p,"Target":tgt_p,"Qty":qty,
+                "Max Loss ₹":ml,"Target P&L ₹":tp,"Actual P&L ₹":None,"Status":"OPEN","Result":"⏳ OPEN"})
+            save_log(idx)
+            st.session_state[sk(idx,"last_signal")]=final_signal
+            emoji="🟢" if "CE" in final_signal else "🔴"
+            send_telegram(f"{emoji} *V12 {idx} SIGNAL: {final_signal}*\n"
+                          f"📍 Strike: `{atm_actual}` | Spot: `{round(spot,2)}`\n"
+                          f"💰 Entry: `{ep}` | SL: `{sl_p}` | Target: `{tgt_p}`\n"
+                          f"📦 Qty: `{qty}` | Max Loss: `₹{ml}` | Target P&L: `₹{tp}`\n"
+                          f"⏰ Time: `{now}`")
 
-    # Audio once per new confirmed signal
-    if final_signal != st.session_state.last_played:
-        st.markdown('<audio autoplay style="display:none"><source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg"></audio>', unsafe_allow_html=True)
-        st.session_state.last_played = final_signal
+        if final_signal!=st.session_state[sk(idx,"last_played")]:
+            st.markdown('<audio autoplay style="display:none"><source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg"></audio>',unsafe_allow_html=True)
+            st.session_state[sk(idx,"last_played")]=final_signal
+        st.success(f"🚨 {idx} HIGH CONFIDENCE SIGNAL — CONFIRMED")
+    else:
+        if final_signal!=st.session_state[sk(idx,"last_signal")]:
+            st.session_state[sk(idx,"last_signal")]=final_signal
+            st.session_state[sk(idx,"last_played")]=final_signal
 
-    st.success("🚨 HIGH CONFIDENCE TRADE SIGNAL — CONFIRMED")
-else:
-    if final_signal != st.session_state.last_signal:
-        st.session_state.last_signal = final_signal
-        st.session_state.last_played = final_signal
+    # ── TRACKER ──
+    log_df=pd.DataFrame(st.session_state[tlog_key]) if st.session_state[tlog_key] else pd.DataFrame(columns=LOG_COLS)
+    closed=log_df[log_df["Status"]=="CLOSED"] if not log_df.empty else pd.DataFrame()
+    rpnl=closed["Actual P&L ₹"].apply(pd.to_numeric,errors="coerce").sum() if not closed.empty else 0
+    rc=CAPITAL+rpnl; prog=max(0.0,min(1.0,rpnl/DAILY_TGT)); pc="pnl-green" if rpnl>=0 else "pnl-red"
 
-# INVESTMENT TRACKER
-tracker_hdr, reset_col, test_col = st.columns([4, 1, 1])
-with tracker_hdr:
-    st.subheader("💼 Investment Tracker (₹20,000 Capital)")
-with reset_col:
-    st.write("")
-    if st.button("🔄 Reset", type="primary", help="Clear all trades and start fresh", use_container_width=True):
-        st.session_state.trade_log     = []
-        st.session_state.last_signal   = "WAIT"
-        st.session_state.last_played   = "WAIT"
-        st.session_state.signal_buffer = []
-        if os.path.exists(log_file): os.remove(log_file)
-        st.success("✅ Tracker reset! Starting fresh.")
-        st.rerun()
+    hdr,rcol,tcol=st.columns([4,1,1])
+    with hdr: st.subheader(f"💼 {idx} Tracker")
+    with rcol:
+        st.write("")
+        if st.button("🔄 Reset",key=f"reset_{idx}",use_container_width=True):
+            st.session_state[tlog_key]=[]; st.session_state[sk(idx,"last_signal")]="WAIT"
+            st.session_state[sk(idx,"last_played")]="WAIT"; st.session_state[sk(idx,"signal_buffer")]=[]
+            f=f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+            if os.path.exists(f): os.remove(f)
+            st.rerun()
+    with tcol:
+        st.write("")
+        if st.button("📨 Test",key=f"test_{idx}",use_container_width=True):
+            now_t=datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+            send_telegram(f"🧪 *V12 {idx} TEST ALERT*\n🟢 SIGNAL: BUY CE\n"
+                          f"📍 Strike: `{atm_actual}` | Spot: `{round(spot,2)}`\n⏰ Time: `{now_t}` ← TEST")
+            st.success("📨 Test sent!")
 
-with test_col:
-    st.write("")
-    if st.button("📨 Test", help="Send a test Telegram alert", use_container_width=True):
-        now_t = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-        result = send_telegram(
-            f"🧪 *V12 TEST ALERT*\n"
-            f"🟢 SIGNAL: BUY CE\n"
-            f"📍 Strike: `{atm_actual}` | Spot: `{round(spot,2)}`\n"
-            f"💰 Entry: `{ce_price}` | SL: `{round(ce_price*0.75,2)}` | Target: `{round(ce_price*2,2)}`\n"
-            f"⏰ Time: `{now_t}` ← TEST MESSAGE"
-        )
-        st.success("📨 Test message sent! Check Telegram.")
-
-log_df      = pd.DataFrame(st.session_state.trade_log) if st.session_state.trade_log else pd.DataFrame(columns=LOG_COLS)
-closed_only = log_df[log_df["Status"]=="CLOSED"] if not log_df.empty else pd.DataFrame()
-realized_pnl= closed_only["Actual P&L ₹"].apply(pd.to_numeric,errors="coerce").sum() if not closed_only.empty else 0
-running_cap = CAPITAL + realized_pnl
-progress    = max(0.0, min(1.0, realized_pnl / DAILY_TGT))
-pc          = "pnl-green" if realized_pnl >= 0 else "pnl-red"
-
-st.markdown(f"""
+    st.markdown(f"""
 <div class="tracker-grid">
   <div class="card"><div class="label">Capital</div><div class="kpi">₹{CAPITAL:,}</div></div>
-  <div class="card"><div class="label">Closed Trades</div><div class="kpi">{len(closed_only)}</div></div>
-  <div class="card"><div class="label">Realized P&L</div><div class="kpi {pc}">₹{realized_pnl:,.0f}</div></div>
-  <div class="card"><div class="label">Running Capital</div><div class="kpi">₹{running_cap:,.0f}</div></div>
-  <div class="card"><div class="label">Daily Progress</div><div class="kpi">{round(progress*100)}%</div></div>
-</div>
-""", unsafe_allow_html=True)
-st.progress(progress, text=f"₹{realized_pnl:,.0f} / ₹{DAILY_TGT:,} daily target")
+  <div class="card"><div class="label">Closed</div><div class="kpi">{len(closed)}</div></div>
+  <div class="card"><div class="label">Realized P&L</div><div class="kpi {pc}">₹{rpnl:,.0f}</div></div>
+  <div class="card"><div class="label">Running Cap</div><div class="kpi">₹{rc:,.0f}</div></div>
+  <div class="card"><div class="label">Daily Progress</div><div class="kpi">{round(prog*100)}%</div></div>
+</div>""",unsafe_allow_html=True)
+    st.progress(prog,text=f"{idx}: ₹{rpnl:,.0f} / ₹{DAILY_TGT:,} daily target")
 
+    # ── OPTION CHAIN ──
+    disp=df.drop(columns=["dist"],errors="ignore")
+    def hl(v):
+        if isinstance(v,(int,float)):
+            if v>0: return "background-color:#064E3B;color:white"
+            if v<0: return "background-color:#7F1D1D;color:white"
+        return ""
+    with st.expander(f"📊 {idx} Option Chain & Charts"):
+        st.dataframe(disp.style.map(hl,subset=["CE OI Δ","PE OI Δ"]),use_container_width=True)
+        st.plotly_chart(px.bar(disp,x="Strike",y=["CE OI","PE OI"],barmode="group",
+            color_discrete_map={"CE OI":"#34D399","PE OI":"#F87171"}),use_container_width=True)
+        st.plotly_chart(px.bar(disp,x="Strike",y=["CE OI Δ","PE OI Δ"],barmode="group",
+            color_discrete_map={"CE OI Δ":"#6EE7B7","PE OI Δ":"#FCA5A5"}),use_container_width=True)
 
-# OPTION CHAIN
-st.subheader("📊 Option Chain (ATM ±300 | OI Δ)")
-disp = df.drop(columns=["dist"], errors="ignore")
-def hl(v):
-    if isinstance(v,(int,float)):
-        if v>0: return "background-color:#064E3B;color:white"
-        if v<0: return "background-color:#7F1D1D;color:white"
-    return ""
-st.dataframe(disp.style.map(hl, subset=["CE OI Δ","PE OI Δ"]), use_container_width=True)
+    # ── POSITIONS ──
+    with st.expander(f"📜 {idx} Trade Positions"):
+        t1,t2=st.tabs(["🟢 Open","📋 History"])
+        with t1:
+            opens=[t for t in st.session_state[tlog_key] if t.get("Status")=="OPEN"]
+            if opens:
+                ot=opens[0]; ev=float(ot.get("Entry Price") or 0); lv=float(ot.get("Live Price") or ev)
+                qv=int(ot.get("Qty") or 0); upl=round((lv-ev)*qv,2)
+                uc="#34D399" if upl>=0 else "#F87171"; sc="#34D399" if "CE" in str(ot.get("Signal")) else "#F87171"
+                st.markdown(f"""<div class="card" style="border-left:4px solid {sc};">
+  <div style="display:flex;gap:20px;flex-wrap:wrap;">
+    <div><div class="label">Signal</div><div class="kpi" style="color:{sc};">{ot.get('Signal')}</div></div>
+    <div><div class="label">Strike</div><div class="kpi">{ot.get('Strike')}</div></div>
+    <div><div class="label">Entry</div><div class="kpi">₹{ev}</div></div>
+    <div><div class="label">Live</div><div class="kpi">₹{lv}</div></div>
+    <div><div class="label">SL</div><div class="kpi pnl-red">₹{ot.get('Stop Loss')}</div></div>
+    <div><div class="label">Target</div><div class="kpi pnl-green">₹{ot.get('Target')}</div></div>
+    <div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
+    <div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
+  </div></div>""",unsafe_allow_html=True)
+            else: st.info("No open position. Waiting for signal...")
+        with t2:
+            if st.session_state[tlog_key]:
+                cols=["Entry Time","Exit Time","Signal","Strike","Entry Price","Exit Price","Qty","Actual P&L ₹","Status","Result"]
+                hdf=pd.DataFrame(st.session_state[tlog_key])
+                for c in cols:
+                    if c not in hdf.columns: hdf[c]=None
+                def cp(v):
+                    try: f=float(v); return "color:#34D399;font-weight:700" if f>=0 else "color:#F87171;font-weight:700"
+                    except: return ""
+                st.dataframe(hdf[cols].style.map(cp,subset=["Actual P&L ₹"]),use_container_width=True)
+                pnl_s=hdf["Actual P&L ₹"].apply(pd.to_numeric,errors="coerce")
+                ca,cb,cc2=st.columns(3)
+                ca.metric("Trades",len(hdf)); cb.metric("Win/Loss",f"{(pnl_s>0).sum()}/{(pnl_s<=0).sum()}")
+                cc2.metric("Net P&L",f"₹{pnl_s.sum():,.0f}",delta=f"{pnl_s.sum():+.0f}")
+            else: st.info("Waiting for first signal...")
 
-st.subheader("📈 OI Distribution")
-st.plotly_chart(px.bar(disp,x="Strike",y=["CE OI","PE OI"],barmode="group",
-    color_discrete_map={"CE OI":"#34D399","PE OI":"#F87171"}), use_container_width=True)
-
-st.subheader("⚡ OI Change (Smart Money)")
-st.plotly_chart(px.bar(disp,x="Strike",y=["CE OI Δ","PE OI Δ"],barmode="group",
-    color_discrete_map={"CE OI Δ":"#6EE7B7","PE OI Δ":"#FCA5A5"}), use_container_width=True)
-
-# TRADE POSITIONS
-st.subheader("📜 Trade Positions")
-tab_open, tab_hist = st.tabs(["🟢 Open Position","📋 Trade History"])
-
-with tab_open:
-    open_trades = [t for t in st.session_state.trade_log if t.get("Status")=="OPEN"]
-    if open_trades:
-        ot  = open_trades[0]
-        ev  = float(ot.get("Entry Price") or 0)
-        lv  = float(ot.get("Live Price")  or ev)
-        qv  = int(ot.get("Qty") or 0)
-        upl = round((lv-ev)*qv,2)
-        uc  = "#34D399" if upl>=0 else "#F87171"
-        sc  = "#34D399" if "CE" in str(ot.get("Signal")) else "#F87171"
-        st.markdown(f"""
-        <div class="card" style="border-left:4px solid {sc};">
-          <div style="display:flex;gap:32px;flex-wrap:wrap;">
-            <div><div class="label">Signal</div><div class="kpi" style="color:{sc};">{ot.get('Signal')}</div></div>
-            <div><div class="label">Strike</div><div class="kpi">{ot.get('Strike')}</div></div>
-            <div><div class="label">Entry Time</div><div class="kpi" style="font-size:18px;">{ot.get('Entry Time')}</div></div>
-            <div><div class="label">Entry Price</div><div class="kpi">₹{ev}</div></div>
-            <div><div class="label">Live Price</div><div class="kpi">₹{lv}</div></div>
-            <div><div class="label">Stop Loss</div><div class="kpi pnl-red">₹{ot.get('Stop Loss')}</div></div>
-            <div><div class="label">Target</div><div class="kpi pnl-green">₹{ot.get('Target')}</div></div>
-            <div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
-            <div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
-          </div>
-        </div>""", unsafe_allow_html=True)
-    else:
-        st.info("No open position. Waiting for HIGH confidence signal...")
-
-with tab_hist:
-    if st.session_state.trade_log:
-        show_cols = ["Entry Time","Exit Time","Signal","Strike","Entry Price",
-                     "Exit Price","Qty","Actual P&L ₹","Status","Result"]
-        hdf = pd.DataFrame(st.session_state.trade_log)
-        for c in show_cols:
-            if c not in hdf.columns: hdf[c] = None
-        hdf = hdf[show_cols]
-
-        def cp(v):
-            try:
-                f = float(v)
-                return "color:#34D399;font-weight:700" if f>=0 else "color:#F87171;font-weight:700"
-            except: return ""
-
-        st.dataframe(hdf.style.map(cp, subset=["Actual P&L ₹"]), use_container_width=True)
-
-        pnl_s = hdf["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
-        wins   = (pnl_s > 0).sum()
-        losses = (pnl_s <= 0).sum()
-        net    = pnl_s.sum()
-        ca, cb, cc2 = st.columns(3)
-        ca.metric("Total Trades", len(hdf))
-        cb.metric("Wins / Losses", f"{wins} / {losses}")
-        cc2.metric("Net P&L", f"₹{net:,.0f}", delta=f"{net:+.0f}")
-    else:
-        st.info("Waiting for first HIGH confidence signal...")
+# ── TABS ──
+tab1, tab2, tab3 = st.tabs(["📈 NIFTY", "🏦 BANKNIFTY", "💹 FINNIFTY"])
+with tab1: render_index("NIFTY")
+with tab2: render_index("BANKNIFTY")
+with tab3: render_index("FINNIFTY")
