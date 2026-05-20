@@ -49,7 +49,7 @@ DAILY_TGT = 1_000
 IST       = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 INDEX_CONFIG = {
-    "NIFTY":     {"step":50,  "lot":75,  "rng":300},
+    "NIFTY":     {"step":50,  "lot":65,  "rng":300},
     "BANKNIFTY": {"step":100, "lot":30,  "rng":600},
     "FINNIFTY":  {"step":50,  "lot":65,  "rng":300},
 }
@@ -66,8 +66,10 @@ st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
 def get_data(idx_name):
     try:
         d = NSELive().index_option_chain(idx_name)
-        if "records" in d: return d
-    except: pass
+        if d and "records" in d and d["records"].get("data"):
+            return d
+    except Exception as e:
+        st.warning(f"⚠️ {idx_name} fetch error: {e}")
     return None
 
 # ── CALC TRADE ──
@@ -82,8 +84,9 @@ def calc_trade(ep, lot):
 def sk(idx, key): return f"{idx}_{key}"
 
 def init_state(idx):
-    for k,v in [("trade_log",[]),("last_signal","WAIT"),("last_played","WAIT"),
-                ("signal_buffer",[]),("pcr_history",[]),("spot_history",[]),("prev_df",None)]:
+    for k,v in [("trade_log",[]  ),("last_signal","WAIT"),("last_played","WAIT"),
+                ("signal_buffer",[]  ),("pcr_history",[]  ),("spot_history",[]  ),
+                ("prev_df",None),("oi_baseline",None)]:
         if sk(idx,k) not in st.session_state:
             st.session_state[sk(idx,k)] = v
 
@@ -124,7 +127,7 @@ def render_index(idx):
 
     rows=[]
     for item in records:
-        s=item["strikePrice"]
+        s=item.get("strikePrice",0)
         if abs(s-atm)<=rng:
             ce=item.get("CE",{}); pe=item.get("PE",{})
             rows.append({"Strike":s,"CE LTP":ce.get("lastPrice",0),"CE OI":ce.get("openInterest",0),
@@ -136,14 +139,24 @@ def render_index(idx):
     atm_actual=int(df.loc[df["dist"].idxmin(),"Strike"])
     atm_row=df[df["Strike"]==atm_actual].iloc[0]
 
-    # OI Delta
+    # ── OI Delta (compare with previous snapshot, use baseline for first run) ──
     prev=st.session_state[sk(idx,"prev_df")]
+    baseline=st.session_state[sk(idx,"oi_baseline")]
+
     if prev is not None:
         m=pd.merge(df,prev,on="Strike",how="left",suffixes=("","_p"))
         df["CE OI Δ"]=(m["CE OI"]-m["CE OI_p"]).fillna(0)
         df["PE OI Δ"]=(m["PE OI"]-m["PE OI_p"]).fillna(0)
+    elif baseline is not None:
+        # Use baseline from session start
+        m=pd.merge(df,baseline,on="Strike",how="left",suffixes=("","_b"))
+        df["CE OI Δ"]=(m["CE OI"]-m["CE OI_b"]).fillna(0)
+        df["PE OI Δ"]=(m["PE OI"]-m["PE OI_b"]).fillna(0)
     else:
         df["CE OI Δ"]=0; df["PE OI Δ"]=0
+        # Save first snapshot as baseline
+        st.session_state[sk(idx,"oi_baseline")]=df[["Strike","CE OI","PE OI"]].copy()
+
     st.session_state[sk(idx,"prev_df")]=df[["Strike","CE OI","PE OI"]].copy()
 
     tot_ce=df["CE OI"].sum(); tot_pe=df["PE OI"].sum()
@@ -151,22 +164,33 @@ def render_index(idx):
     bias="Bullish" if pcr>1.2 else ("Bearish" if pcr<0.8 else "Neutral")
     resistance=int(df.loc[df["CE OI"].idxmax(),"Strike"])
     support=int(df.loc[df["PE OI"].idxmax(),"Strike"])
-    ce_build=int(df.loc[df["CE OI Δ"].idxmax(),"Strike"])
-    pe_build=int(df.loc[df["PE OI Δ"].idxmax(),"Strike"])
+
+    # Guard against empty delta columns
+    ce_delta_idx = df["CE OI Δ"].idxmax() if df["CE OI Δ"].max() > 0 else df["CE OI"].idxmax()
+    pe_delta_idx = df["PE OI Δ"].idxmax() if df["PE OI Δ"].max() > 0 else df["PE OI"].idxmax()
+    ce_build=int(df.loc[ce_delta_idx,"Strike"])
+    pe_build=int(df.loc[pe_delta_idx,"Strike"])
     total_ce_delta=df["CE OI Δ"].sum(); total_pe_delta=df["PE OI Δ"].sum()
 
-    # Filters
+    # ── FILTERS ──
     now_ist=datetime.datetime.now(IST); now_time=now_ist.time()
-    in_window=datetime.time(9,30)<=now_time<=datetime.time(14,30)
-    oi_active=abs(total_ce_delta)>=500 or abs(total_pe_delta)>=500
+    in_window=datetime.time(9,15)<=now_time<=datetime.time(15,30)
+
+    # OI activity: use ABSOLUTE total OI (not just delta) to determine market activity
+    # Also flag as active if cumulative delta from session start shows meaningful movement
+    oi_active = (tot_ce > 0 and tot_pe > 0)  # market has OI = active
+
+    # OI momentum from session baseline (much lower threshold)
+    oi_momentum_bullish = total_pe_delta > total_ce_delta  # more PE being added = bullish underlying
+    oi_momentum_bearish = total_ce_delta > total_pe_delta  # more CE being added = bearish underlying
 
     ph=st.session_state[sk(idx,"pcr_history")]
     ph.append(pcr); ph=ph[-5:]
     st.session_state[sk(idx,"pcr_history")]=ph
     pcr_momentum="FLAT"
     if len(ph)>=3:
-        if ph[-1]>ph[-3]+0.05: pcr_momentum="RISING"
-        elif ph[-1]<ph[-3]-0.05: pcr_momentum="FALLING"
+        if ph[-1]>ph[-3]+0.02: pcr_momentum="RISING"
+        elif ph[-1]<ph[-3]-0.02: pcr_momentum="FALLING"
 
     sh=st.session_state[sk(idx,"spot_history")]
     sh.append(spot); sh=sh[-20:]
@@ -174,31 +198,57 @@ def render_index(idx):
     vwap_proxy=round(sum(sh)/len(sh),2)
     spot_vs_vwap="ABOVE" if spot>vwap_proxy else "BELOW"
 
-    # Signal logic
+    # ── SIGNAL LOGIC (Fixed & Improved) ──
+    # Primary logic: PCR + spot position relative to support/resistance + VWAP
     signal="WAIT"; confidence="LOW"; filter_reason=""
+
     if not in_window:
-        filter_reason="⏰ Outside trading hours (9:30–2:30)"
+        filter_reason="⏰ Outside trading hours (9:15–3:30)"
     elif not oi_active:
-        filter_reason="📉 OI change too small"
-    elif pe_build>ce_build and spot>support and spot_vs_vwap=="ABOVE" and pcr_momentum in ("RISING","FLAT"):
-        signal="BUY CE"; confidence="HIGH"
-    elif ce_build>pe_build and spot<resistance and spot_vs_vwap=="BELOW" and pcr_momentum in ("FALLING","FLAT"):
-        signal="BUY PE"; confidence="HIGH"
-    elif bias=="Neutral":
-        signal="⚠️ SIDEWAYS"; confidence="AVOID"
+        filter_reason="📉 No OI data — market closed?"
+    else:
+        # HIGH confidence: PCR + VWAP + OI momentum all align
+        if (pcr > 1.2 and spot > support and spot_vs_vwap == "ABOVE"
+                and pcr_momentum in ("RISING", "FLAT") and oi_momentum_bullish):
+            signal="BUY CE"; confidence="HIGH"
+        elif (pcr < 0.8 and spot < resistance and spot_vs_vwap == "BELOW"
+                and pcr_momentum in ("FALLING", "FLAT") and oi_momentum_bearish):
+            signal="BUY PE"; confidence="HIGH"
+
+        # MEDIUM confidence: PCR + VWAP align (even if OI momentum not confirmed)
+        elif pcr > 1.15 and spot > support and spot_vs_vwap == "ABOVE":
+            signal="BUY CE"; confidence="MEDIUM"
+        elif pcr < 0.85 and spot < resistance and spot_vs_vwap == "BELOW":
+            signal="BUY PE"; confidence="MEDIUM"
+
+        # LOW confidence: pure PCR signal
+        elif pcr > 1.1 and spot > support:
+            signal="BUY CE"; confidence="LOW"
+        elif pcr < 0.9 and spot < resistance:
+            signal="BUY PE"; confidence="LOW"
+        elif bias == "Neutral":
+            signal="⚠️ SIDEWAYS"; confidence="AVOID"
 
     trap="NONE"
     if spot>resistance and total_ce_delta>total_pe_delta: trap="🚨 BULL TRAP"
     elif spot<support and total_pe_delta>total_ce_delta:  trap="🚨 BEAR TRAP"
 
+    # ── SIGNAL BUFFER (confirm signal across refreshes) ──
     buf=st.session_state[sk(idx,"signal_buffer")]
     buf.append(signal); buf=buf[-3:]
     st.session_state[sk(idx,"signal_buffer")]=buf
 
+    # Confirm signal: needs 2 of last 3 refreshes to agree (≈20 seconds of confirmation)
     if buf.count("BUY CE")>=2:   final_signal="BUY CE";  final_conf="HIGH"
     elif buf.count("BUY PE")>=2: final_signal="BUY PE";  final_conf="HIGH"
-    else:                         final_signal="WAIT";    final_conf="LOW"
+    elif buf.count("BUY CE")>=1 and confidence in ("HIGH","MEDIUM"):
+        final_signal="BUY CE"; final_conf="MEDIUM"
+    elif buf.count("BUY PE")>=1 and confidence in ("HIGH","MEDIUM"):
+        final_signal="BUY PE"; final_conf="MEDIUM"
+    else:
+        final_signal="WAIT"; final_conf="LOW"
 
+    # Don't enter new trade if one is already open
     open_exists=any(t.get("Status")=="OPEN" for t in st.session_state[tlog_key])
     if open_exists and final_signal in ("BUY CE","BUY PE"):
         final_signal="WAIT"; final_conf="LOW"
@@ -206,7 +256,7 @@ def render_index(idx):
     ce_price=round(float(atm_row["CE LTP"]),2)
     pe_price=round(float(atm_row["PE LTP"]),2)
 
-    # Check SL/Target on open trades
+    # ── CHECK SL/TARGET on open trades ──
     changed=False
     for trade in st.session_state[tlog_key]:
         if trade.get("Status")=="OPEN":
@@ -221,6 +271,7 @@ def render_index(idx):
                 trade.update({"Status":"CLOSED","Result":"🔴 LOSS","Exit Price":lp,
                                "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
                 changed=True
+                st.session_state[sk(idx,"last_signal")]="WAIT"  # allow re-entry after SL
                 send_telegram(f"🔴 *SL HIT — {idx} {trade.get('Signal')}*\n"
                               f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                               f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
@@ -228,6 +279,7 @@ def render_index(idx):
                 trade.update({"Status":"CLOSED","Result":"🟢 WIN","Exit Price":lp,
                                "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
                 changed=True
+                st.session_state[sk(idx,"last_signal")]="WAIT"  # allow re-entry after target
                 send_telegram(f"🟢 *TARGET HIT — {idx} {trade.get('Signal')}*\n"
                               f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                               f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
@@ -244,21 +296,24 @@ def render_index(idx):
   <div class="card"><div class="label">RESISTANCE</div><div class="kpi">{resistance}</div></div>
 </div>""", unsafe_allow_html=True)
 
-    # ── FILTERS ──
+    # ── FILTERS STATUS ──
     tw_c="#34D399" if in_window else "#F87171"
     oi_c="#34D399" if oi_active else "#F87171"
     vw_c="#34D399" if spot_vs_vwap=="ABOVE" else "#F87171"
     pm_c="#34D399" if pcr_momentum!="FLAT" else "#F59E0B"
+    pcr_momentum_display = pcr_momentum
     st.markdown(f"""
 <div class="filter-grid">
   <div class="card" style="padding:10px;"><div class="label">⏰ Time</div>
     <div style="color:{tw_c};font-weight:700;">{"✅ IN WINDOW" if in_window else "❌ CLOSED"}</div></div>
-  <div class="card" style="padding:10px;"><div class="label">📊 OI</div>
-    <div style="color:{oi_c};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ LOW"}</div></div>
+  <div class="card" style="padding:10px;"><div class="label">📊 OI Market</div>
+    <div style="color:{oi_c};font-weight:700;">{"✅ ACTIVE" if oi_active else "❌ NO DATA"}</div></div>
   <div class="card" style="padding:10px;"><div class="label">📈 vs VWAP ({vwap_proxy})</div>
     <div style="color:{vw_c};font-weight:700;">{spot_vs_vwap}</div></div>
   <div class="card" style="padding:10px;"><div class="label">🔄 PCR Momentum</div>
-    <div style="color:{pm_c};font-weight:700;">{pcr_momentum}</div></div>
+    <div style="color:{pm_c};font-weight:700;">{pcr_momentum_display}</div></div>
+  <div class="card" style="padding:10px;"><div class="label">📊 OI Flow</div>
+    <div style="color:#F59E0B;font-weight:700;">CE Δ:{int(total_ce_delta)} PE Δ:{int(total_pe_delta)}</div></div>
 </div>""", unsafe_allow_html=True)
 
     # ── TRAP / SIGNAL ──
@@ -267,12 +322,12 @@ def render_index(idx):
     cc="signal-green" if "CE" in final_signal else ("signal-red" if "PE" in final_signal else "signal-yellow")
     st.markdown(
         f'<div class="card {cc}"><h2>{final_signal}</h2><p>Confidence: {final_conf}</p>'
-        f'<p style="font-size:11px;color:#9CA3AF;">{idx} Raw: {signal} | Buffer: {", ".join(buf[-3:])}'
+        f'<p style="font-size:11px;color:#9CA3AF;">{idx} Raw: {signal} ({confidence}) | PCR: {pcr} | Buffer: {", ".join(buf[-3:])}'
         f'{" | "+filter_reason if filter_reason else ""}</p></div>',
         unsafe_allow_html=True)
 
     # ── LOG SIGNAL ──
-    if final_signal in ("BUY CE","BUY PE") and final_conf=="HIGH":
+    if final_signal in ("BUY CE","BUY PE") and final_conf in ("HIGH","MEDIUM"):
         ep=ce_price if final_signal=="BUY CE" else pe_price
         lbl="CE LTP" if final_signal=="BUY CE" else "PE LTP"
         qty,sl_p,tgt_p,ml,tp=calc_trade(ep,lot)
@@ -297,16 +352,19 @@ def render_index(idx):
                           f"📍 Strike: `{atm_actual}` | Spot: `{round(spot,2)}`\n"
                           f"💰 Entry: `{ep}` | SL: `{sl_p}` | Target: `{tgt_p}`\n"
                           f"📦 Qty: `{qty}` | Max Loss: `₹{ml}` | Target P&L: `₹{tp}`\n"
-                          f"⏰ Time: `{now}`")
+                          f"⏰ Time: `{now}` | Conf: `{final_conf}`")
 
         if final_signal!=st.session_state[sk(idx,"last_played")]:
             st.markdown('<audio autoplay style="display:none"><source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg"></audio>',unsafe_allow_html=True)
             st.session_state[sk(idx,"last_played")]=final_signal
-        st.success(f"🚨 {idx} HIGH CONFIDENCE SIGNAL — CONFIRMED")
+        st.success(f"🚨 {idx} {final_conf} CONFIDENCE SIGNAL — {final_signal} CONFIRMED")
     else:
-        if final_signal!=st.session_state[sk(idx,"last_signal")]:
-            st.session_state[sk(idx,"last_signal")]=final_signal
-            st.session_state[sk(idx,"last_played")]=final_signal
+        # Reset last_signal when signal disappears so next signal can be logged fresh
+        if final_signal == "WAIT" and st.session_state[sk(idx,"last_signal")] not in ("WAIT",):
+            # Only reset if no open trade exists (avoid resetting mid-trade)
+            if not open_exists:
+                st.session_state[sk(idx,"last_signal")] = "WAIT"
+                st.session_state[sk(idx,"last_played")] = "WAIT"
 
     # ── TRACKER ──
     log_df=pd.DataFrame(st.session_state[tlog_key]) if st.session_state[tlog_key] else pd.DataFrame(columns=LOG_COLS)
@@ -321,6 +379,7 @@ def render_index(idx):
         if st.button("🔄 Reset",key=f"reset_{idx}",use_container_width=True):
             st.session_state[tlog_key]=[]; st.session_state[sk(idx,"last_signal")]="WAIT"
             st.session_state[sk(idx,"last_played")]="WAIT"; st.session_state[sk(idx,"signal_buffer")]=[]
+            st.session_state[sk(idx,"oi_baseline")]=None; st.session_state[sk(idx,"prev_df")]=None
             f=f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
             if os.path.exists(f): os.remove(f)
             st.rerun()
