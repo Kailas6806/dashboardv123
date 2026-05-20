@@ -61,8 +61,7 @@ LOG_COLS = ["Entry Time","Exit Time","Index","Signal","Spot","Strike",
 
 st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
 
-# ── FETCH (cached per index) ──
-@st.cache_data(ttl=8)
+# ── FETCH (no cache — always fresh on every autorefresh) ──
 def get_data(idx_name):
     try:
         d = NSELive().index_option_chain(idx_name)
