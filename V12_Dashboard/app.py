@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st_autorefresh(interval=10000, key="refresh")
+st_autorefresh(interval=3000, key="refresh")
 
 # ── CONFIG ──
 CAPITAL   = 20_000
@@ -109,6 +109,73 @@ for idx in INDEX_CONFIG:
     init_state(idx)
     if not st.session_state[sk(idx,"trade_log")]:
         st.session_state[sk(idx,"trade_log")] = load_log(idx)
+
+# ── LIVE PRICE UPDATER (runs every refresh for ALL indices with open trades) ──
+def get_atm_prices(idx_name):
+    """Lightweight fetch — returns (ce_ltp, pe_ltp, spot) for the ATM strike."""
+    try:
+        step = INDEX_CONFIG[idx_name]["step"]
+        d = NSELive().index_option_chain(idx_name)
+        if not d or "records" not in d: return None, None, None
+        records = d["records"]["data"]
+        spot    = d["records"]["underlyingValue"]
+        atm     = round(spot / step) * step
+        best_dist = float("inf"); ce_ltp = pe_ltp = 0
+        for item in records:
+            s = item.get("strikePrice", 0)
+            dist = abs(s - atm)
+            if dist < best_dist:
+                best_dist = dist
+                ce_ltp = item.get("CE", {}).get("lastPrice", 0)
+                pe_ltp = item.get("PE", {}).get("lastPrice", 0)
+        return round(float(ce_ltp), 2), round(float(pe_ltp), 2), spot
+    except:
+        return None, None, None
+
+def update_open_trade_prices():
+    """Fetch fresh prices for every index that has an open trade."""
+    now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+    for idx in INDEX_CONFIG:
+        tlog = st.session_state.get(sk(idx, "trade_log"), [])
+        has_open = any(t.get("Status") == "OPEN" for t in tlog)
+        if not has_open:
+            continue
+        ce_ltp, pe_ltp, _ = get_atm_prices(idx)
+        if ce_ltp is None:
+            continue
+        changed = False
+        for trade in tlog:
+            if trade.get("Status") != "OPEN":
+                continue
+            lp     = ce_ltp if trade.get("Signal") == "BUY CE" else pe_ltp
+            ep_t   = float(trade.get("Entry Price") or 0)
+            qty_t  = int(trade.get("Qty") or 0)
+            sl     = float(trade.get("Stop Loss") or 0)
+            tgt    = float(trade.get("Target") or 0)
+            trade["Live Price"] = lp
+            if lp <= sl:
+                trade.update({"Status": "CLOSED", "Result": "🔴 LOSS",
+                              "Exit Price": lp, "Exit Time": now_str,
+                              "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
+                st.session_state[sk(idx, "last_signal")] = "WAIT"
+                send_telegram(f"🔴 *SL HIT — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+                changed = True
+            elif lp >= tgt:
+                trade.update({"Status": "CLOSED", "Result": "🟢 WIN",
+                              "Exit Price": lp, "Exit Time": now_str,
+                              "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
+                st.session_state[sk(idx, "last_signal")] = "WAIT"
+                send_telegram(f"🟢 *TARGET HIT — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+                changed = True
+        if changed:
+            save_log(idx)
+
+# Run price updater on every refresh (before tabs)
+update_open_trade_prices()
 
 # ── MAIN RENDER FUNCTION ──
 def render_index(idx):
