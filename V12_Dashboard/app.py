@@ -51,7 +51,7 @@ IST       = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 INDEX_CONFIG = {
     "NIFTY":     {"step":50,  "lot":65,  "rng":300},
     "BANKNIFTY": {"step":100, "lot":30,  "rng":600},
-    "FINNIFTY":  {"step":50,  "lot":65,  "rng":300},
+    "FINNIFTY":  {"step":50,  "lot":60,  "rng":300},
 }
 
 LOG_COLS = ["Entry Time","Exit Time","Index","Signal","Spot","Strike",
