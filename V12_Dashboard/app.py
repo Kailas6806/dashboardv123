@@ -91,11 +91,17 @@ def get_data(idx_name):
 
 # ── CALC TRADE ──
 def calc_trade(ep, lot):
-    sl_u  = round(ep*0.25,2); tgt_u = round(ep*0.50,2)
-    sl_p  = round(ep-sl_u,2); tgt_p = round(ep+tgt_u,2)
-    qty   = max(lot,(int(MAX_LOSS/sl_u)//lot)*lot) if sl_u>0 else lot
-    if ep*qty>CAPITAL: qty=max(lot,(int(CAPITAL/ep)//lot)*lot)
-    return qty, sl_p, tgt_p, round(sl_u*qty,2), round(tgt_u*qty,2)
+    qty = lot
+    if ep > 0 and ep * lot <= CAPITAL:
+        qty = max(lot, (int(CAPITAL/ep)//lot)*lot)
+        
+    sl_u  = round(MAX_LOSS / qty, 2)
+    tgt_u = round(2000 / qty, 2)
+    
+    sl_p  = max(0.05, round(ep - sl_u, 2))
+    tgt_p = round(ep + tgt_u, 2)
+    
+    return qty, sl_p, tgt_p, round(sl_u*qty, 2), round(tgt_u*qty, 2)
 
 # ── PER-INDEX SESSION KEYS ──
 def sk(idx, key): return f"{idx}_{key}"
