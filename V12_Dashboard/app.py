@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import datetime, os, requests
 import plotly.express as px
-from streamlit_autorefresh import st_autorefresh
 from jugaad_data.nse import NSELive
 
 # ── TELEGRAM ──
@@ -33,6 +32,10 @@ st.markdown("""
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:8px;}
 .filter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:8px;}
 .tracker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:8px;}
+/* Hide loading overlay so refresh is invisible (silent background update) */
+[data-testid="stStatusWidget"] {visibility:hidden !important;}
+div[data-stale="true"] {opacity:1 !important;}
+.stSpinner {display:none !important;}
 @media(max-width:640px){
   .kpi{font-size:16px;}.kpi-grid,.filter-grid,.tracker-grid{grid-template-columns:repeat(2,1fr);}
   .card{padding:8px;}[data-testid="stDataFrame"]{font-size:11px;}
@@ -40,7 +43,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st_autorefresh(interval=3000, key="refresh")
+
 
 # ── CONFIG ──
 CAPITAL   = 20_000
@@ -521,9 +524,12 @@ def render_index(idx):
 # ── TABS ──
 tab0, tab1, tab2, tab3 = st.tabs(["🟢 Open Trades", "📈 NIFTY", "🏦 BANKNIFTY", "💹 FINNIFTY"])
 
-with tab0:
-    st.subheader("🟢 All Open Trades")
+# Each fragment runs silently every 3 sec in the background — no page flicker
 
+@st.fragment(run_every=3)
+def show_open_trades():
+    update_open_trade_prices()
+    st.subheader("🟢 All Open Trades")
     all_open = []
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
@@ -539,7 +545,6 @@ with tab0:
   <div style="color:#6B7280;font-size:13px;margin-top:6px;">Waiting for a signal...</div>
 </div>""", unsafe_allow_html=True)
     else:
-        # Summary row
         total_trades = len(all_open)
         indices_active = list({t.get("Index","") for t in all_open})
         st.markdown(f"""
@@ -568,12 +573,10 @@ with tab0:
             upl   = round((lv - ev) * qty, 2)
             ml    = t.get("Max Loss ₹", "")
             tp    = t.get("Target P&L ₹", "")
-
-            sc  = "#34D399" if "CE" in str(sig) else "#F87171"
-            uc  = "#34D399" if upl >= 0 else "#F87171"
+            sc    = "#34D399" if "CE" in str(sig) else "#F87171"
+            uc    = "#34D399" if upl >= 0 else "#F87171"
             upl_arrow = "▲" if upl >= 0 else "▼"
             idx_color = "#6366F1" if idx == "NIFTY" else ("#F59E0B" if idx == "BANKNIFTY" else "#22D3EE")
-
             st.markdown(f"""
 <div class="card" style="border-left:5px solid {sc};margin-bottom:12px;">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
@@ -597,6 +600,16 @@ with tab0:
   </div>
 </div>""", unsafe_allow_html=True)
 
-with tab1: render_index("NIFTY")
-with tab2: render_index("BANKNIFTY")
-with tab3: render_index("FINNIFTY")
+@st.fragment(run_every=3)
+def show_nifty(): render_index("NIFTY")
+
+@st.fragment(run_every=3)
+def show_banknifty(): render_index("BANKNIFTY")
+
+@st.fragment(run_every=3)
+def show_finnifty(): render_index("FINNIFTY")
+
+with tab0: show_open_trades()
+with tab1: show_nifty()
+with tab2: show_banknifty()
+with tab3: show_finnifty()

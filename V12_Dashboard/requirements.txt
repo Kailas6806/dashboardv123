@@ -3,7 +3,6 @@ pandas>=2.0.0
 numpy
 plotly
 requests
-streamlit-autorefresh
 jugaad-data
 lxml
 brotli
