@@ -129,6 +129,27 @@ for idx in INDEX_CONFIG:
         st.session_state[sk(idx,"trade_log")] = load_log(idx)
 
 # ── LIVE PRICE UPDATER (runs every refresh for ALL indices with open trades) ──
+def get_strike_price(idx_name, strike, signal):
+    """Fetch LTP for a specific strike from the option chain."""
+    try:
+        d = nse_option_chain(idx_name)
+        if not d or "records" not in d: return None, None
+        records = d["records"]["data"]
+        spot    = d["records"]["underlyingValue"]
+        try:
+            strike = float(strike)
+        except (ValueError, TypeError):
+            pass
+        for item in records:
+            if float(item.get("strikePrice", 0)) == strike:
+                if signal == "BUY CE":
+                    return round(float(item.get("CE", {}).get("lastPrice", 0)), 2), spot
+                else:
+                    return round(float(item.get("PE", {}).get("lastPrice", 0)), 2), spot
+        return None, spot
+    except:
+        return None, None
+
 def get_atm_prices(idx_name):
     """Fetch ATM CE/PE LTP using the persistent session."""
     try:
@@ -150,28 +171,62 @@ def get_atm_prices(idx_name):
     except:
         return None, None, None
 
+def close_trade_manually(idx, trade):
+    """Close a trade at current live price (manual exit)."""
+    now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+    strike  = trade.get("Strike")
+    signal  = trade.get("Signal", "")
+    lp, _   = get_strike_price(idx, strike, signal)
+    if lp is None:
+        lp = float(trade.get("Live Price") or trade.get("Entry Price") or 0)
+    ep_t  = float(trade.get("Entry Price") or 0)
+    qty_t = int(trade.get("Qty") or 0)
+    pnl   = round((lp - ep_t) * qty_t, 2)
+    trade.update({"Status": "CLOSED", "Result": "🟡 MANUAL",
+                  "Exit Price": lp, "Exit Time": now_str,
+                  "Actual P&L ₹": pnl, "Live Price": lp})
+    st.session_state[sk(idx, "last_signal")] = "WAIT"
+    save_log(idx)
+    send_telegram(f"🟡 *MANUAL EXIT — {idx} {signal}*\n"
+                  f"📍 Strike: `{strike}` | Exit: `{lp}`\n"
+                  f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`")
+
 def update_open_trade_prices():
-    """Fetch fresh prices for every index that has an open trade."""
+    """Fetch fresh prices for every index that has an open trade, using trade's actual strike."""
     now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
         has_open = any(t.get("Status") == "OPEN" for t in tlog)
         if not has_open:
             continue
-        ce_ltp, pe_ltp, _ = get_atm_prices(idx)
-        if ce_ltp is None:
+        # Fetch full option chain once per index
+        try:
+            d = nse_option_chain(idx)
+            if not d or "records" not in d: continue
+            chain_records = {float(item["strikePrice"]): item for item in d["records"]["data"]}
+        except:
             continue
         changed = False
         for trade in tlog:
             if trade.get("Status") != "OPEN":
                 continue
-            lp     = ce_ltp if trade.get("Signal") == "BUY CE" else pe_ltp
-            ep_t   = float(trade.get("Entry Price") or 0)
-            qty_t  = int(trade.get("Qty") or 0)
-            sl     = float(trade.get("Stop Loss") or 0)
-            tgt    = float(trade.get("Target") or 0)
+            try:
+                strike = float(trade.get("Strike", 0))
+            except (ValueError, TypeError):
+                strike = 0.0
+            signal = trade.get("Signal", "")
+            item   = chain_records.get(strike, {})
+            opt    = item.get("CE", {}) if signal == "BUY CE" else item.get("PE", {})
+            lp     = round(float(opt.get("lastPrice", 0) or 0), 2)
+            if lp == 0:
+                # fallback: keep previous live price
+                lp = float(trade.get("Live Price") or trade.get("Entry Price") or 0)
+            ep_t  = float(trade.get("Entry Price") or 0)
+            qty_t = int(trade.get("Qty") or 0)
+            sl    = float(trade.get("Stop Loss") or 0)
+            tgt   = float(trade.get("Target") or 0)
             trade["Live Price"] = lp
-            if lp <= sl:
+            if lp <= sl and lp > 0:
                 trade.update({"Status": "CLOSED", "Result": "🔴 LOSS",
                               "Exit Price": lp, "Exit Time": now_str,
                               "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
@@ -180,7 +235,7 @@ def update_open_trade_prices():
                               f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                               f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
                 changed = True
-            elif lp >= tgt:
+            elif lp >= tgt and lp > 0:
                 trade.update({"Status": "CLOSED", "Result": "🟢 WIN",
                               "Exit Price": lp, "Exit Time": now_str,
                               "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
@@ -340,30 +395,44 @@ def render_index(idx):
     ce_price=round(float(atm_row["CE LTP"]),2)
     pe_price=round(float(atm_row["PE LTP"]),2)
 
-    # ── CHECK SL/TARGET on open trades ──
+    # ── CHECK SL/TARGET on open trades (use trade's actual strike price) ──
     changed=False
     for trade in st.session_state[tlog_key]:
         if trade.get("Status")=="OPEN":
-            lp=ce_price if trade.get("Signal")=="BUY CE" else pe_price
+            try:
+                strike_t = float(trade.get("Strike", 0))
+            except (ValueError, TypeError):
+                strike_t = 0.0
+            signal_t = trade.get("Signal", "")
+            # Find LTP for the exact strike in current chain data
+            lp = 0
+            for item in records:
+                if float(item.get("strikePrice", 0)) == strike_t:
+                    opt = item.get("CE", {}) if signal_t == "BUY CE" else item.get("PE", {})
+                    lp  = round(float(opt.get("lastPrice", 0) or 0), 2)
+                    break
+            if lp == 0:
+                # fallback: keep previous live price
+                lp = float(trade.get("Live Price") or trade.get("Entry Price") or 0)
             sl=float(trade.get("Stop Loss") or 0)
             tgt=float(trade.get("Target") or 0)
             ep_t=float(trade.get("Entry Price") or 0)
             qty_t=int(trade.get("Qty") or 0)
             trade["Live Price"]=lp
             now_str=datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-            if lp<=sl:
+            if lp<=sl and lp>0:
                 trade.update({"Status":"CLOSED","Result":"🔴 LOSS","Exit Price":lp,
                                "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
                 changed=True
-                st.session_state[sk(idx,"last_signal")]="WAIT"  # allow re-entry after SL
+                st.session_state[sk(idx,"last_signal")]="WAIT"
                 send_telegram(f"🔴 *SL HIT — {idx} {trade.get('Signal')}*\n"
                               f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                               f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
-            elif lp>=tgt:
+            elif lp>=tgt and lp>0:
                 trade.update({"Status":"CLOSED","Result":"🟢 WIN","Exit Price":lp,
                                "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
                 changed=True
-                st.session_state[sk(idx,"last_signal")]="WAIT"  # allow re-entry after target
+                st.session_state[sk(idx,"last_signal")]="WAIT"
                 send_telegram(f"🟢 *TARGET HIT — {idx} {trade.get('Signal')}*\n"
                               f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                               f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
@@ -519,6 +588,13 @@ def render_index(idx):
     <div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
     <div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
   </div></div>""",unsafe_allow_html=True)
+                st.write("")
+                if st.button(f"❌ Close Position ({idx} {ot.get('Signal')} {ot.get('Strike')})",
+                             key=f"close_{idx}_expander",
+                             type="primary", use_container_width=True):
+                    close_trade_manually(idx, ot)
+                    st.session_state[sk(idx, "signal_buffer")] = []
+                    st.rerun()
             else: st.info("No open position. Waiting for signal...")
         with t2:
             if st.session_state[tlog_key]:
@@ -574,7 +650,7 @@ def show_open_trades():
   </div>
 </div>""", unsafe_allow_html=True)
 
-        for t in all_open:
+        for i_t, t in enumerate(all_open):
             idx   = t.get("Index", "")
             sig   = t.get("Signal", "")
             ev    = float(t.get("Entry Price") or 0)
@@ -592,7 +668,10 @@ def show_open_trades():
             uc    = "#34D399" if upl >= 0 else "#F87171"
             upl_arrow = "▲" if upl >= 0 else "▼"
             idx_color = "#6366F1" if idx == "NIFTY" else ("#F59E0B" if idx == "BANKNIFTY" else "#22D3EE")
-            st.markdown(f"""
+            pnl_disp  = f"+₹{upl:,.0f}" if upl >= 0 else f"-₹{abs(upl):,.0f}"
+            col_card, col_btn = st.columns([5, 1])
+            with col_card:
+                st.markdown(f"""
 <div class="card" style="border-left:5px solid {sc};margin-bottom:12px;">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
     <div style="display:flex;align-items:center;gap:10px;">
@@ -601,11 +680,11 @@ def show_open_trades():
       <span style="color:#9CA3AF;font-size:12px;">Strike: <b style="color:white;">{strk}</b></span>
       <span style="color:#9CA3AF;font-size:12px;">Spot: <b style="color:white;">{spot}</b></span>
     </div>
-    <div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} ₹{abs(upl):,.0f}</div>
+    <div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} {pnl_disp}</div>
   </div>
   <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
     <div><div class="label">Entry Price</div><div style="color:white;font-weight:700;">₹{ev}</div></div>
-    <div><div class="label">Live Price</div><div style="color:white;font-weight:700;">₹{lv}</div></div>
+    <div><div class="label">Live Price</div><div style="color:{uc};font-weight:700;">₹{lv}</div></div>
     <div><div class="label">Stop Loss</div><div style="color:#F87171;font-weight:700;">₹{sl}</div></div>
     <div><div class="label">Target</div><div style="color:#34D399;font-weight:700;">₹{tgt}</div></div>
     <div><div class="label">Qty</div><div style="color:white;font-weight:700;">{qty}</div></div>
@@ -614,6 +693,15 @@ def show_open_trades():
     <div><div class="label">Entry Time</div><div style="color:#9CA3AF;font-weight:700;">{etime}</div></div>
   </div>
 </div>""", unsafe_allow_html=True)
+            with col_btn:
+                st.write("")
+                st.write("")
+                if st.button("❌ Close", key=f"close_open_{idx}_{i_t}",
+                             type="primary", use_container_width=True,
+                             help=f"Close {idx} {sig} @ {strk} at market price"):
+                    close_trade_manually(idx, t)
+                    st.session_state[sk(idx, "signal_buffer")] = []
+                    st.rerun()
 
 @st.fragment(run_every=3)
 def show_nifty(): render_index("NIFTY")
