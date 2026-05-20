@@ -716,3 +716,53 @@ with tab0: show_open_trades()
 with tab1: show_nifty()
 with tab2: show_banknifty()
 with tab3: show_finnifty()
+
+# ── DAILY P&L REPORT ──
+def send_daily_pnl_report():
+    now = datetime.datetime.now(IST)
+    current_date = now.strftime("%Y-%m-%d")
+    
+    # Check if time is >= 14:55
+    if now.time() >= datetime.time(14, 55):
+        if st.session_state.get("daily_report_date") != current_date:
+            total_pnl = 0
+            total_trades = 0
+            wins = 0
+            losses = 0
+            report_lines = [f"📊 *DAILY P&L REPORT — {current_date}*\n"]
+            
+            for idx in INDEX_CONFIG:
+                tlog = st.session_state.get(sk(idx, "trade_log"), [])
+                if not tlog: continue
+                
+                df = pd.DataFrame(tlog)
+                closed = df[df["Status"] == "CLOSED"] if not df.empty else pd.DataFrame()
+                if closed.empty: continue
+                
+                pnl_s = closed["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
+                idx_pnl = pnl_s.sum()
+                idx_trades = len(closed)
+                idx_wins = (pnl_s > 0).sum()
+                idx_losses = (pnl_s <= 0).sum()
+                
+                total_pnl += idx_pnl
+                total_trades += idx_trades
+                wins += idx_wins
+                losses += idx_losses
+                
+                emoji = "🟢" if idx_pnl >= 0 else "🔴"
+                report_lines.append(f"{emoji} *{idx}*: ₹{idx_pnl:,.0f} ({idx_wins}W/{idx_losses}L)")
+            
+            report_lines.append(f"\n📈 *TOTAL TRADES*: {total_trades} ({wins}W / {losses}L)")
+            final_emoji = "🟢" if total_pnl >= 0 else "🔴"
+            report_lines.append(f"{final_emoji} *NET P&L*: ₹{total_pnl:,.0f}")
+            
+            if total_trades > 0:
+                send_telegram("\n".join(report_lines))
+            st.session_state["daily_report_date"] = current_date
+
+@st.fragment(run_every=60)
+def check_daily_report():
+    send_daily_pnl_report()
+
+check_daily_report()
