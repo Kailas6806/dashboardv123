@@ -47,8 +47,8 @@ div[data-stale="true"] {opacity:1 !important;}
 
 # ── CONFIG ──
 CAPITAL   = 20_000
-MAX_LOSS  = 500
-DAILY_TGT = 1_000
+MAX_LOSS  = 1000
+DAILY_TGT = 2000
 IST       = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 INDEX_CONFIG = {
@@ -91,7 +91,7 @@ def get_data(idx_name):
 
 # ── CALC TRADE ──
 def calc_trade(ep, lot):
-    sl_u  = round(ep*0.25,2); tgt_u = round(ep*1.0,2)
+    sl_u  = round(ep*0.25,2); tgt_u = round(ep*0.50,2)
     sl_p  = round(ep-sl_u,2); tgt_p = round(ep+tgt_u,2)
     qty   = max(lot,(int(MAX_LOSS/sl_u)//lot)*lot) if sl_u>0 else lot
     if ep*qty>CAPITAL: qty=max(lot,(int(CAPITAL/ep)//lot)*lot)
