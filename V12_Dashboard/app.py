@@ -64,15 +64,30 @@ LOG_COLS = ["Entry Time","Exit Time","Index","Signal","Spot","Strike",
 
 st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
 
-# ── FETCH (no cache — always fresh on every autorefresh) ──
-def get_data(idx_name):
-    try:
-        d = NSELive().index_option_chain(idx_name)
-        if d and "records" in d and d["records"].get("data"):
-            return d
-    except Exception as e:
-        st.warning(f"⚠️ {idx_name} fetch error: {e}")
+# ── PERSISTENT NSELive SESSION ──
+# Reuse one session across all refreshes — avoids HTTP handshake delay every call
+def get_nse():
+    if "_nse_live" not in st.session_state:
+        st.session_state["_nse_live"] = NSELive()
+    return st.session_state["_nse_live"]
+
+def nse_option_chain(idx_name):
+    """Fetch option chain, recreate session on failure."""
+    for attempt in range(2):
+        try:
+            d = get_nse().index_option_chain(idx_name)
+            if d and "records" in d and d["records"].get("data"):
+                return d
+        except Exception as e:
+            # Session may have expired — recreate it
+            st.session_state.pop("_nse_live", None)
+            if attempt == 1:
+                st.warning(f"⚠️ {idx_name} fetch error: {e}")
     return None
+
+# ── FETCH (always fresh, reuses persistent session) ──
+def get_data(idx_name):
+    return nse_option_chain(idx_name)
 
 # ── CALC TRADE ──
 def calc_trade(ep, lot):
@@ -115,10 +130,10 @@ for idx in INDEX_CONFIG:
 
 # ── LIVE PRICE UPDATER (runs every refresh for ALL indices with open trades) ──
 def get_atm_prices(idx_name):
-    """Lightweight fetch — returns (ce_ltp, pe_ltp, spot) for the ATM strike."""
+    """Fetch ATM CE/PE LTP using the persistent session."""
     try:
         step = INDEX_CONFIG[idx_name]["step"]
-        d = NSELive().index_option_chain(idx_name)
+        d = nse_option_chain(idx_name)
         if not d or "records" not in d: return None, None, None
         records = d["records"]["data"]
         spot    = d["records"]["underlyingValue"]
