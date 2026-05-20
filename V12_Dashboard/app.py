@@ -452,7 +452,84 @@ def render_index(idx):
             else: st.info("Waiting for first signal...")
 
 # ── TABS ──
-tab1, tab2, tab3 = st.tabs(["📈 NIFTY", "🏦 BANKNIFTY", "💹 FINNIFTY"])
+tab0, tab1, tab2, tab3 = st.tabs(["🟢 Open Trades", "📈 NIFTY", "🏦 BANKNIFTY", "💹 FINNIFTY"])
+
+with tab0:
+    st.subheader("🟢 All Open Trades")
+
+    all_open = []
+    for idx in INDEX_CONFIG:
+        tlog = st.session_state.get(sk(idx, "trade_log"), [])
+        for t in tlog:
+            if t.get("Status") == "OPEN":
+                all_open.append(t)
+
+    if not all_open:
+        st.markdown("""
+<div style="text-align:center;padding:60px 20px;">
+  <div style="font-size:48px;">📭</div>
+  <div style="color:#9CA3AF;font-size:18px;margin-top:12px;">No open trades right now</div>
+  <div style="color:#6B7280;font-size:13px;margin-top:6px;">Waiting for a signal...</div>
+</div>""", unsafe_allow_html=True)
+    else:
+        # Summary row
+        total_trades = len(all_open)
+        indices_active = list({t.get("Index","") for t in all_open})
+        st.markdown(f"""
+<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+  <div class="card" style="padding:10px 18px;min-width:130px;">
+    <div class="label">Open Trades</div>
+    <div class="kpi" style="color:#34D399;">{total_trades}</div>
+  </div>
+  <div class="card" style="padding:10px 18px;min-width:130px;">
+    <div class="label">Active Indices</div>
+    <div class="kpi">{" · ".join(indices_active)}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        for t in all_open:
+            idx   = t.get("Index", "")
+            sig   = t.get("Signal", "")
+            ev    = float(t.get("Entry Price") or 0)
+            lv    = float(t.get("Live Price") or ev)
+            sl    = t.get("Stop Loss", "")
+            tgt   = t.get("Target", "")
+            qty   = int(t.get("Qty") or 0)
+            strk  = t.get("Strike", "")
+            spot  = t.get("Spot", "")
+            etime = t.get("Entry Time", "")
+            upl   = round((lv - ev) * qty, 2)
+            ml    = t.get("Max Loss ₹", "")
+            tp    = t.get("Target P&L ₹", "")
+
+            sc  = "#34D399" if "CE" in str(sig) else "#F87171"
+            uc  = "#34D399" if upl >= 0 else "#F87171"
+            upl_arrow = "▲" if upl >= 0 else "▼"
+            idx_color = "#6366F1" if idx == "NIFTY" else ("#F59E0B" if idx == "BANKNIFTY" else "#22D3EE")
+
+            st.markdown(f"""
+<div class="card" style="border-left:5px solid {sc};margin-bottom:12px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="background:{idx_color};color:white;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">{idx}</span>
+      <span style="color:{sc};font-size:20px;font-weight:800;">{sig}</span>
+      <span style="color:#9CA3AF;font-size:12px;">Strike: <b style="color:white;">{strk}</b></span>
+      <span style="color:#9CA3AF;font-size:12px;">Spot: <b style="color:white;">{spot}</b></span>
+    </div>
+    <div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} ₹{abs(upl):,.0f}</div>
+  </div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
+    <div><div class="label">Entry Price</div><div style="color:white;font-weight:700;">₹{ev}</div></div>
+    <div><div class="label">Live Price</div><div style="color:white;font-weight:700;">₹{lv}</div></div>
+    <div><div class="label">Stop Loss</div><div style="color:#F87171;font-weight:700;">₹{sl}</div></div>
+    <div><div class="label">Target</div><div style="color:#34D399;font-weight:700;">₹{tgt}</div></div>
+    <div><div class="label">Qty</div><div style="color:white;font-weight:700;">{qty}</div></div>
+    <div><div class="label">Max Loss</div><div style="color:#F87171;font-weight:700;">₹{ml}</div></div>
+    <div><div class="label">Target P&L</div><div style="color:#34D399;font-weight:700;">₹{tp}</div></div>
+    <div><div class="label">Entry Time</div><div style="color:#9CA3AF;font-weight:700;">{etime}</div></div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
 with tab1: render_index("NIFTY")
 with tab2: render_index("BANKNIFTY")
 with tab3: render_index("FINNIFTY")
