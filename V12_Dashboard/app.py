@@ -199,7 +199,9 @@ def close_trade_manually(idx, trade):
 
 def update_open_trade_prices():
     """Fetch fresh prices for every index that has an open trade, using trade's actual strike."""
-    now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+    now = datetime.datetime.now(IST)
+    now_str = now.strftime("%I:%M:%S %p")
+    auto_sq = now.time() >= datetime.time(15, 25)
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
         has_open = any(t.get("Status") == "OPEN" for t in tlog)
@@ -232,7 +234,16 @@ def update_open_trade_prices():
             sl    = float(trade.get("Stop Loss") or 0)
             tgt   = float(trade.get("Target") or 0)
             trade["Live Price"] = lp
-            if lp <= sl and lp > 0:
+            if auto_sq:
+                trade.update({"Status": "CLOSED", "Result": "🟡 AUTO-SQUARE OFF",
+                              "Exit Price": lp, "Exit Time": now_str,
+                              "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
+                st.session_state[sk(idx, "last_signal")] = "WAIT"
+                send_telegram(f"🟡 *AUTO-SQUARE OFF — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+                changed = True
+            elif lp <= sl and lp > 0:
                 trade.update({"Status": "CLOSED", "Result": "🔴 LOSS",
                               "Exit Price": lp, "Exit Time": now_str,
                               "Actual P&L ₹": round((lp - ep_t) * qty_t, 2)})
@@ -425,8 +436,18 @@ def render_index(idx):
             ep_t=float(trade.get("Entry Price") or 0)
             qty_t=int(trade.get("Qty") or 0)
             trade["Live Price"]=lp
-            now_str=datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-            if lp<=sl and lp>0:
+            now = datetime.datetime.now(IST)
+            now_str = now.strftime("%I:%M:%S %p")
+            auto_sq = now.time() >= datetime.time(15, 25)
+            if auto_sq:
+                trade.update({"Status":"CLOSED","Result":"🟡 AUTO-SQUARE OFF","Exit Price":lp,
+                               "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
+                changed=True
+                st.session_state[sk(idx,"last_signal")]="WAIT"
+                send_telegram(f"🟡 *AUTO-SQUARE OFF — {idx} {trade.get('Signal')}*\n"
+                              f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                              f"💸 P&L: `₹{trade['Actual P&L ₹']:,.0f}` | Time: `{now_str}`")
+            elif lp<=sl and lp>0:
                 trade.update({"Status":"CLOSED","Result":"🔴 LOSS","Exit Price":lp,
                                "Exit Time":now_str,"Actual P&L ₹":round((lp-ep_t)*qty_t,2)})
                 changed=True
