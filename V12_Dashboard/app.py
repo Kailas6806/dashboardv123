@@ -12,12 +12,13 @@ Slim orchestrator. All logic lives in modular packages:
 import streamlit as st
 import pandas as pd
 import datetime
+import os
 
 # ── CONFIGURATION ──
 from config import (
     INDEX_CONFIG, IST, CAPITAL, DAILY_TGT,
     FRAGMENT_REFRESH_SECONDS, DAILY_REPORT_CHECK_SECS,
-    DAILY_REPORT_TIME,
+    DAILY_REPORT_TIME, LOG_DIR,
 )
 
 # ── MODULES ──
@@ -121,6 +122,12 @@ def send_daily_pnl_report():
     now = datetime.datetime.now(IST)
     current_date = now.strftime("%Y-%m-%d")
 
+    # Fast path: check daily lock file first to avoid redundant checks & double sending
+    lock_file = os.path.join(LOG_DIR, f"daily_report_{current_date}.lock")
+    if os.path.exists(lock_file):
+        st.session_state["daily_report_date"] = current_date
+        return
+
     if now.time() >= DAILY_REPORT_TIME:
         if st.session_state.get("daily_report_date") != current_date:
             total_pnl = 0
@@ -161,6 +168,13 @@ def send_daily_pnl_report():
 
             if total_trades > 0:
                 notifier.send_daily_report(report_lines)
+                os.makedirs(LOG_DIR, exist_ok=True)
+                try:
+                    with open(lock_file, "w") as f:
+                        f.write(f"sent_at: {now.isoformat()}\n")
+                    logger.info(f"Daily report sent and lock file created: {lock_file}")
+                except Exception as e:
+                    logger.error(f"Failed to write daily report lock file: {e}")
             st.session_state["daily_report_date"] = current_date
             logger.info(f"Daily report sent: {total_trades} trades, P&L: ₹{total_pnl:,.0f}")
 

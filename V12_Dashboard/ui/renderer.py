@@ -529,7 +529,65 @@ def render_open_trades_tab(trade_mgr, fetcher):
         except Exception as e:
             logger.warning(f"Open trades update error for {idx}: {e}")
 
-    st.subheader("🟢 All Open Trades")
+    col_hdr, col_report = st.columns([3, 2])
+    with col_hdr:
+        st.subheader("🟢 All Open Trades")
+    with col_report:
+        st.write("")
+        if st.button("📨 Send Daily Report Now", key="send_report_manual", use_container_width=True, help="Manually generate and send the daily P&L report via Telegram"):
+            import os
+            from config import LOG_DIR
+            current_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+            lock_file = os.path.join(LOG_DIR, f"daily_report_{current_date}.lock")
+
+            total_pnl = 0
+            total_trades = 0
+            wins = 0
+            losses = 0
+            report_lines = [f"📊 *DAILY P&L REPORT — {current_date}*\n"]
+
+            for idx in INDEX_CONFIG:
+                tlog = st.session_state.get(sk(idx, "trade_log"), [])
+                if not tlog:
+                    continue
+
+                df = pd.DataFrame(tlog)
+                closed = df[df["Status"] == "CLOSED"] if not df.empty else pd.DataFrame()
+                if closed.empty:
+                    continue
+
+                pnl_s = closed["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
+                idx_pnl = pnl_s.sum()
+                idx_trades = len(closed)
+                idx_wins = (pnl_s > 0).sum()
+                idx_losses = (pnl_s <= 0).sum()
+
+                total_pnl += idx_pnl
+                total_trades += idx_trades
+                wins += idx_wins
+                losses += idx_losses
+
+                emoji = "🟢" if idx_pnl >= 0 else "🔴"
+                report_lines.append(
+                    f"{emoji} *{idx}*: ₹{idx_pnl:,.0f} ({idx_wins}W/{idx_losses}L)"
+                )
+
+            report_lines.append(f"\n📈 *TOTAL TRADES*: {total_trades} ({wins}W / {losses}L)")
+            final_emoji = "🟢" if total_pnl >= 0 else "🔴"
+            report_lines.append(f"{final_emoji} *NET P&L*: ₹{total_pnl:,.0f}")
+
+            if total_trades > 0:
+                trade_mgr.notifier.send_daily_report(report_lines)
+                os.makedirs(LOG_DIR, exist_ok=True)
+                try:
+                    with open(lock_file, "w") as f:
+                        f.write(f"sent_at: {datetime.datetime.now(IST).isoformat()} (manual)\n")
+                except Exception as e:
+                    logger.error(f"Failed to write manual daily report lock file: {e}")
+                st.success("✅ Daily P&L report sent to Telegram!")
+            else:
+                st.warning("⚠️ No closed trades found for today. Report not sent.")
+
     all_open = []
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
