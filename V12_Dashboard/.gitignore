@@ -15,3 +15,12 @@ trade_log_*.csv
 # OS
 .DS_Store
 Thumbs.db
+
+# Option chain cache files
+last_data_*.json
+
+# Log directories
+logs/
+
+# Trade journal persistence
+trade_journal.json
