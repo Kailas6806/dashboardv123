@@ -249,22 +249,26 @@ class TradeManager:
 
             elif lp <= sl and lp > 0:
                 pnl = round((lp - ep_t) * qty_t, 2)
+                is_trailing_win = pnl > 0
+                result_str = "🟢 WIN" if is_trailing_win else "🔴 LOSS"
                 trade.update({
                     "Status": "CLOSED",
-                    "Result": "🔴 LOSS",
+                    "Result": result_str,
                     "Exit Price": lp,
                     "Exit Time": now_str,
                     "Actual P&L ₹": pnl,
                 })
                 events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
+                emoji = "🟢" if is_trailing_win else "🔴"
+                label = "TRAILING SL HIT" if is_trailing_win else "SL HIT"
                 self._notify(
-                    f"🔴 *SL HIT — {idx} {signal}*\n"
+                    f"{emoji} *{label} — {idx} {signal}*\n"
                     f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                     f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
                 )
                 log.info(
-                    "SL HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                    idx, signal, trade.get("Strike"), lp, pnl,
+                    "%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                    label, idx, signal, trade.get("Strike"), lp, pnl,
                 )
 
             elif lp >= tgt and lp > 0:

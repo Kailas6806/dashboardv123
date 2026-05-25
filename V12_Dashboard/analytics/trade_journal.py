@@ -180,8 +180,7 @@ class TradeJournal:
         for t in trades:
             pnl = self._safe_float(t.get("Actual P&L ₹", 0))
             all_pnls.append(pnl)
-            result = str(t.get("Result", "")).upper()
-            is_win = result == "WIN" or (result == "" and pnl > 0)
+            is_win = pnl > 0
 
             if is_win:
                 win_pnls.append(pnl)
@@ -352,14 +351,8 @@ class TradeJournal:
         count = 0
 
         for t in reversed(trades):
-            result = str(t.get("Result", "")).upper()
-            pnl = 0.0
-            try:
-                pnl = float(t.get("Actual P&L ₹", 0))
-            except (ValueError, TypeError):
-                pass
-
-            current = "WIN" if result == "WIN" or (result == "" and pnl > 0) else "LOSS"
+            pnl = TradeJournal._safe_float(t.get("Actual P&L ₹", 0))
+            current = "WIN" if pnl > 0 else "LOSS"
 
             if streak_type is None:
                 streak_type = current
@@ -379,13 +372,8 @@ class TradeJournal:
         """
         count = 0
         for t in reversed(trades):
-            result = str(t.get("Result", "")).upper()
-            pnl = 0.0
-            try:
-                pnl = float(t.get("Actual P&L ₹", 0))
-            except (ValueError, TypeError):
-                pass
-            is_loss = result == "LOSS" or (result == "" and pnl <= 0)
+            pnl = TradeJournal._safe_float(t.get("Actual P&L ₹", 0))
+            is_loss = pnl <= 0
             if is_loss:
                 count += 1
             else:
