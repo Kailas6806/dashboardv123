@@ -547,7 +547,24 @@ def render_open_trades_tab(trade_mgr, fetcher):
             if events:
                 trade_mgr.save_log(idx, tlog)
                 for ev in events:
+                    if ev["type"] == "SL_HIT":
+                        st.session_state[sk(idx, "last_sl_time")] = now
                     st.session_state[sk(idx, "last_signal")] = "WAIT"
+                    
+                    # Record exit in journal
+                    journal = st.session_state.get("_journal")
+                    if journal:
+                        trade = ev["trade"]
+                        journal.update_trade(
+                            trade.get("_journal_id", ""),
+                            {
+                                "Exit Time": trade.get("Exit Time"),
+                                "Exit Price": trade.get("Exit Price"),
+                                "Actual P&L ₹": trade.get("Actual P&L ₹"),
+                                "Status": trade.get("Status"),
+                                "Result": trade.get("Result"),
+                            }
+                        )
         except Exception as e:
             logger.warning(f"Open trades update error for {idx}: {e}")
 
