@@ -215,7 +215,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                     "Actual P&L ₹": trade.get("Actual P&L ₹"),
                     "Status": trade.get("Status"),
                     "Result": trade.get("Result"),
-                }
+                },
+                trade
             )
 
     # ── KPI DISPLAY ──
@@ -474,7 +475,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                         "Exit Price": ot.get("Exit Price"),
                         "Actual P&L ₹": ot.get("Actual P&L ₹"),
                         "Status": "CLOSED", "Result": "🟡 MANUAL",
-                    })
+                    }, ot)
                     st.rerun()
             else:
                 st.info("No open position. Waiting for signal...")
@@ -563,7 +564,8 @@ def render_open_trades_tab(trade_mgr, fetcher):
                                 "Actual P&L ₹": trade.get("Actual P&L ₹"),
                                 "Status": trade.get("Status"),
                                 "Result": trade.get("Result"),
-                            }
+                            },
+                            trade
                         )
         except Exception as e:
             logger.warning(f"Open trades update error for {idx}: {e}")
@@ -684,4 +686,19 @@ def render_open_trades_tab(trade_mgr, fetcher):
                     st.session_state[sk(idx, "signal_buffer")] = []
                     st.session_state[sk(idx, "last_signal")] = "WAIT"
                     trade_mgr.save_log(idx, st.session_state.get(tlog_key, []))
+                    
+                    # Record exit in journal
+                    journal = st.session_state.get("_journal")
+                    if journal:
+                        journal.update_trade(
+                            t.get("_journal_id", ""),
+                            {
+                                "Exit Time": t.get("Exit Time"),
+                                "Exit Price": t.get("Exit Price"),
+                                "Actual P&L ₹": t.get("Actual P&L ₹"),
+                                "Status": "CLOSED",
+                                "Result": "🟡 MANUAL",
+                            },
+                            t
+                        )
                     st.rerun()

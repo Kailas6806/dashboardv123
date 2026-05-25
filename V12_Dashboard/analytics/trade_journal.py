@@ -82,27 +82,52 @@ class TradeJournal:
         logger.info("Recorded trade %s", trade_id)
         return trade_id
 
-    def update_trade(self, trade_id: str, exit_data: Dict[str, Any]) -> bool:
+    def update_trade(self, trade_id: str, exit_data: Dict[str, Any], trade_dict: Optional[Dict[str, Any]] = None) -> bool:
         """Update an existing trade with exit information.
 
         Args:
             trade_id: The unique trade identifier returned by ``record_trade``.
             exit_data: Dict containing any of ``Exit Time``, ``Exit Price``,
                        ``Actual P&L ₹``, ``Status``, ``Result``, etc.
+            trade_dict: Optional trade dictionary to match by fields if trade_id is empty/not found.
 
         Returns:
             ``True`` if the trade was found and updated, ``False`` otherwise.
         """
-        for entry in self.trades:
-            if entry.get("trade_id") == trade_id:
-                for key, value in exit_data.items():
-                    if isinstance(value, datetime):
-                        value = value.isoformat()
-                    entry[key] = value
-                entry["updated_at"] = datetime.now(tz=IST).isoformat()
-                self._save()
-                logger.info("Updated trade %s with exit data", trade_id)
-                return True
+        # Try finding by trade_id first
+        if trade_id:
+            for entry in self.trades:
+                if entry.get("trade_id") == trade_id:
+                    for key, value in exit_data.items():
+                        if isinstance(value, datetime):
+                            value = value.isoformat()
+                        entry[key] = value
+                    entry["updated_at"] = datetime.now(tz=IST).isoformat()
+                    self._save()
+                    logger.info("Updated trade %s with exit data", trade_id)
+                    return True
+
+        # Fallback: Try finding by fields if trade_dict is provided
+        if trade_dict:
+            idx = trade_dict.get("Index")
+            etime = trade_dict.get("Entry Time")
+            strike = trade_dict.get("Strike")
+            sig = trade_dict.get("Signal")
+            for entry in self.trades:
+                if (entry.get("Index") == idx 
+                    and entry.get("Entry Time") == etime 
+                    and str(entry.get("Strike")) == str(strike) 
+                    and entry.get("Signal") == sig
+                    and entry.get("Status") == "OPEN"):
+                    for key, value in exit_data.items():
+                        if isinstance(value, datetime):
+                            value = value.isoformat()
+                        entry[key] = value
+                    entry["updated_at"] = datetime.now(tz=IST).isoformat()
+                    self._save()
+                    logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
+                    return True
+
         logger.warning("Trade %s not found for update", trade_id)
         return False
 
