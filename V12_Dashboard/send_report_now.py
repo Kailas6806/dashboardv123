@@ -17,8 +17,11 @@ def build_report():
 
     journal = TradeJournal()
     for idx in INDEX_CONFIG:
-        # Load trades for this index from the journal
-        trades = [t for t in journal.get_all_trades() if t.get('Index') == idx]
+        # Load today's trades for this index from the journal
+        trades = [
+            t for t in journal.get_all_trades()
+            if t.get('Index') == idx and t.get('recorded_at', '').startswith(current_date)
+        ]
         if not trades:
             continue
         df = pd.DataFrame(trades)

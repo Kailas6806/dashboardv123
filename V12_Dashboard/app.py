@@ -185,3 +185,5 @@ def check_daily_report():
 
 
 check_daily_report()
+
+# ── FORCED RELOAD TRIGGER ──

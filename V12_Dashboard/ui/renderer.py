@@ -10,7 +10,7 @@ import datetime
 from config import (
     INDEX_CONFIG, CAPITAL, MAX_LOSS, DAILY_TGT, IST, LOG_COLS,
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
-    FRAGMENT_REFRESH_SECONDS, MAX_DAILY_LOSSES,
+    FRAGMENT_REFRESH_SECONDS, MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
@@ -119,8 +119,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
     for item in records:
         s = item.get("strikePrice", 0)
         if abs(s - atm) <= rng:
-            ce = item.get("CE", {})
-            pe = item.get("PE", {})
+            ce = item.get("CE") or {}
+            pe = item.get("PE") or {}
             rows.append({
                 "Strike": s,
                 "CE LTP": ce.get("lastPrice", 0),
@@ -268,10 +268,32 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         else:
             break
 
+    cooldown_remaining = 0
+    closed_trades_idx = [t for t in st.session_state[tlog_key] if t.get("Status") == "CLOSED" and t.get("Result", "")]
+    if closed_trades_idx:
+        last_closed = closed_trades_idx[0]
+        if "LOSS" in str(last_closed.get("Result", "")):
+            exit_time_str = last_closed.get("Exit Time", "")
+            if exit_time_str:
+                try:
+                    exit_time = datetime.datetime.strptime(
+                        exit_time_str, "%I:%M:%S %p"
+                    ).replace(
+                        year=now_ist.year,
+                        month=now_ist.month,
+                        day=now_ist.day,
+                        tzinfo=IST,
+                    )
+                    elapsed = (now_ist - exit_time).total_seconds()
+                    if elapsed < COOLDOWN_SECONDS:
+                        cooldown_remaining = int(COOLDOWN_SECONDS - elapsed)
+                except Exception:
+                    pass
+
     risk_html = render_risk_card(
         atr_sl=atr_sl_display,
         trailing_active=trailing_active,
-        cooldown_remaining=0,
+        cooldown_remaining=cooldown_remaining,
         daily_losses=consec_losses,
         max_daily_losses=MAX_DAILY_LOSSES
     )

@@ -50,6 +50,11 @@ class TradeManager:
         self._risk_mgr = risk_mgr
         log.info("TradeManager initialized")
 
+    @property
+    def notifier(self) -> Any:
+        """Expose the notifier instance."""
+        return self._notifier
+
     # ──────────────────────────────────────────────
     # NOTIFY HELPER
     # ──────────────────────────────────────────────
@@ -185,6 +190,9 @@ class TradeManager:
         now_str = now.strftime("%I:%M:%S %p")
         auto_sq = now.time() >= AUTO_SQUARE_OFF_TIME
 
+        if isinstance(chain_records, list):
+            chain_records = {float(r.get("strikePrice", 0)): r for r in chain_records if r.get("strikePrice") is not None}
+
         for trade in trade_log:
             if trade.get("Status") != "OPEN":
                 continue
@@ -197,7 +205,7 @@ class TradeManager:
 
             signal = trade.get("Signal", "")
             item = chain_records.get(strike, {})
-            opt = item.get("CE", {}) if signal == "BUY CE" else item.get("PE", {})
+            opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
             lp = round(float(opt.get("lastPrice", 0) or 0), 2)
 
             if lp == 0:

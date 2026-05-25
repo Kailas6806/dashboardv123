@@ -164,28 +164,27 @@ def render_open_trade_detail(trade, idx_color, sc, uc, upl, pnl_disp, upl_arrow)
     trailing = trade.get("_trailing_active", False)
     trail_cls = "trailing-active" if trailing else ""
 
-    return f"""
-<div class="card {trail_cls}" style="border-left:5px solid {sc};margin-bottom:12px;">
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span style="background:{idx_color};color:white;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">{idx}</span>
-      <span style="color:{sc};font-size:20px;font-weight:800;">{sig}</span>
-      <span style="color:#9CA3AF;font-size:12px;">Strike: <b style="color:white;">{strk}</b></span>
-      <span style="color:#9CA3AF;font-size:12px;">Spot: <b style="color:white;">{spot}</b></span>
-      {('<span class="badge badge-ok">🔒 TRAILING</span>' if trailing else '')}
-    </div>
-    <div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} {pnl_disp}</div>
-  </div>
-  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
-    <div><div class="label">Entry Price</div><div style="color:white;font-weight:700;">₹{ev}</div></div>
-    <div><div class="label">Live Price</div><div style="color:{uc};font-weight:700;">₹{lv}</div></div>
-    <div><div class="label">Stop Loss</div><div style="color:#F87171;font-weight:700;">₹{sl}</div></div>
-    <div><div class="label">Target</div><div style="color:#34D399;font-weight:700;">₹{tgt}</div></div>
-    <div><div class="label">Qty</div><div style="color:white;font-weight:700;">{qty}</div></div>
-    <div><div class="label">Max Loss</div><div style="color:#F87171;font-weight:700;">₹{ml}</div></div>
-    <div><div class="label">Target P&L</div><div style="color:#34D399;font-weight:700;">₹{tp}</div></div>
-    <div><div class="label">Entry Time</div><div style="color:#9CA3AF;font-weight:700;">{etime}</div></div>
-  </div>
+    return f"""<div class="card {trail_cls}" style="border-left:5px solid {sc};margin-bottom:12px;">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+<div style="display:flex;align-items:center;gap:10px;">
+<span style="background:{idx_color};color:white;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">{idx}</span>
+<span style="color:{sc};font-size:20px;font-weight:800;">{sig}</span>
+<span style="color:#9CA3AF;font-size:12px;">Strike: <b style="color:white;">{strk}</b></span>
+<span style="color:#9CA3AF;font-size:12px;">Spot: <b style="color:white;">{spot}</b></span>
+{('<span class="badge badge-ok">🔒 TRAILING</span>' if trailing else '')}
+</div>
+<div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} {pnl_disp}</div>
+</div>
+<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px;">
+<div><div class="label">Entry Price</div><div style="color:white;font-weight:700;">₹{ev}</div></div>
+<div><div class="label">Live Price</div><div style="color:{uc};font-weight:700;">₹{lv}</div></div>
+<div><div class="label">Stop Loss</div><div style="color:#F87171;font-weight:700;">₹{sl}</div></div>
+<div><div class="label">Target</div><div style="color:#34D399;font-weight:700;">₹{tgt}</div></div>
+<div><div class="label">Qty</div><div style="color:white;font-weight:700;">{qty}</div></div>
+<div><div class="label">Max Loss</div><div style="color:#F87171;font-weight:700;">₹{ml}</div></div>
+<div><div class="label">Target P&L</div><div style="color:#34D399;font-weight:700;">₹{tp}</div></div>
+<div><div class="label">Entry Time</div><div style="color:#9CA3AF;font-weight:700;">{etime}</div></div>
+</div>
 </div>"""
 
 
@@ -200,17 +199,17 @@ def render_expander_open_trade(trade, sc):
     trail_cls = "trailing-active" if trailing else ""
 
     return f"""<div class="card {trail_cls}" style="border-left:4px solid {sc};">
-  <div style="display:flex;gap:20px;flex-wrap:wrap;">
-    <div><div class="label">Signal</div><div class="kpi" style="color:{sc};">{trade.get('Signal')}</div></div>
-    <div><div class="label">Strike</div><div class="kpi">{trade.get('Strike')}</div></div>
-    <div><div class="label">Entry</div><div class="kpi">₹{ev}</div></div>
-    <div><div class="label">Live</div><div class="kpi">₹{lv}</div></div>
-    <div><div class="label">SL</div><div class="kpi pnl-red">₹{trade.get('Stop Loss')}</div></div>
-    <div><div class="label">Target</div><div class="kpi pnl-green">₹{trade.get('Target')}</div></div>
-    <div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
-    <div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
-    {('<div><div class="label">Trailing</div><div class="kpi" style="color:#34D399;">🔒 ACTIVE</div></div>' if trailing else '')}
-  </div>
+<div style="display:flex;gap:20px;flex-wrap:wrap;">
+<div><div class="label">Signal</div><div class="kpi" style="color:{sc};">{trade.get('Signal')}</div></div>
+<div><div class="label">Strike</div><div class="kpi">{trade.get('Strike')}</div></div>
+<div><div class="label">Entry</div><div class="kpi">₹{ev}</div></div>
+<div><div class="label">Live</div><div class="kpi">₹{lv}</div></div>
+<div><div class="label">SL</div><div class="kpi pnl-red">₹{trade.get('Stop Loss')}</div></div>
+<div><div class="label">Target</div><div class="kpi pnl-green">₹{trade.get('Target')}</div></div>
+<div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
+<div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
+{('<div><div class="label">Trailing</div><div class="kpi" style="color:#34D399;">🔒 ACTIVE</div></div>' if trailing else '')}
+</div>
 </div>"""
 
 

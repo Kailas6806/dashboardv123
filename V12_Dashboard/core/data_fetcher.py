@@ -207,12 +207,14 @@ class NSEDataFetcher:
             for item in records:
                 if float(item.get("strikePrice", 0)) == strike:
                     if signal == "BUY CE":
+                        ce_opt = item.get("CE") or {}
                         ltp = round(
-                            float(item.get("CE", {}).get("lastPrice", 0)), 2
+                            float(ce_opt.get("lastPrice", 0) or 0), 2
                         )
                     else:
+                        pe_opt = item.get("PE") or {}
                         ltp = round(
-                            float(item.get("PE", {}).get("lastPrice", 0)), 2
+                            float(pe_opt.get("lastPrice", 0) or 0), 2
                         )
                     return ltp, spot
 
@@ -258,8 +260,10 @@ class NSEDataFetcher:
                 dist = abs(s - atm)
                 if dist < best_dist:
                     best_dist = dist
-                    ce_ltp = item.get("CE", {}).get("lastPrice", 0)
-                    pe_ltp = item.get("PE", {}).get("lastPrice", 0)
+                    ce_opt = item.get("CE") or {}
+                    pe_opt = item.get("PE") or {}
+                    ce_ltp = ce_opt.get("lastPrice", 0) or 0
+                    pe_ltp = pe_opt.get("lastPrice", 0) or 0
 
             return round(float(ce_ltp), 2), round(float(pe_ltp), 2), spot
 

@@ -377,5 +377,5 @@ def _render_recent_trades(trades: List[Dict[str, Any]], count: int = 20) -> None
             return f"color: {_RED}; font-weight: 600"
         return "color: #e0e0e0"
 
-    styled = df.style.applymap(_color_pnl, subset=["Actual P&L ₹"])  # type: ignore[arg-type]
+    styled = df.style.map(_color_pnl, subset=["Actual P&L ₹"])  # type: ignore[arg-type]
     st.dataframe(styled, hide_index=True, use_container_width=True, height=500)

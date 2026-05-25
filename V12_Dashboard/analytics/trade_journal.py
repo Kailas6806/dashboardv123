@@ -111,15 +111,15 @@ class TradeJournal:
         return list(self.trades)
 
     def get_trades_for_date(self, date_str: str) -> List[Dict[str, Any]]:
-        """Return trades whose Entry Time falls on *date_str*.
+        """Return trades whose recorded_at falls on *date_str*.
 
         Args:
             date_str: Date in ``YYYY-MM-DD`` format.
         """
         results: List[Dict[str, Any]] = []
         for t in self.trades:
-            entry_time = t.get("Entry Time", "")
-            if entry_time and str(entry_time)[:10] == date_str:
+            recorded_at = t.get("recorded_at", "")
+            if recorded_at and str(recorded_at)[:10] == date_str:
                 results.append(t)
         return results
 
@@ -214,7 +214,7 @@ class TradeJournal:
                 by_signal[sig]["losses"] += 1
 
             # by_hour
-            hour = self._extract_hour(t.get("Entry Time"))
+            hour = self._extract_hour(t.get("recorded_at"))
             if hour is not None:
                 by_hour[hour]["trades"] += 1
                 by_hour[hour]["pnl"] += pnl
@@ -288,22 +288,21 @@ class TradeJournal:
     # ------------------------------------------------------------------ #
 
     def _filter_since(self, cutoff: datetime) -> List[Dict[str, Any]]:
-        """Return trades with Entry Time >= *cutoff*."""
+        """Return trades with recorded_at >= *cutoff*."""
         results: List[Dict[str, Any]] = []
         for t in self.trades:
-            entry_time_str = t.get("Entry Time", "")
-            if not entry_time_str:
+            recorded_at = t.get("recorded_at", "")
+            if not recorded_at:
                 continue
             try:
-                entry_dt = datetime.fromisoformat(str(entry_time_str))
+                recorded_dt = datetime.fromisoformat(str(recorded_at))
                 # Attach IST if naive
-                if entry_dt.tzinfo is None:
-                    entry_dt = entry_dt.replace(tzinfo=IST)
-                if entry_dt >= cutoff:
+                if recorded_dt.tzinfo is None:
+                    recorded_dt = recorded_dt.replace(tzinfo=IST)
+                if recorded_dt >= cutoff:
                     results.append(t)
             except (ValueError, TypeError):
-                # If we can't parse the date, include the trade anyway
-                results.append(t)
+                pass
         return results
 
     @staticmethod
@@ -315,21 +314,15 @@ class TradeJournal:
             return 0.0
 
     @staticmethod
-    def _extract_hour(entry_time: Any) -> Optional[int]:
-        """Extract the hour component from an Entry Time value."""
-        if entry_time is None:
+    def _extract_hour(recorded_at: Any) -> Optional[int]:
+        """Extract the hour component from recorded_at value."""
+        if recorded_at is None:
             return None
         try:
-            dt = datetime.fromisoformat(str(entry_time))
+            dt = datetime.fromisoformat(str(recorded_at))
             return dt.hour
         except (ValueError, TypeError):
-            # Try common time-string patterns  "HH:MM:SS" or "HH:MM"
-            ts = str(entry_time)
-            for fmt in ("%H:%M:%S", "%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-                try:
-                    return datetime.strptime(ts, fmt).hour
-                except ValueError:
-                    continue
+            pass
         return None
 
     @staticmethod
