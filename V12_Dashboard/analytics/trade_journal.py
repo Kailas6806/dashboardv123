@@ -108,25 +108,34 @@ class TradeJournal:
                     return True
 
         # Fallback: Try finding by fields if trade_dict is provided
+        # NOTE: We do NOT filter by Status=="OPEN" because trade_manager may have
+        # already set Status="CLOSED" on the in-memory dict before journal.update_trade
+        # is called. We match on the most recent entry (no updated_at) first.
         if trade_dict:
             idx = trade_dict.get("Index")
             etime = trade_dict.get("Entry Time")
             strike = trade_dict.get("Strike")
             sig = trade_dict.get("Signal")
-            for entry in self.trades:
-                if (entry.get("Index") == idx 
-                    and entry.get("Entry Time") == etime 
-                    and str(entry.get("Strike")) == str(strike) 
-                    and entry.get("Signal") == sig
-                    and entry.get("Status") == "OPEN"):
-                    for key, value in exit_data.items():
-                        if isinstance(value, datetime):
-                            value = value.isoformat()
-                        entry[key] = value
-                    entry["updated_at"] = datetime.now(tz=IST).isoformat()
-                    self._save()
-                    logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
-                    return True
+            # Prefer entries that haven't been updated yet (no updated_at)
+            candidates = [
+                entry for entry in self.trades
+                if (entry.get("Index") == idx
+                    and entry.get("Entry Time") == etime
+                    and str(entry.get("Strike")) == str(strike)
+                    and entry.get("Signal") == sig)
+            ]
+            # Sort: prefer not-yet-updated entries first
+            candidates.sort(key=lambda e: (1 if "updated_at" in e else 0))
+            if candidates:
+                entry = candidates[0]
+                for key, value in exit_data.items():
+                    if isinstance(value, datetime):
+                        value = value.isoformat()
+                    entry[key] = value
+                entry["updated_at"] = datetime.now(tz=IST).isoformat()
+                self._save()
+                logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
+                return True
 
         logger.warning("Trade %s not found for update", trade_id)
         return False

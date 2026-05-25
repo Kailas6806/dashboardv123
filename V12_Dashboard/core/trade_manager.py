@@ -50,7 +50,8 @@ class TradeManager:
         self._notifier = notifier
         self._risk_mgr = risk_mgr
         self._lock = threading.Lock()
-        self._processed_exits = set()
+        self._processed_exits = set()  # trades already closed (key = idx_time_strike_signal)
+        self._notified_exits = set()   # trades already notified — prevents double Telegram
         log.info("TradeManager initialized")
 
     @property
@@ -236,6 +237,8 @@ class TradeManager:
                 sl = float(trade.get("Stop Loss") or 0)
 
                 # ── Check exit conditions ──
+                should_notify = trade_key not in self._notified_exits
+
                 if auto_sq:
                     pnl = round((lp - ep_t) * qty_t, 2)
                     trade.update({
@@ -246,12 +249,14 @@ class TradeManager:
                         "Actual P&L ₹": pnl,
                     })
                     self._processed_exits.add(trade_key)
+                    self._notified_exits.add(trade_key)
                     events.append({"type": "AUTO_SQ", "trade": trade, "pnl": pnl})
-                    self._notify(
-                        f"🟡 *AUTO-SQUARE OFF — {idx} {signal}*\n"
-                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                    )
+                    if should_notify:
+                        self._notify(
+                            f"🟡 *AUTO-SQUARE OFF — {idx} {signal}*\n"
+                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                            f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                        )
                     log.info(
                         "AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                         idx, signal, trade.get("Strike"), lp, pnl,
@@ -269,14 +274,16 @@ class TradeManager:
                         "Actual P&L ₹": pnl,
                     })
                     self._processed_exits.add(trade_key)
+                    self._notified_exits.add(trade_key)
                     events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
                     emoji = "🟢" if is_trailing_win else "🔴"
                     label = "TRAILING SL HIT" if is_trailing_win else "SL HIT"
-                    self._notify(
-                        f"{emoji} *{label} — {idx} {signal}*\n"
-                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                    )
+                    if should_notify:
+                        self._notify(
+                            f"{emoji} *{label} — {idx} {signal}*\n"
+                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                            f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                        )
                     log.info(
                         "%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                         label, idx, signal, trade.get("Strike"), lp, pnl,
@@ -292,12 +299,14 @@ class TradeManager:
                         "Actual P&L ₹": pnl,
                     })
                     self._processed_exits.add(trade_key)
+                    self._notified_exits.add(trade_key)
                     events.append({"type": "TARGET_HIT", "trade": trade, "pnl": pnl})
-                    self._notify(
-                        f"🟢 *TARGET HIT — {idx} {signal}*\n"
-                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                    )
+                    if should_notify:
+                        self._notify(
+                            f"🟢 *TARGET HIT — {idx} {signal}*\n"
+                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                            f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                        )
                     log.info(
                         "TARGET HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                         idx, signal, trade.get("Strike"), lp, pnl,
