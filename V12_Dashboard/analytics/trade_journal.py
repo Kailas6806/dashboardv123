@@ -42,12 +42,45 @@ class TradeJournal:
     #  Public API                                                         #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _normalize_strike(val: Any) -> str:
+        """Normalize strike to a consistent string for comparison.
+
+        Handles int (54900), float (54900.0), and string ('54900.0') inputs,
+        always returning '54900'.
+        """
+        try:
+            return str(int(float(val)))
+        except (ValueError, TypeError):
+            return str(val)
+
+    def _trade_exists(
+        self,
+        idx: str,
+        entry_time: str,
+        strike: Any,
+        signal: str,
+    ) -> bool:
+        """Check if a trade with the same key fields already exists."""
+        norm_strike = self._normalize_strike(strike)
+        for entry in self.trades:
+            if (entry.get("Index") == idx
+                    and entry.get("Entry Time") == entry_time
+                    and self._normalize_strike(entry.get("Strike")) == norm_strike
+                    and entry.get("Signal") == signal):
+                return True
+        return False
+
     def record_trade(
         self,
         trade: Dict[str, Any],
         signal_metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Append a new trade entry and persist immediately.
+
+        Deduplicates by (Index, Entry Time, Strike, Signal) — if a matching
+        entry already exists, the existing trade_id is returned and no new
+        record is created.
 
         Args:
             trade: Dictionary containing trade fields (see ``_TRADE_FIELDS``).
@@ -59,8 +92,24 @@ class TradeJournal:
         Returns:
             The generated ``trade_id`` string.
         """
-        now = datetime.now(tz=IST)
         idx = trade.get("Index", "UNK")
+        entry_time = trade.get("Entry Time", "")
+        strike = trade.get("Strike", "")
+        signal = trade.get("Signal", "")
+
+        # Dedup: skip if this trade already exists in the journal
+        if self._trade_exists(idx, entry_time, strike, signal):
+            # Return existing trade_id
+            for entry in self.trades:
+                if (entry.get("Index") == idx
+                        and entry.get("Entry Time") == entry_time
+                        and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
+                        and entry.get("Signal") == signal):
+                    existing_id = entry.get("trade_id", "")
+                    logger.debug("Trade already exists: %s — skipping duplicate", existing_id)
+                    return existing_id
+
+        now = datetime.now(tz=IST)
         timestamp = now.strftime("%Y%m%d_%H%M%S")
         trade_id = f"{idx}_{timestamp}"
 
@@ -121,7 +170,7 @@ class TradeJournal:
                 entry for entry in self.trades
                 if (entry.get("Index") == idx
                     and entry.get("Entry Time") == etime
-                    and str(entry.get("Strike")) == str(strike)
+                    and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
                     and entry.get("Signal") == sig)
             ]
             # Sort: prefer not-yet-updated entries first
@@ -317,6 +366,16 @@ class TradeJournal:
             except (json.JSONDecodeError, OSError) as exc:
                 logger.error("Failed to load journal: %s", exc)
 
+        # Deduplicate any existing entries (cleanup from earlier bug)
+        deduped = self._deduplicate(self.trades)
+        if len(deduped) < len(self.trades):
+            logger.info(
+                "Removed %d duplicate journal entries on load",
+                len(self.trades) - len(deduped),
+            )
+            self.trades = deduped
+            self._save()
+
         # Proactively import missing closed trades from daily CSV logs
         try:
             import glob
@@ -349,45 +408,38 @@ class TradeJournal:
                     sig = row.get("Signal")
 
                     # Check if already present in journal
-                    exists = False
-                    for entry in self.trades:
-                        if (entry.get("Index") == idx_part
-                            and entry.get("Entry Time") == etime
-                            and str(entry.get("Strike")) == str(strike)
-                            and entry.get("Signal") == sig):
-                            exists = True
-                            break
+                    if self._trade_exists(idx_part, etime, strike, sig):
+                        continue
 
-                    if not exists:
-                        # Construct a trade entry
-                        now_str = datetime.now(tz=IST).isoformat()
-                        try:
-                            dt_str = f"{date_part} {etime}"
-                            dt = datetime.strptime(dt_str, "%Y-%m-%d %I:%M:%S %p").replace(tzinfo=IST)
-                            recorded_at = dt.isoformat()
-                        except Exception:
-                            recorded_at = now_str
+                    # Construct a trade entry
+                    now_str = datetime.now(tz=IST).isoformat()
+                    try:
+                        dt_str = f"{date_part} {etime}"
+                        dt = datetime.strptime(dt_str, "%Y-%m-%d %I:%M:%S %p").replace(tzinfo=IST)
+                        recorded_at = dt.isoformat()
+                    except Exception:
+                        recorded_at = now_str
 
-                        # Generate trade ID
-                        timestamp = datetime.fromisoformat(recorded_at).strftime("%Y%m%d_%H%M%S")
-                        trade_id = f"{idx_part}_{timestamp}"
+                    # Generate trade ID
+                    timestamp = datetime.fromisoformat(recorded_at).strftime("%Y%m%d_%H%M%S")
+                    trade_id = f"{idx_part}_{timestamp}"
 
-                        entry = {"trade_id": trade_id}
-                        for field in self._TRADE_FIELDS:
-                            val = row.get(field)
-                            # Convert NaN to None
-                            if pd.isna(val):
-                                val = None
-                            elif isinstance(val, (int, float)):
-                                val = float(val)
-                            entry[field] = val
+                    entry = {"trade_id": trade_id}
+                    for field in self._TRADE_FIELDS:
+                        val = row.get(field)
+                        # Convert NaN to None
+                        if pd.isna(val):
+                            val = None
+                        elif isinstance(val, (int, float)):
+                            val = float(val)
+                        entry[field] = val
 
-                        entry["signal_metadata"] = {}
-                        entry["recorded_at"] = recorded_at
-                        entry["imported_from_csv"] = True
+                    entry["signal_metadata"] = {}
+                    entry["recorded_at"] = recorded_at
+                    entry["imported_from_csv"] = True
 
-                        self.trades.append(entry)
-                        imported_count += 1
+                    self.trades.append(entry)
+                    imported_count += 1
 
             if imported_count > 0:
                 logger.info("Imported %d historical trades from CSV logs into journal", imported_count)
@@ -396,6 +448,36 @@ class TradeJournal:
                 self._save()
         except Exception as e:
             logger.error("Failed to import historical trades from CSV logs: %s", e)
+
+    @staticmethod
+    def _deduplicate(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove duplicate trades, keeping the most-updated copy of each.
+
+        Uniqueness key: (Index, Entry Time, Strike, Signal).
+        When duplicates exist, prefer the entry that has ``updated_at``
+        (i.e. was closed/updated), falling back to the last occurrence.
+        """
+        seen: Dict[str, Dict[str, Any]] = {}  # key → best entry
+        for entry in trades:
+            key = (
+                f"{entry.get('Index')}|"
+                f"{entry.get('Entry Time')}|"
+                f"{TradeJournal._normalize_strike(entry.get('Strike'))}|"
+                f"{entry.get('Signal')}"
+            )
+            existing = seen.get(key)
+            if existing is None:
+                seen[key] = entry
+            else:
+                # Prefer the entry with exit data / updated_at
+                new_has_update = "updated_at" in entry or entry.get("Status") == "CLOSED"
+                old_has_update = "updated_at" in existing or existing.get("Status") == "CLOSED"
+                if new_has_update and not old_has_update:
+                    seen[key] = entry
+                elif new_has_update == old_has_update:
+                    # Both same — keep the later one (more complete data)
+                    seen[key] = entry
+        return list(seen.values())
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #

@@ -83,7 +83,33 @@ def render_analytics_tab(journal: Any) -> None:
                  ``analytics.trade_journal``).
     """
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
-    st.markdown("## 📊 Trade Analytics")
+
+    # ── Header row with title + reset button ──
+    hdr_col, reset_col = st.columns([4, 1])
+    with hdr_col:
+        st.markdown("## 📊 Trade Analytics")
+    with reset_col:
+        st.write("")
+        if st.button("🗑️ Reset Journal", key="reset_journal", use_container_width=True,
+                      help="Clear all trade journal entries"):
+            st.session_state["_confirm_reset_journal"] = True
+
+    # Confirmation dialog
+    if st.session_state.get("_confirm_reset_journal", False):
+        st.warning("⚠️ **This will permanently delete ALL trade journal entries.** Are you sure?")
+        c1, c2, c3 = st.columns([1, 1, 3])
+        with c1:
+            if st.button("✅ Yes, Reset", key="confirm_reset_journal", type="primary",
+                          use_container_width=True):
+                journal.trades = []
+                journal._save()
+                st.session_state["_confirm_reset_journal"] = False
+                st.success("✅ Trade journal cleared!")
+                st.rerun()
+        with c2:
+            if st.button("❌ Cancel", key="cancel_reset_journal", use_container_width=True):
+                st.session_state["_confirm_reset_journal"] = False
+                st.rerun()
 
     analytics: Dict[str, Any] = journal.get_analytics(days=7)
     all_trades: List[Dict[str, Any]] = journal.get_all_trades()
