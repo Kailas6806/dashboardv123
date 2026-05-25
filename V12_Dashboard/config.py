@@ -14,11 +14,22 @@ MAX_LOSS  = 1000
 DAILY_TGT = 2000
 
 # ── INDEX CONFIG ──
+# expiry_weekday: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri
 INDEX_CONFIG = {
-    "NIFTY":     {"step": 50,  "lot": 65,  "rng": 300},
-    "BANKNIFTY": {"step": 100, "lot": 30,  "rng": 600},
-    "FINNIFTY":  {"step": 50,  "lot": 60,  "rng": 300},
+    "NIFTY":     {"step": 50,  "lot": 65,  "rng": 300, "expiry_weekday": 3},  # Thursday
+    "BANKNIFTY": {"step": 100, "lot": 30,  "rng": 600, "expiry_weekday": 2},  # Wednesday
+    "FINNIFTY":  {"step": 50,  "lot": 60,  "rng": 300, "expiry_weekday": 1},  # Tuesday
 }
+
+
+def is_expiry_day(idx: str) -> bool:
+    """Return True if today is the weekly expiry day for the given index."""
+    cfg = INDEX_CONFIG.get(idx, {})
+    expiry_wd = cfg.get("expiry_weekday")
+    if expiry_wd is None:
+        return False
+    import datetime as _dt
+    return _dt.datetime.now().weekday() == expiry_wd
 
 # ── TRADE LOG COLUMNS ──
 LOG_COLS = [

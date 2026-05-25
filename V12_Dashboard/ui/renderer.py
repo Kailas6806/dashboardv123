@@ -10,7 +10,7 @@ import datetime
 from config import (
     INDEX_CONFIG, CAPITAL, MAX_LOSS, DAILY_TGT, IST, LOG_COLS,
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
-    NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE,
+    NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
     FRAGMENT_REFRESH_SECONDS, MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
 )
 from ui.components import (
@@ -326,7 +326,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         # 1. Block new entries after 3:20 PM (auto-square at 3:25 — not worth entering)
         too_late = now_ist.time() >= NO_NEW_TRADE_TIME
         # 2. Block if option premium is too cheap (illiquid / worthless)
-        price_too_low = ep < MIN_ENTRY_PRICE
+        #    EXCEPTION: skip on expiry day — cheap options move very fast
+        expiry_today = is_expiry_day(idx)
+        price_too_low = ep < MIN_ENTRY_PRICE and not expiry_today
         # 3. Block if unusual OI spike detected (manipulation risk)
         oi_unusual = md.get("oi_unusual_activity", False)
 
@@ -336,6 +338,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             st.warning(f"⚠️ Option price ₹{ep} is too low (min ₹{MIN_ENTRY_PRICE}) — skipping")
         elif oi_unusual:
             st.warning("🚨 Unusual OI activity detected — holding off entry")
+        elif expiry_today and ep < MIN_ENTRY_PRICE:
+            st.info(f"📅 Expiry day — cheap option ₹{ep} allowed (fast moves expected)")
 
         can_enter = not too_late and not price_too_low and not oi_unusual
 
