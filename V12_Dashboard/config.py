@@ -47,6 +47,8 @@ MARKET_OPEN_BUFFER_MIN  = 3      # suppress entries 9:15–9:18
 MARKET_OPEN_TIME        = datetime.time(9, 15)
 MARKET_CLOSE_TIME       = datetime.time(15, 30)
 AUTO_SQUARE_OFF_TIME    = datetime.time(15, 25)
+NO_NEW_TRADE_TIME       = datetime.time(15, 20)  # no NEW entries after 3:20 PM
+MIN_ENTRY_PRICE         = 5.0    # reject options cheaper than ₹5 (illiquid/worthless)
 
 # ── RISK MANAGEMENT ──
 ATR_PERIOD               = 14    # periods for ATR calculation

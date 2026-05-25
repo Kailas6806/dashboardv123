@@ -10,6 +10,7 @@ import datetime
 from config import (
     INDEX_CONFIG, CAPITAL, MAX_LOSS, DAILY_TGT, IST, LOG_COLS,
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
+    NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE,
     FRAGMENT_REFRESH_SECONDS, MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
 )
 from ui.components import (
@@ -321,8 +322,25 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         elif isinstance(daily_limits, tuple):
             daily_allowed = daily_limits[0]
 
+        # ── PRE-ENTRY GUARDS ──
+        # 1. Block new entries after 3:20 PM (auto-square at 3:25 — not worth entering)
+        too_late = now_ist.time() >= NO_NEW_TRADE_TIME
+        # 2. Block if option premium is too cheap (illiquid / worthless)
+        price_too_low = ep < MIN_ENTRY_PRICE
+        # 3. Block if unusual OI spike detected (manipulation risk)
+        oi_unusual = md.get("oi_unusual_activity", False)
+
+        if too_late:
+            st.warning(f"⏰ No new entries after {NO_NEW_TRADE_TIME.strftime('%I:%M %p')} — auto-square soon")
+        elif price_too_low:
+            st.warning(f"⚠️ Option price ₹{ep} is too low (min ₹{MIN_ENTRY_PRICE}) — skipping")
+        elif oi_unusual:
+            st.warning("🚨 Unusual OI activity detected — holding off entry")
+
+        can_enter = not too_late and not price_too_low and not oi_unusual
+
         if (final_signal != st.session_state[sk(idx, "last_signal")]
-                and trade_allowed and daily_allowed):
+                and trade_allowed and daily_allowed and can_enter):
             now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
             trade_entry = {
                 "Entry Time": now_str, "Exit Time": None,

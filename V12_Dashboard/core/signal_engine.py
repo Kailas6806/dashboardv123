@@ -306,15 +306,21 @@ class SignalEngine:
         buf.append(signal)
         buf = buf[-SIGNAL_BUFFER_SIZE:]
 
-        # Confirm signal: needs 2 of last 3 refreshes to agree
-        if buf.count("BUY CE")>=2:   final_signal="BUY CE";  final_conf="HIGH"
-        elif buf.count("BUY PE")>=2: final_signal="BUY PE";  final_conf="HIGH"
-        elif buf.count("BUY CE")>=1 and confidence in ("HIGH","MEDIUM"):
-            final_signal="BUY CE"; final_conf="MEDIUM"
-        elif buf.count("BUY PE")>=1 and confidence in ("HIGH","MEDIUM"):
-            final_signal="BUY PE"; final_conf="MEDIUM"
+        # Confirm signal: needs 2 of last 3 refreshes to agree.
+        # Final confidence = actual signal confidence (not auto-promoted to HIGH)
+        if buf.count("BUY CE") >= 2:
+            final_signal = "BUY CE"
+            # Only HIGH if underlying confidence is HIGH; else keep MEDIUM
+            final_conf = confidence if confidence == "HIGH" else "MEDIUM"
+        elif buf.count("BUY PE") >= 2:
+            final_signal = "BUY PE"
+            final_conf = confidence if confidence == "HIGH" else "MEDIUM"
+        elif buf.count("BUY CE") >= 1 and confidence in ("HIGH", "MEDIUM"):
+            final_signal = "BUY CE"; final_conf = "MEDIUM"
+        elif buf.count("BUY PE") >= 1 and confidence in ("HIGH", "MEDIUM"):
+            final_signal = "BUY PE"; final_conf = "MEDIUM"
         else:
-            final_signal="WAIT"; final_conf="LOW"
+            final_signal = "WAIT"; final_conf = "LOW"
 
         return final_signal, final_conf, buf
 
