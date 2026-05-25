@@ -133,6 +133,8 @@ class TradeJournal:
 
     def get_all_trades(self) -> List[Dict[str, Any]]:
         """Return a copy of every trade in the journal."""
+        if not self.trades:
+            self._load()
         return list(self.trades)
 
     def get_trades_for_date(self, date_str: str) -> List[Dict[str, Any]]:
@@ -158,6 +160,8 @@ class TradeJournal:
             by_index, by_signal_type, by_hour,
             current_streak, consecutive_losses.
         """
+        if not self.trades:
+            self._load()
         cutoff = datetime.now(tz=IST) - timedelta(days=days)
         trades = self._filter_since(cutoff)
 
@@ -290,22 +294,99 @@ class TradeJournal:
             logger.error("Failed to save journal: %s", exc)
 
     def _load(self) -> None:
-        """Read the journal list from the JSON file (if it exists)."""
-        if not os.path.isfile(self.journal_path):
-            logger.info("No existing journal at %s — starting fresh", self.journal_path)
-            return
+        """Read the journal list from the JSON file and import closed trades from CSV logs."""
+        self.trades = []
+        if os.path.isfile(self.journal_path):
+            try:
+                with open(self.journal_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, list):
+                    self.trades = data
+                    logger.info("Loaded %d trades from journal", len(self.trades))
+                else:
+                    logger.warning("Journal file is not a list — starting fresh")
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.error("Failed to load journal: %s", exc)
+
+        # Proactively import missing closed trades from daily CSV logs
         try:
-            with open(self.journal_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, list):
-                self.trades = data
-                logger.info("Loaded %d trades from journal", len(self.trades))
-            else:
-                logger.warning("Journal file is not a list — starting fresh")
-                self.trades = []
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.error("Failed to load journal: %s", exc)
-            self.trades = []
+            import glob
+            import pandas as pd
+            csv_files = glob.glob("trade_log_*.csv")
+            imported_count = 0
+            for filepath in csv_files:
+                filename = os.path.basename(filepath)
+                # Parse index and date from trade_log_{Index}_{YYYY-MM-DD}.csv
+                parts = filename.replace(".csv", "").split("_")
+                if len(parts) < 4:
+                    continue
+                idx_part = parts[2]
+                date_part = parts[3]
+
+                try:
+                    df = pd.read_csv(filepath)
+                except Exception:
+                    continue
+
+                if df.empty:
+                    continue
+
+                for _, row in df.iterrows():
+                    if str(row.get("Status", "")).upper() != "CLOSED":
+                        continue
+
+                    etime = row.get("Entry Time")
+                    strike = row.get("Strike")
+                    sig = row.get("Signal")
+
+                    # Check if already present in journal
+                    exists = False
+                    for entry in self.trades:
+                        if (entry.get("Index") == idx_part
+                            and entry.get("Entry Time") == etime
+                            and str(entry.get("Strike")) == str(strike)
+                            and entry.get("Signal") == sig):
+                            exists = True
+                            break
+
+                    if not exists:
+                        # Construct a trade entry
+                        now_str = datetime.now(tz=IST).isoformat()
+                        try:
+                            dt_str = f"{date_part} {etime}"
+                            dt = datetime.strptime(dt_str, "%Y-%m-%d %I:%M:%S %p").replace(tzinfo=IST)
+                            recorded_at = dt.isoformat()
+                        except Exception:
+                            recorded_at = now_str
+
+                        # Generate trade ID
+                        timestamp = datetime.fromisoformat(recorded_at).strftime("%Y%m%d_%H%M%S")
+                        trade_id = f"{idx_part}_{timestamp}"
+
+                        entry = {"trade_id": trade_id}
+                        for field in self._TRADE_FIELDS:
+                            val = row.get(field)
+                            # Convert NaN to None
+                            if pd.isna(val):
+                                val = None
+                            elif isinstance(val, (int, float)):
+                                val = float(val)
+                            entry[field] = val
+
+                        entry["signal_metadata"] = {}
+                        entry["recorded_at"] = recorded_at
+                        entry["imported_from_csv"] = True
+
+                        self.trades.append(entry)
+                        imported_count += 1
+
+            if imported_count > 0:
+                logger.info("Imported %d historical trades from CSV logs into journal", imported_count)
+                # Sort trades by recorded_at
+                self.trades.sort(key=lambda t: t.get("recorded_at", ""))
+                self._save()
+        except Exception as e:
+            logger.error("Failed to import historical trades from CSV logs: %s", e)
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #
