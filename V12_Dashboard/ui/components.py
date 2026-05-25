@@ -122,15 +122,12 @@ def render_tracker_grid(idx, capital, closed_count, rpnl, rc, prog):
 </div>"""
 
 
-def render_risk_card(atr_sl=None, trailing_active=False, cooldown_remaining=0,
+def render_risk_card(atr_sl=None, cooldown_remaining=0,
                      daily_losses=0, max_daily_losses=3):
     """Risk management status card."""
-    trail_cls = "trailing-active" if trailing_active else ""
     items = []
     if atr_sl is not None:
         items.append(f'<div><div class="label">ATR SL</div><div style="color:#F59E0B;font-weight:700;">₹{atr_sl}</div></div>')
-    if trailing_active:
-        items.append(f'<div><div class="label">Trailing</div><div style="color:#34D399;font-weight:700;">🔒 ACTIVE</div></div>')
     if cooldown_remaining > 0:
         items.append(f'<div><div class="label">Cooldown</div><div style="color:#7C3AED;font-weight:700;">{cooldown_remaining}s</div></div>')
     items.append(f'<div><div class="label">Daily Losses</div><div style="color:#F87171;font-weight:700;">{daily_losses}/{max_daily_losses}</div></div>')
@@ -140,7 +137,7 @@ def render_risk_card(atr_sl=None, trailing_active=False, cooldown_remaining=0,
 
     items_html = "\n    ".join(items)
     return f"""
-<div class="risk-card {trail_cls}">
+<div class="risk-card">
   <div style="display:flex;gap:24px;flex-wrap:wrap;">
     {items_html}
   </div>
@@ -161,17 +158,14 @@ def render_open_trade_detail(trade, idx_color, sc, uc, upl, pnl_disp, upl_arrow)
     ml = trade.get("Max Loss ₹", "")
     tp = trade.get("Target P&L ₹", "")
     etime = trade.get("Entry Time", "")
-    trailing = trade.get("_trailing_active", False)
-    trail_cls = "trailing-active" if trailing else ""
 
-    return f"""<div class="card {trail_cls}" style="border-left:5px solid {sc};margin-bottom:12px;">
+    return f"""<div class="card" style="border-left:5px solid {sc};margin-bottom:12px;">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
 <div style="display:flex;align-items:center;gap:10px;">
 <span style="background:{idx_color};color:white;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;">{idx}</span>
 <span style="color:{sc};font-size:20px;font-weight:800;">{sig}</span>
 <span style="color:#9CA3AF;font-size:12px;">Strike: <b style="color:white;">{strk}</b></span>
 <span style="color:#9CA3AF;font-size:12px;">Spot: <b style="color:white;">{spot}</b></span>
-{('<span class="badge badge-ok">🔒 TRAILING</span>' if trailing else '')}
 </div>
 <div style="color:{uc};font-size:22px;font-weight:800;">{upl_arrow} {pnl_disp}</div>
 </div>
@@ -195,10 +189,8 @@ def render_expander_open_trade(trade, sc):
     qv = int(trade.get("Qty") or 0)
     upl = round((lv - ev) * qv, 2)
     uc = "#34D399" if upl >= 0 else "#F87171"
-    trailing = trade.get("_trailing_active", False)
-    trail_cls = "trailing-active" if trailing else ""
 
-    return f"""<div class="card {trail_cls}" style="border-left:4px solid {sc};">
+    return f"""<div class="card" style="border-left:4px solid {sc};">
 <div style="display:flex;gap:20px;flex-wrap:wrap;">
 <div><div class="label">Signal</div><div class="kpi" style="color:{sc};">{trade.get('Signal')}</div></div>
 <div><div class="label">Strike</div><div class="kpi">{trade.get('Strike')}</div></div>
@@ -208,7 +200,6 @@ def render_expander_open_trade(trade, sc):
 <div><div class="label">Target</div><div class="kpi pnl-green">₹{trade.get('Target')}</div></div>
 <div><div class="label">Qty</div><div class="kpi">{qv}</div></div>
 <div><div class="label">Unrealized P&L</div><div class="kpi" style="color:{uc};">₹{upl:,.0f}</div></div>
-{('<div><div class="label">Trailing</div><div class="kpi" style="color:#34D399;">🔒 ACTIVE</div></div>' if trailing else '')}
 </div>
 </div>"""
 

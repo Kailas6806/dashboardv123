@@ -64,8 +64,7 @@ MIN_ENTRY_PRICE         = 5.0    # reject options cheaper than ₹5 (illiquid/wo
 # ── RISK MANAGEMENT ──
 ATR_PERIOD               = 14    # periods for ATR calculation
 ATR_SL_MULTIPLIER        = 1.5   # SL = entry ∓ (multiplier × ATR)
-TRAILING_STOP_ACTIVATION = 0.50  # activate trail at 50% of target profit
-TRAILING_STOP_LOCK_PCT   = 0.80  # lock in 80% of highest seen profit
+
 MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
 
 # ── CACHING ──

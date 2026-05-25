@@ -1,6 +1,6 @@
 """
 V12 PRO MAX — Risk Manager
-Position sizing, stop-loss, trailing stops, cooldown, and daily loss limits.
+Position sizing, fixed stop-loss (₹1000), cooldown, and daily loss limits.
 IMPORTANT: qty is ALWAYS = lot (1 lot only, no dynamic scaling).
 """
 import datetime
@@ -12,8 +12,6 @@ from config import (
     CAPITAL,
     ATR_PERIOD,
     ATR_SL_MULTIPLIER,
-    TRAILING_STOP_ACTIVATION,
-    TRAILING_STOP_LOCK_PCT,
     COOLDOWN_SECONDS,
     MAX_DAILY_LOSSES,
     MARKET_OPEN_BUFFER_MIN,
@@ -38,10 +36,10 @@ log = get_logger("risk_manager")
 
 
 class RiskManager:
-    """Manages risk calculations for trade entry, trailing stops, and cooldowns.
+    """Manages risk calculations for trade entry, fixed SL, and cooldowns.
 
     Design principle: qty is ALWAYS = lot (1 lot only). No dynamic
-    position sizing. This keeps risk fixed and predictable.
+    position sizing. SL is fixed at ₹1000 (MAX_LOSS). No trailing stop.
     """
 
     # ──────────────────────────────────────────────
@@ -84,64 +82,6 @@ class RiskManager:
         """Statically calculate trade parameters with fixed Stop Loss at MAX_LOSS (1000) and Target at DAILY_TGT (2000)."""
         return self.calc_trade(ep, lot)
 
-    # ──────────────────────────────────────────────
-    # 3. TRAILING STOP
-    # ──────────────────────────────────────────────
-    def apply_trailing_stop(self, trade: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply trailing stop logic to an open trade.
-
-        Activates when unrealized profit >= TRAILING_STOP_ACTIVATION * target_pnl.
-        Once activated, locks in TRAILING_STOP_LOCK_PCT of the highest seen profit
-        by raising the stop-loss price.
-
-        Parameters
-        ----------
-        trade : dict
-            Trade dict with LOG_COLS fields. Modified in-place and returned.
-            Uses internal key '_highest_pnl' to track watermark.
-
-        Returns
-        -------
-        dict
-            The (potentially modified) trade dict.
-        """
-        if trade.get("Status") != "OPEN":
-            return trade
-
-        ep = float(trade.get("Entry Price") or 0)
-        lp = float(trade.get("Live Price") or ep)
-        qty = int(trade.get("Qty") or 0)
-        target_pnl = float(trade.get("Target P&L ₹") or 0)
-
-        if qty <= 0 or target_pnl <= 0:
-            return trade
-
-        unrealized = (lp - ep) * qty
-        activation_threshold = TRAILING_STOP_ACTIVATION * target_pnl
-
-        if unrealized < activation_threshold:
-            return trade
-
-        # Track highest seen profit
-        highest = float(trade.get("_highest_pnl", 0))
-        if unrealized > highest:
-            highest = unrealized
-            trade["_highest_pnl"] = highest
-
-        # Lock in portion of highest profit
-        locked_profit = highest * TRAILING_STOP_LOCK_PCT
-        locked_per_unit = locked_profit / qty
-        new_sl = round(ep + locked_per_unit, 2)
-
-        current_sl = float(trade.get("Stop Loss") or 0)
-        if new_sl > current_sl:
-            log.info(
-                "Trailing stop raised: %.2f → %.2f (locked ₹%.0f of ₹%.0f highest)",
-                current_sl, new_sl, locked_profit, highest,
-            )
-            trade["Stop Loss"] = new_sl
-
-        return trade
 
     # ──────────────────────────────────────────────
     # 4. SHOULD ALLOW TRADE

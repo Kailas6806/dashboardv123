@@ -1,7 +1,7 @@
 """
 V12 PRO MAX — Trade Manager
 Extracts trade lifecycle management from the original app.py.
-Handles entry, live price updates, SL/target monitoring, trailing stops,
+Handles entry, live price updates, SL/target monitoring,
 auto-square-off, manual close, and CSV log persistence.
 """
 import datetime
@@ -231,10 +231,7 @@ class TradeManager:
 
                 trade["Live Price"] = lp
 
-                # ── Apply trailing stop ──
-                self._risk_mgr.apply_trailing_stop(trade)
-                # Re-read SL in case trailing stop raised it
-                sl = float(trade.get("Stop Loss") or 0)
+
 
                 # ── Check exit conditions ──
                 should_notify = trade_key not in self._notified_exits
@@ -264,11 +261,9 @@ class TradeManager:
 
                 elif lp <= sl and lp > 0:
                     pnl = round((lp - ep_t) * qty_t, 2)
-                    is_trailing_win = pnl > 0
-                    result_str = "🟢 WIN" if is_trailing_win else "🔴 LOSS"
                     trade.update({
                         "Status": "CLOSED",
-                        "Result": result_str,
+                        "Result": "🔴 LOSS",
                         "Exit Price": lp,
                         "Exit Time": now_str,
                         "Actual P&L ₹": pnl,
@@ -276,17 +271,15 @@ class TradeManager:
                     self._processed_exits.add(trade_key)
                     self._notified_exits.add(trade_key)
                     events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
-                    emoji = "🟢" if is_trailing_win else "🔴"
-                    label = "TRAILING SL HIT" if is_trailing_win else "SL HIT"
                     if should_notify:
                         self._notify(
-                            f"{emoji} *{label} — {idx} {signal}*\n"
+                            f"🔴 *SL HIT — {idx} {signal}*\n"
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
                         )
                     log.info(
-                        "%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                        label, idx, signal, trade.get("Strike"), lp, pnl,
+                        "SL HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        idx, signal, trade.get("Strike"), lp, pnl,
                     )
 
                 elif lp >= tgt and lp > 0:

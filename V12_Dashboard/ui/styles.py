@@ -67,9 +67,7 @@ def get_styles():
 div[data-stale="true"] {opacity:1 !important;}
 .stSpinner {display:none !important;}
 
-/* ── Trailing Stop Indicator ── */
-.trailing-active{animation: trail-pulse 1.5s ease-in-out infinite;}
-@keyframes trail-pulse{0%,100%{box-shadow:0 0 0 0 rgba(52,211,153,0.4);}50%{box-shadow:0 0 0 8px rgba(52,211,153,0);}}
+
 
 /* ── Mobile Responsive ── */
 @media(max-width:640px){

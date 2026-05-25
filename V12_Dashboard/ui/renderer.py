@@ -257,10 +257,6 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             atr_val = statistics.mean(diffs[-ATR_PERIOD:])
             atr_sl_display = round(atr_val * ATR_SL_MULTIPLIER, 2)
 
-    trailing_active = any(
-        t.get("_trailing_active", False)
-        for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"
-    )
     daily_limits = risk_mgr.check_daily_limits(st.session_state[tlog_key])
     consec_losses = 0
     closed_trades = [t for t in st.session_state[tlog_key] if t.get("Status") == "CLOSED"]
@@ -294,7 +290,6 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
 
     risk_html = render_risk_card(
         atr_sl=atr_sl_display,
-        trailing_active=trailing_active,
         cooldown_remaining=cooldown_remaining,
         daily_losses=consec_losses,
         max_daily_losses=MAX_DAILY_LOSSES
