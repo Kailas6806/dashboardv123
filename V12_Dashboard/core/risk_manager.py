@@ -73,7 +73,7 @@ class RiskManager:
         tgt_u = round(DAILY_TGT / qty, 2)  # Use 2000 as target per trade
         sl_p = max(0.05, round(ep - sl_u, 2))
         tgt_p = round(ep + tgt_u, 2)
-        return qty, sl_p, tgt_p, round(sl_u * qty, 2), round(tgt_u * qty, 2)
+        return qty, sl_p, tgt_p, float(MAX_LOSS), float(DAILY_TGT)
 
     # ──────────────────────────────────────────────
     # 2. CALC TRADE WITH ATR
@@ -81,60 +81,8 @@ class RiskManager:
     def calc_trade_with_atr(
         self, ep: float, lot: int, spot_history: List[float]
     ) -> Tuple[int, float, float, float, float]:
-        """Calculate trade parameters using ATR-based stop-loss.
-
-        If insufficient spot history, falls back to calc_trade().
-
-        ATR is computed as the average of absolute differences between
-        consecutive spot readings (simplified true range for index).
-
-        Parameters
-        ----------
-        ep : float
-            Entry price (option premium).
-        lot : int
-            Lot size for the index.
-        spot_history : list[float]
-            Recent spot readings (need >= ATR_PERIOD).
-
-        Returns
-        -------
-        (qty, sl_p, tgt_p, max_loss, target_pnl)
-        """
-        if len(spot_history) < ATR_PERIOD:
-            log.debug(
-                "Insufficient spot history (%d < %d), falling back to basic calc",
-                len(spot_history), ATR_PERIOD,
-            )
-            return self.calc_trade(ep, lot)
-
-        # Compute simplified ATR: average of abs diffs of consecutive readings
-        diffs = [
-            abs(spot_history[i] - spot_history[i - 1])
-            for i in range(1, len(spot_history))
-        ]
-        # Use the last ATR_PERIOD diffs
-        recent_diffs = diffs[-(ATR_PERIOD):]
-        atr = sum(recent_diffs) / len(recent_diffs)
-
-        qty = lot  # Always 1 lot
-        atr_sl = round(atr * ATR_SL_MULTIPLIER, 2)
-
-        # Ensure SL doesn't exceed MAX_LOSS and doesn't shrink below a safe floor
-        fixed_sl_u = round(MAX_LOSS / qty, 2)
-        min_sl_u = round(fixed_sl_u * 0.35, 2)  # Floor: at least 35% of max SL (e.g. ~5.38 points for Nifty)
-        sl_u = max(min_sl_u, min(atr_sl, fixed_sl_u))
-
-        tgt_u = round(DAILY_TGT / qty, 2)
-        sl_p = max(0.05, round(ep - sl_u, 2))
-        tgt_p = round(ep + tgt_u, 2)
-
-        log.info(
-            "ATR-based SL: ATR=%.2f, multiplier=%.1f, sl_u=%.2f (capped at %.2f, floor at %.2f)",
-            atr, ATR_SL_MULTIPLIER, sl_u, fixed_sl_u, min_sl_u,
-        )
-
-        return qty, sl_p, tgt_p, round(sl_u * qty, 2), round(tgt_u * qty, 2)
+        """Statically calculate trade parameters with fixed Stop Loss at MAX_LOSS (1000) and Target at DAILY_TGT (2000)."""
+        return self.calc_trade(ep, lot)
 
     # ──────────────────────────────────────────────
     # 3. TRAILING STOP
