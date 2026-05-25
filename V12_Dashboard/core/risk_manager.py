@@ -120,17 +120,18 @@ class RiskManager:
         qty = lot  # Always 1 lot
         atr_sl = round(atr * ATR_SL_MULTIPLIER, 2)
 
-        # Ensure SL doesn't exceed MAX_LOSS
+        # Ensure SL doesn't exceed MAX_LOSS and doesn't shrink below a safe floor
         fixed_sl_u = round(MAX_LOSS / qty, 2)
-        sl_u = min(atr_sl, fixed_sl_u)
+        min_sl_u = round(fixed_sl_u * 0.35, 2)  # Floor: at least 35% of max SL (e.g. ~5.38 points for Nifty)
+        sl_u = max(min_sl_u, min(atr_sl, fixed_sl_u))
 
         tgt_u = round(DAILY_TGT / qty, 2)
         sl_p = max(0.05, round(ep - sl_u, 2))
         tgt_p = round(ep + tgt_u, 2)
 
         log.info(
-            "ATR-based SL: ATR=%.2f, multiplier=%.1f, sl_u=%.2f (capped at %.2f)",
-            atr, ATR_SL_MULTIPLIER, sl_u, fixed_sl_u,
+            "ATR-based SL: ATR=%.2f, multiplier=%.1f, sl_u=%.2f (capped at %.2f, floor at %.2f)",
+            atr, ATR_SL_MULTIPLIER, sl_u, fixed_sl_u, min_sl_u,
         )
 
         return qty, sl_p, tgt_p, round(sl_u * qty, 2), round(tgt_u * qty, 2)
