@@ -6,6 +6,7 @@ auto-square-off, manual close, and CSV log persistence.
 """
 import datetime
 import os
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -48,6 +49,8 @@ class TradeManager:
         """
         self._notifier = notifier
         self._risk_mgr = risk_mgr
+        self._lock = threading.Lock()
+        self._processed_exits = set()
         log.info("TradeManager initialized")
 
     @property
@@ -193,103 +196,112 @@ class TradeManager:
         if isinstance(chain_records, list):
             chain_records = {float(r.get("strikePrice", 0)): r for r in chain_records if r.get("strikePrice") is not None}
 
-        for trade in trade_log:
-            if trade.get("Status") != "OPEN":
-                continue
+        with self._lock:
+            for trade in trade_log:
+                if trade.get("Status") != "OPEN":
+                    continue
 
-            # ── Resolve live price from chain ──
-            try:
-                strike = float(trade.get("Strike", 0))
-            except (ValueError, TypeError):
-                strike = 0.0
+                trade_key = f"{trade.get('Index')}_{trade.get('Entry Time')}_{trade.get('Strike')}_{trade.get('Signal')}"
+                if trade_key in self._processed_exits:
+                    trade["Status"] = "CLOSED"
+                    continue
 
-            signal = trade.get("Signal", "")
-            item = chain_records.get(strike, {})
-            opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
-            lp = round(float(opt.get("lastPrice", 0) or 0), 2)
+                # ── Resolve live price from chain ──
+                try:
+                    strike = float(trade.get("Strike", 0))
+                except (ValueError, TypeError):
+                    strike = 0.0
 
-            if lp == 0:
-                # Fallback: keep previous live price
-                lp = float(
-                    trade.get("Live Price") or trade.get("Entry Price") or 0
-                )
+                signal = trade.get("Signal", "")
+                item = chain_records.get(strike, {})
+                opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
+                lp = round(float(opt.get("lastPrice", 0) or 0), 2)
 
-            ep_t = float(trade.get("Entry Price") or 0)
-            qty_t = int(trade.get("Qty") or 0)
-            sl = float(trade.get("Stop Loss") or 0)
-            tgt = float(trade.get("Target") or 0)
+                if lp == 0:
+                    # Fallback: keep previous live price
+                    lp = float(
+                        trade.get("Live Price") or trade.get("Entry Price") or 0
+                    )
 
-            trade["Live Price"] = lp
+                ep_t = float(trade.get("Entry Price") or 0)
+                qty_t = int(trade.get("Qty") or 0)
+                sl = float(trade.get("Stop Loss") or 0)
+                tgt = float(trade.get("Target") or 0)
 
-            # ── Apply trailing stop ──
-            self._risk_mgr.apply_trailing_stop(trade)
-            # Re-read SL in case trailing stop raised it
-            sl = float(trade.get("Stop Loss") or 0)
+                trade["Live Price"] = lp
 
-            # ── Check exit conditions ──
-            if auto_sq:
-                pnl = round((lp - ep_t) * qty_t, 2)
-                trade.update({
-                    "Status": "CLOSED",
-                    "Result": "🟡 AUTO-SQUARE OFF",
-                    "Exit Price": lp,
-                    "Exit Time": now_str,
-                    "Actual P&L ₹": pnl,
-                })
-                events.append({"type": "AUTO_SQ", "trade": trade, "pnl": pnl})
-                self._notify(
-                    f"🟡 *AUTO-SQUARE OFF — {idx} {signal}*\n"
-                    f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                    f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                )
-                log.info(
-                    "AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                    idx, signal, trade.get("Strike"), lp, pnl,
-                )
+                # ── Apply trailing stop ──
+                self._risk_mgr.apply_trailing_stop(trade)
+                # Re-read SL in case trailing stop raised it
+                sl = float(trade.get("Stop Loss") or 0)
 
-            elif lp <= sl and lp > 0:
-                pnl = round((lp - ep_t) * qty_t, 2)
-                is_trailing_win = pnl > 0
-                result_str = "🟢 WIN" if is_trailing_win else "🔴 LOSS"
-                trade.update({
-                    "Status": "CLOSED",
-                    "Result": result_str,
-                    "Exit Price": lp,
-                    "Exit Time": now_str,
-                    "Actual P&L ₹": pnl,
-                })
-                events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
-                emoji = "🟢" if is_trailing_win else "🔴"
-                label = "TRAILING SL HIT" if is_trailing_win else "SL HIT"
-                self._notify(
-                    f"{emoji} *{label} — {idx} {signal}*\n"
-                    f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                    f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                )
-                log.info(
-                    "%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                    label, idx, signal, trade.get("Strike"), lp, pnl,
-                )
+                # ── Check exit conditions ──
+                if auto_sq:
+                    pnl = round((lp - ep_t) * qty_t, 2)
+                    trade.update({
+                        "Status": "CLOSED",
+                        "Result": "🟡 AUTO-SQUARE OFF",
+                        "Exit Price": lp,
+                        "Exit Time": now_str,
+                        "Actual P&L ₹": pnl,
+                    })
+                    self._processed_exits.add(trade_key)
+                    events.append({"type": "AUTO_SQ", "trade": trade, "pnl": pnl})
+                    self._notify(
+                        f"🟡 *AUTO-SQUARE OFF — {idx} {signal}*\n"
+                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                    )
+                    log.info(
+                        "AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        idx, signal, trade.get("Strike"), lp, pnl,
+                    )
 
-            elif lp >= tgt and lp > 0:
-                pnl = round((lp - ep_t) * qty_t, 2)
-                trade.update({
-                    "Status": "CLOSED",
-                    "Result": "🟢 WIN",
-                    "Exit Price": lp,
-                    "Exit Time": now_str,
-                    "Actual P&L ₹": pnl,
-                })
-                events.append({"type": "TARGET_HIT", "trade": trade, "pnl": pnl})
-                self._notify(
-                    f"🟢 *TARGET HIT — {idx} {signal}*\n"
-                    f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                    f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                )
-                log.info(
-                    "TARGET HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                    idx, signal, trade.get("Strike"), lp, pnl,
-                )
+                elif lp <= sl and lp > 0:
+                    pnl = round((lp - ep_t) * qty_t, 2)
+                    is_trailing_win = pnl > 0
+                    result_str = "🟢 WIN" if is_trailing_win else "🔴 LOSS"
+                    trade.update({
+                        "Status": "CLOSED",
+                        "Result": result_str,
+                        "Exit Price": lp,
+                        "Exit Time": now_str,
+                        "Actual P&L ₹": pnl,
+                    })
+                    self._processed_exits.add(trade_key)
+                    events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
+                    emoji = "🟢" if is_trailing_win else "🔴"
+                    label = "TRAILING SL HIT" if is_trailing_win else "SL HIT"
+                    self._notify(
+                        f"{emoji} *{label} — {idx} {signal}*\n"
+                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                    )
+                    log.info(
+                        "%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        label, idx, signal, trade.get("Strike"), lp, pnl,
+                    )
+
+                elif lp >= tgt and lp > 0:
+                    pnl = round((lp - ep_t) * qty_t, 2)
+                    trade.update({
+                        "Status": "CLOSED",
+                        "Result": "🟢 WIN",
+                        "Exit Price": lp,
+                        "Exit Time": now_str,
+                        "Actual P&L ₹": pnl,
+                    })
+                    self._processed_exits.add(trade_key)
+                    events.append({"type": "TARGET_HIT", "trade": trade, "pnl": pnl})
+                    self._notify(
+                        f"🟢 *TARGET HIT — {idx} {signal}*\n"
+                        f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                        f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                    )
+                    log.info(
+                        "TARGET HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        idx, signal, trade.get("Strike"), lp, pnl,
+                    )
 
         return events
 
@@ -318,39 +330,43 @@ class TradeManager:
         dict
             Event dict: {"type": "MANUAL", "trade": trade, "pnl": float}
         """
-        now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+        with self._lock:
+            trade_key = f"{trade.get('Index')}_{trade.get('Entry Time')}_{trade.get('Strike')}_{trade.get('Signal')}"
+            self._processed_exits.add(trade_key)
 
-        if lp is None or lp == 0:
-            lp = float(
-                trade.get("Live Price") or trade.get("Entry Price") or 0
+            now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+
+            if lp is None or lp == 0:
+                lp = float(
+                    trade.get("Live Price") or trade.get("Entry Price") or 0
+                )
+
+            ep_t = float(trade.get("Entry Price") or 0)
+            qty_t = int(trade.get("Qty") or 0)
+            pnl = round((lp - ep_t) * qty_t, 2)
+            signal = trade.get("Signal", "")
+
+            trade.update({
+                "Status": "CLOSED",
+                "Result": "🟡 MANUAL",
+                "Exit Price": lp,
+                "Exit Time": now_str,
+                "Actual P&L ₹": pnl,
+                "Live Price": lp,
+            })
+
+            log.info(
+                "MANUAL EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                idx, signal, trade.get("Strike"), lp, pnl,
             )
 
-        ep_t = float(trade.get("Entry Price") or 0)
-        qty_t = int(trade.get("Qty") or 0)
-        pnl = round((lp - ep_t) * qty_t, 2)
-        signal = trade.get("Signal", "")
+            self._notify(
+                f"🟡 *MANUAL EXIT — {idx} {signal}*\n"
+                f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+            )
 
-        trade.update({
-            "Status": "CLOSED",
-            "Result": "🟡 MANUAL",
-            "Exit Price": lp,
-            "Exit Time": now_str,
-            "Actual P&L ₹": pnl,
-            "Live Price": lp,
-        })
-
-        log.info(
-            "MANUAL EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-            idx, signal, trade.get("Strike"), lp, pnl,
-        )
-
-        self._notify(
-            f"🟡 *MANUAL EXIT — {idx} {signal}*\n"
-            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-            f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-        )
-
-        return {"type": "MANUAL", "trade": trade, "pnl": pnl}
+            return {"type": "MANUAL", "trade": trade, "pnl": pnl}
 
     # ──────────────────────────────────────────────
     # 4. SAVE LOG
