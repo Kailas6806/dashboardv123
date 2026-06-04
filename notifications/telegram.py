@@ -41,7 +41,7 @@ class TelegramNotifier:
 
         import os
 
-        # Read secrets — graceful fallback
+        # Read secrets
         self._token: Optional[str] = None
         self._chat_id: Optional[str] = None
         try:
@@ -56,23 +56,19 @@ class TelegramNotifier:
         else:
             self._enabled = True
 
-        # Queue & rate-limit state
-        self._queue: queue.Queue = queue.Queue()
-        self._send_times: list = []  # timestamps of recent sends for rate limiting
         self._lock = threading.Lock()
-
-        # Start background worker (daemon so it dies with the main process)
-        self._worker_thread = threading.Thread(target=self._worker, name="tg-sender", daemon=True)
-        self._worker_thread.start()
+        self._send_times: list = []
         log.info("TelegramNotifier initialised (enabled=%s)", self._enabled)
 
     # ── public API ───────────────────────────────────────────────────────
     def send(self, msg: str, parse_mode: str = "Markdown") -> None:
-        """Queue a raw message for background delivery."""
+        """Send a raw message synchronously."""
         if not self._enabled:
             log.debug("Telegram disabled — message dropped")
             return
-        self._queue.put((msg, parse_mode))
+        
+        self._wait_for_rate_limit()
+        self._do_send(msg, parse_mode)
 
     def send_signal_alert(
         self,
@@ -143,20 +139,6 @@ class TelegramNotifier:
         footer = "\n━━━━━━━━━━━━━━━━━━"
         self.send(header + body + footer)
 
-    # ── background worker ────────────────────────────────────────────────
-    def _worker(self) -> None:
-        """Background loop: pull messages from the queue and send them."""
-        log.debug("Telegram worker thread started")
-        while True:
-            try:
-                msg, parse_mode = self._queue.get()  # blocks until item available
-                self._wait_for_rate_limit()
-                self._do_send(msg, parse_mode)
-                self._queue.task_done()
-            except Exception:
-                log.exception("Unexpected error in Telegram worker loop")
-                time.sleep(1)  # prevent tight error loops
-
     # ── rate limiting ────────────────────────────────────────────────────
     def _wait_for_rate_limit(self) -> None:
         """Block until we are under TELEGRAM_MAX_RATE msgs/minute."""
@@ -189,7 +171,6 @@ class TelegramNotifier:
                 if resp.status_code == 200:
                     log.debug("Telegram message sent (attempt %d)", attempt)
                     return
-                # Telegram error — may be transient (429, 5xx)
                 log.warning(
                     "Telegram API error %s on attempt %d: %s",
                     resp.status_code,
