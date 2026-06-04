@@ -326,15 +326,17 @@ class NSEDataFetcher:
 # ──────────────────────────────────────────────────
 # STREAMLIT SESSION STATE SINGLETON
 # ──────────────────────────────────────────────────
+_global_fetcher = None
+
 def get_fetcher() -> NSEDataFetcher:
-    """Get or create the singleton NSEDataFetcher from Streamlit session state.
+    """Get or create the singleton NSEDataFetcher.
 
     Returns
     -------
     NSEDataFetcher
         The shared fetcher instance.
     """
-    key = "_nse_data_fetcher"
-    if key not in st.session_state:
-        st.session_state[key] = NSEDataFetcher()
-    return st.session_state[key]
+    global _global_fetcher
+    if _global_fetcher is None:
+        _global_fetcher = NSEDataFetcher()
+    return _global_fetcher
