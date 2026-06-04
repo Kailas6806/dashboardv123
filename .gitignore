@@ -1,0 +1,26 @@
+# Secrets — never commit these
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Trade CSV logs
+trade_log_*.csv
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Option chain cache files
+last_data_*.json
+
+# Log directories
+logs/
+
+# Trade journal persistence
+trade_journal.json

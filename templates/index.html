@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧠 V12 PRO MAX — TRADER DASHBOARD</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 V12 PRO MAX — TRADER DASHBOARD</h1>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('open-trades')">🟢 Open Trades</div>
+            <div class="tab" onclick="switchTab('NIFTY')">📈 NIFTY</div>
+            <div class="tab" onclick="switchTab('BANKNIFTY')">🏦 BANKNIFTY</div>
+            <div class="tab" onclick="switchTab('FINNIFTY')">💹 FINNIFTY</div>
+            <div class="tab" onclick="switchTab('analytics')">📊 Analytics</div>
+        </div>
+
+        <div id="open-trades" class="tab-content active">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>🟢 All Open Trades</h2>
+                <button onclick="sendDailyReport()" class="action-btn">📨 Send Daily Report Now</button>
+            </div>
+            <div id="open-trades-container">Loading...</div>
+        </div>
+
+        <div id="NIFTY" class="tab-content">
+            <div id="NIFTY-content">Loading NIFTY Data...</div>
+        </div>
+
+        <div id="BANKNIFTY" class="tab-content">
+            <div id="BANKNIFTY-content">Loading BANKNIFTY Data...</div>
+        </div>
+
+        <div id="FINNIFTY" class="tab-content">
+            <div id="FINNIFTY-content">Loading FINNIFTY Data...</div>
+        </div>
+
+        <div id="analytics" class="tab-content">
+            <h2>📊 Analytics & Journal</h2>
+            <div id="analytics-content">Loading Analytics...</div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

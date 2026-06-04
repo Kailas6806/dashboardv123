@@ -1,0 +1,9 @@
+streamlit>=1.27.0
+pandas>=2.0.0
+numpy
+plotly
+requests
+jugaad-data
+lxml
+brotli
+Flask
