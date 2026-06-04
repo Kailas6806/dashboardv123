@@ -5,7 +5,6 @@ import queue
 from typing import Optional, List
 
 import requests
-import streamlit as st
 
 from config import TELEGRAM_MAX_RATE, TELEGRAM_MAX_RETRIES, RETRY_BACKOFF_BASE
 from utils.logger import get_logger
@@ -40,14 +39,16 @@ class TelegramNotifier:
             return
         self._initialized = True
 
+import os
+
         # Read secrets — graceful fallback
         self._token: Optional[str] = None
         self._chat_id: Optional[str] = None
         try:
-            self._token = st.secrets.get("TELEGRAM_TOKEN")
-            self._chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+            self._token = os.environ.get("TELEGRAM_TOKEN")
+            self._chat_id = os.environ.get("TELEGRAM_CHAT_ID")
         except Exception:
-            log.warning("Streamlit secrets not available — Telegram disabled")
+            log.warning("Environment variables not available — Telegram disabled")
 
         if not self._token or not self._chat_id:
             log.warning("TELEGRAM_TOKEN / TELEGRAM_CHAT_ID not set — notifications disabled")
