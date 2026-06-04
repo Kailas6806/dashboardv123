@@ -317,13 +317,97 @@ async function pollData() {
     try {
         const resA = await fetch('/api/analytics');
         const stats = await resA.json();
+        
+        // Build KPIs
         let aHtml = `<div class="grid kpi-grid">
             <div class="card"><div class="label">Total Trades</div><div class="kpi">${stats.total_trades || 0}</div></div>
             <div class="card"><div class="label">Win Rate</div><div class="kpi">${stats.win_rate ? stats.win_rate.toFixed(1) : 0}%</div></div>
-            <div class="card"><div class="label">Net P&L</div><div class="kpi ${stats.total_pnl >= 0 ? 'pnl-green' : 'pnl-red'}">₹${stats.total_pnl || 0}</div></div>
+            <div class="card"><div class="label">Net P&L</div><div class="kpi ${stats.total_pnl >= 0 ? 'pnl-green' : 'pnl-red'}">₹${(stats.total_pnl || 0).toLocaleString()}</div></div>
             <div class="card"><div class="label">Max Drawdown</div><div class="kpi" style="color:#EF4444">₹${stats.max_drawdown || 0}</div></div>
+            <div class="card"><div class="label">Risk/Reward</div><div class="kpi">${stats.risk_reward_ratio ? stats.risk_reward_ratio.toFixed(2) : 0}</div></div>
         </div>`;
+        
+        // Add chart containers
+        aHtml += `<div class="card" style="margin-top:24px;"><h2>Cumulative P&L</h2><div id="chart-cum-pnl" style="height:350px;"></div></div>`;
+        aHtml += `<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(400px, 1fr))">
+                    <div class="card"><h2>P&L by Index</h2><div id="chart-index-pnl" style="height:300px;"></div></div>
+                    <div class="card"><h2>Performance by Hour</h2><div id="chart-hour-pnl" style="height:300px;"></div></div>
+                  </div>`;
+        aHtml += `<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(400px, 1fr))">
+                    <div class="card"><h2>Win / Loss Distribution</h2><div id="chart-win-loss" style="height:300px;"></div></div>
+                    <div class="card"><h2>Signal Type Performance</h2><div id="signal-cards-container"></div></div>
+                  </div>`;
+        
         document.getElementById('analytics-content').innerHTML = aHtml;
+
+        // Draw Plotly Charts if we have trades
+        if(stats.all_trades && stats.all_trades.length > 0) {
+            const layoutCommon = {
+                paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+                font: {color: '#94A3B8', family: 'Inter'}, margin: {t:20, l:40, r:20, b:40},
+                xaxis: {gridcolor: 'rgba(255,255,255,0.05)'}, yaxis: {gridcolor: 'rgba(255,255,255,0.05)'},
+                showlegend: false
+            };
+
+            // 1. Cumulative P&L
+            let cumPnl = 0;
+            let xCum = [];
+            let yCum = [];
+            let colorsCum = [];
+            stats.all_trades.forEach((t, i) => {
+                cumPnl += (parseFloat(t['Actual P&L ₹']) || 0);
+                xCum.push(t['Entry Time'].substring(0, 16));
+                yCum.push(cumPnl);
+                colorsCum.push(cumPnl >= 0 ? '#10B981' : '#EF4444');
+            });
+            Plotly.newPlot('chart-cum-pnl', [{
+                x: xCum, y: yCum, type: 'scatter', mode: 'lines+markers',
+                line: {color: cumPnl >= 0 ? '#10B981' : '#EF4444', width: 2},
+                marker: {color: colorsCum, size: 6}
+            }], layoutCommon, {displayModeBar: false});
+
+            // 2. P&L By Index
+            if (stats.by_index) {
+                let idxs = Object.keys(stats.by_index);
+                let wins = idxs.map(i => stats.by_index[i].wins);
+                let losses = idxs.map(i => stats.by_index[i].losses);
+                Plotly.newPlot('chart-index-pnl', [
+                    {x: idxs, y: wins, type: 'bar', name: 'Wins', marker: {color: '#10B981'}},
+                    {x: idxs, y: losses, type: 'bar', name: 'Losses', marker: {color: '#EF4444'}}
+                ], {...layoutCommon, barmode: 'group', showlegend: true, legend: {orientation: 'h', y: -0.2}}, {displayModeBar: false});
+            }
+
+            // 3. P&L by Hour
+            if (stats.by_hour) {
+                let hrs = Object.keys(stats.by_hour).sort((a,b)=>parseInt(a)-parseInt(b));
+                let hrLabels = hrs.map(h => `${h.padStart(2,'0')}:00`);
+                let hrPnls = hrs.map(h => stats.by_hour[h].pnl);
+                let hrColors = hrPnls.map(p => p >= 0 ? '#10B981' : '#EF4444');
+                Plotly.newPlot('chart-hour-pnl', [{
+                    x: hrLabels, y: hrPnls, type: 'bar', marker: {color: hrColors}
+                }], layoutCommon, {displayModeBar: false});
+            }
+
+            // 4. Win/Loss Pie
+            Plotly.newPlot('chart-win-loss', [{
+                values: [stats.wins, stats.losses], labels: ['Wins', 'Losses'],
+                type: 'pie', hole: 0.45, marker: {colors: ['#10B981', '#EF4444']}
+            }], {...layoutCommon, showlegend: true, legend: {orientation: 'h', y: -0.2}}, {displayModeBar: false});
+            
+            // 5. Signal Types
+            if (stats.by_signal_type) {
+                let sigHtml = '';
+                for (const [sigName, s] of Object.entries(stats.by_signal_type)) {
+                    let wr = s.trades > 0 ? (s.wins / s.trades * 100).toFixed(1) : 0;
+                    sigHtml += `<div style="background:rgba(255,255,255,0.05); padding:16px; border-radius:12px; margin-bottom:12px; display:flex; justify-content:space-between;">
+                        <div><div class="label" style="color:white; font-size:14px;">${sigName}</div>
+                        <div style="color:#94A3B8; font-size:12px; margin-top:4px;">${s.trades} trades · ${wr}% WR</div></div>
+                        <div style="font-size:20px; font-weight:700; color:${s.pnl >= 0 ? '#10B981' : '#EF4444'}">₹${s.pnl.toLocaleString()}</div>
+                    </div>`;
+                }
+                document.getElementById('signal-cards-container').innerHTML = sigHtml;
+            }
+        }
     } catch (e) {
         console.error(e);
     }

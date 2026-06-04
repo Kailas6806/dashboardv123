@@ -143,6 +143,7 @@ def send_report():
 @app.route("/api/analytics")
 def get_analytics():
     stats = journal.get_analytics(days=7)
+    stats["all_trades"] = journal.get_all_trades()
     return jsonify(stats)
 
 @app.route("/api/refresh/<idx>")
