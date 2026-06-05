@@ -281,7 +281,7 @@ async function pollData() {
             let uarrow = upl >= 0 ? '▲' : '▼';
             
             return `
-            <div class="card ${(t.Signal || '').includes('CE') ? 'signal-green' : 'signal-red'}">
+            <div class="card ${upl >= 0 ? 'signal-green' : 'signal-red'}">
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom:16px;">
                     <div>
                         <span class="badge" style="background:#6366F1; margin-right:8px">${t.Index}</span>
