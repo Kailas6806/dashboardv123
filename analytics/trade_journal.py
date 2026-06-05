@@ -341,13 +341,18 @@ class TradeJournal:
     # ------------------------------------------------------------------ #
 
     def _save(self) -> None:
-        """Write the journal list to the JSON file."""
+        """Write the journal list to the JSON file atomically."""
         try:
             dir_name = os.path.dirname(self.journal_path)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
-            with open(self.journal_path, "w", encoding="utf-8") as fh:
+            
+            import tempfile
+            import shutil
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_tmp_", suffix=".json", text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(self.trades, fh, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self.journal_path)
         except (OSError, TypeError) as exc:
             logger.error("Failed to save journal: %s", exc)
 
