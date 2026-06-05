@@ -91,13 +91,24 @@ class TelegramNotifier:
 
         self._lock = threading.Lock()
         self._send_times: list = []
-
-        # Background send queue (non-blocking sends)
         self._queue: queue.Queue = queue.Queue()
-        self._worker = threading.Thread(target=self._send_worker, daemon=True)
-        self._worker.start()
+        self._worker: Optional[threading.Thread] = None
+        self._ensure_worker_alive()
 
         log.info("TelegramNotifier initialised (enabled=%s)", self._enabled)
+
+    def _ensure_worker_alive(self) -> None:
+        """Ensure the background worker thread is running.
+
+        Robust against WSGI servers (e.g. Gunicorn) that fork processes
+        after importing the module.
+        """
+        if self._worker is None or not self._worker.is_alive():
+            with self._lock:
+                if self._worker is None or not self._worker.is_alive():
+                    log.info("Starting Telegram background worker thread")
+                    self._worker = threading.Thread(target=self._send_worker, daemon=True)
+                    self._worker.start()
 
     # ── public API ───────────────────────────────────────────────────────
     def send(self, msg: str, parse_mode: str = "Markdown") -> None:
@@ -105,6 +116,7 @@ class TelegramNotifier:
         if not self._enabled:
             log.debug("Telegram disabled — message dropped")
             return
+        self._ensure_worker_alive()
         self._queue.put((msg, parse_mode))
 
     @staticmethod
