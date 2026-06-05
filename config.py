@@ -81,13 +81,19 @@ TELEGRAM_MAX_RATE      = 20      # max messages per minute
 TELEGRAM_BATCH_WINDOW  = 2.0     # seconds to batch rapid messages
 TELEGRAM_MAX_RETRIES   = 3       # retry failed sends
 
-# ── LOGGING ──
-LOG_DIR           = "logs"
+# ── LOGGING & BASE DIR ──
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR           = os.path.join(BASE_DIR, "logs")
 LOG_MAX_BYTES     = 5 * 1024 * 1024   # 5 MB per log file
 LOG_BACKUP_COUNT  = 5                  # keep 5 rotated files
 
 # ── TRADE JOURNAL ──
-JOURNAL_FILE = "trade_journal.json"
+JOURNAL_FILE = os.path.join(BASE_DIR, "trade_journal.json")
+
+# ── TELEGRAM CREDENTIALS ──
+TELEGRAM_TOKEN   = ""  # Add token here to hardcode, e.g. "123456:ABC..."
+TELEGRAM_CHAT_ID = ""  # Add chat ID here to hardcode, e.g. "-100..."
 
 # ── CONFIDENCE SCORING WEIGHTS (display only, does NOT gate signals) ──
 CONF_WEIGHT_PCR       = 25   # max points from PCR strength

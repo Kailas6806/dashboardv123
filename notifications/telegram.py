@@ -6,7 +6,7 @@ from typing import Optional, List
 
 import requests
 
-from config import TELEGRAM_MAX_RATE, TELEGRAM_MAX_RETRIES, RETRY_BACKOFF_BASE
+from config import TELEGRAM_MAX_RATE, TELEGRAM_MAX_RETRIES, RETRY_BACKOFF_BASE, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, BASE_DIR
 from utils.logger import get_logger
 
 log = get_logger("telegram")
@@ -44,16 +44,27 @@ class TelegramNotifier:
         # Read secrets
         self._token: Optional[str] = None
         self._chat_id: Optional[str] = None
-        try:
-            self._token = os.environ.get("TELEGRAM_TOKEN")
-            self._chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-        except Exception:
-            log.warning("Environment variables not available")
 
-        # Fallback: Read from .streamlit/secrets.toml if not in environment
+        # 1. Try config (hardcoded values)
+        if TELEGRAM_TOKEN and TELEGRAM_TOKEN.strip():
+            self._token = TELEGRAM_TOKEN.strip()
+        if TELEGRAM_CHAT_ID and TELEGRAM_CHAT_ID.strip():
+            self._chat_id = TELEGRAM_CHAT_ID.strip()
+
+        # 2. Fallback: Environment variables
         if not self._token or not self._chat_id:
             try:
-                secrets_path = os.path.join(".streamlit", "secrets.toml")
+                if not self._token:
+                    self._token = os.environ.get("TELEGRAM_TOKEN")
+                if not self._chat_id:
+                    self._chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+            except Exception:
+                log.warning("Environment variables not available")
+
+        # 3. Fallback: Read from secrets.toml (using absolute path)
+        if not self._token or not self._chat_id:
+            try:
+                secrets_path = os.path.join(BASE_DIR, ".streamlit", "secrets.toml")
                 if os.path.exists(secrets_path):
                     with open(secrets_path, "r", encoding="utf-8") as f:
                         for line in f:
@@ -64,13 +75,13 @@ class TelegramNotifier:
                                 key, val = line.split("=", 1)
                                 key = key.strip()
                                 val = val.strip().strip('"').strip("'")
-                                if key == "TELEGRAM_TOKEN":
+                                if key == "TELEGRAM_TOKEN" and not self._token:
                                     self._token = val
-                                elif key == "TELEGRAM_CHAT_ID":
+                                elif key == "TELEGRAM_CHAT_ID" and not self._chat_id:
                                     self._chat_id = val
-                    log.info("Loaded Telegram secrets from .streamlit/secrets.toml")
+                    log.info("Loaded Telegram secrets from secrets.toml")
             except Exception as e:
-                log.warning("Failed to load secrets from .streamlit/secrets.toml: %s", e)
+                log.warning("Failed to load secrets from secrets.toml: %s", e)
 
         if not self._token or not self._chat_id:
             log.warning("TELEGRAM_TOKEN / TELEGRAM_CHAT_ID not set — notifications disabled")

@@ -38,8 +38,10 @@ class TradeJournal:
         self._lock = threading.RLock()
         self.journal_path: str = journal_path or JOURNAL_FILE
         self.trades: List[Dict[str, Any]] = []
+        self._load_failed = False
         self._load()
-        self._import_from_csv()
+        if not self._load_failed:
+            self._import_from_csv()
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -97,6 +99,7 @@ class TradeJournal:
         """
         self._lock.acquire()
         try:
+            self._load()
             idx = trade.get("Index", "UNK")
             entry_time = trade.get("Entry Time", "")
             strike = trade.get("Strike", "")
@@ -152,6 +155,7 @@ class TradeJournal:
         """
         self._lock.acquire()
         try:
+            self._load()
             # Try finding by trade_id first
             if trade_id:
                 for entry in self.trades:
@@ -355,6 +359,9 @@ class TradeJournal:
 
     def _save(self) -> None:
         """Write the journal list to the JSON file atomically."""
+        if self._load_failed:
+            logger.error("Save blocked: Journal file load failed previously (corrupted file). Overwrite prevented to protect data.")
+            return
         try:
             dir_name = os.path.dirname(self.journal_path)
             if dir_name:
@@ -371,28 +378,34 @@ class TradeJournal:
 
     def _load(self) -> None:
         """Read the journal list from the JSON file."""
-        self.trades = []
         if os.path.isfile(self.journal_path):
-            try:
-                with open(self.journal_path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                if isinstance(data, list):
-                    self.trades = data
-                    logger.debug("Loaded %d trades from journal", len(self.trades))
-                else:
-                    logger.warning("Journal file is not a list — starting fresh")
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.error("Failed to load journal: %s", exc)
+            if os.path.getsize(self.journal_path) > 0:
+                try:
+                    with open(self.journal_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    if isinstance(data, list):
+                        self.trades = data
+                        logger.debug("Loaded %d trades from journal", len(self.trades))
+                    else:
+                        logger.warning("Journal file is not a list — starting fresh")
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.error("Failed to load journal (file is corrupted): %s", exc)
+                    self._load_failed = True
+            else:
+                self.trades = []
+        else:
+            self.trades = []
 
-        # Deduplicate any existing entries (cleanup from earlier bug)
-        deduped = self._deduplicate(self.trades)
-        if len(deduped) < len(self.trades):
-            logger.info(
-                "Removed %d duplicate journal entries on load",
-                len(self.trades) - len(deduped),
-            )
-            self.trades = deduped
-            self._save()
+        if not self._load_failed:
+            # Deduplicate any existing entries (cleanup from earlier bug)
+            deduped = self._deduplicate(self.trades)
+            if len(deduped) < len(self.trades):
+                logger.info(
+                    "Removed %d duplicate journal entries on load",
+                    len(self.trades) - len(deduped),
+                )
+                self.trades = deduped
+                self._save()
 
     def _import_from_csv(self) -> None:
         """Proactively import missing closed trades from daily CSV logs."""
