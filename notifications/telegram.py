@@ -48,7 +48,29 @@ class TelegramNotifier:
             self._token = os.environ.get("TELEGRAM_TOKEN")
             self._chat_id = os.environ.get("TELEGRAM_CHAT_ID")
         except Exception:
-            log.warning("Environment variables not available — Telegram disabled")
+            log.warning("Environment variables not available")
+
+        # Fallback: Read from .streamlit/secrets.toml if not in environment
+        if not self._token or not self._chat_id:
+            try:
+                secrets_path = os.path.join(".streamlit", "secrets.toml")
+                if os.path.exists(secrets_path):
+                    with open(secrets_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            if "=" in line:
+                                key, val = line.split("=", 1)
+                                key = key.strip()
+                                val = val.strip().strip('"').strip("'")
+                                if key == "TELEGRAM_TOKEN":
+                                    self._token = val
+                                elif key == "TELEGRAM_CHAT_ID":
+                                    self._chat_id = val
+                    log.info("Loaded Telegram secrets from .streamlit/secrets.toml")
+            except Exception as e:
+                log.warning("Failed to load secrets from .streamlit/secrets.toml: %s", e)
 
         if not self._token or not self._chat_id:
             log.warning("TELEGRAM_TOKEN / TELEGRAM_CHAT_ID not set — notifications disabled")
