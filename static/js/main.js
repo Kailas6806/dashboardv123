@@ -249,8 +249,7 @@ async function pollData() {
             ], { ...layoutCommon, title: {text: 'CE vs PE OI Change', font: {color: '#F8FAFC', size: 16}} }, {displayModeBar: false});
 
         } catch (e) {
-            console.error(e);
-            throw e; // Re-throw so schedulePoll can detect failure and backoff
+            console.error(`Error polling ${idx}:`, e);
         }
     }
     

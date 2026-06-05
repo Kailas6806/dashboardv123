@@ -7,6 +7,7 @@ for cross-day analytics and performance tracking.
 import json
 import os
 import logging
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,7 @@ class TradeJournal:
             journal_path: Path to the JSON journal file.
                           Defaults to ``config.JOURNAL_FILE``.
         """
+        self._lock = threading.RLock()
         self.journal_path: str = journal_path or JOURNAL_FILE
         self.trades: List[Dict[str, Any]] = []
         self._load()
@@ -92,44 +94,48 @@ class TradeJournal:
         Returns:
             The generated ``trade_id`` string.
         """
-        idx = trade.get("Index", "UNK")
-        entry_time = trade.get("Entry Time", "")
-        strike = trade.get("Strike", "")
-        signal = trade.get("Signal", "")
+        self._lock.acquire()
+        try:
+            idx = trade.get("Index", "UNK")
+            entry_time = trade.get("Entry Time", "")
+            strike = trade.get("Strike", "")
+            signal = trade.get("Signal", "")
 
-        # Dedup: skip if this trade already exists in the journal
-        if self._trade_exists(idx, entry_time, strike, signal):
-            # Return existing trade_id
-            for entry in self.trades:
-                if (entry.get("Index") == idx
-                        and entry.get("Entry Time") == entry_time
-                        and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
-                        and entry.get("Signal") == signal):
-                    existing_id = entry.get("trade_id", "")
-                    logger.debug("Trade already exists: %s — skipping duplicate", existing_id)
-                    return existing_id
+            # Dedup: skip if this trade already exists in the journal
+            if self._trade_exists(idx, entry_time, strike, signal):
+                # Return existing trade_id
+                for entry in self.trades:
+                    if (entry.get("Index") == idx
+                            and entry.get("Entry Time") == entry_time
+                            and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
+                            and entry.get("Signal") == signal):
+                        existing_id = entry.get("trade_id", "")
+                        logger.debug("Trade already exists: %s — skipping duplicate", existing_id)
+                        return existing_id
 
-        now = datetime.now(tz=IST)
-        timestamp = now.strftime("%Y%m%d_%H%M%S")
-        trade_id = f"{idx}_{timestamp}"
+            now = datetime.now(tz=IST)
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            trade_id = f"{idx}_{timestamp}"
 
-        entry: Dict[str, Any] = {"trade_id": trade_id}
+            entry: Dict[str, Any] = {"trade_id": trade_id}
 
-        # Copy every known trade field (missing fields get None)
-        for field in self._TRADE_FIELDS:
-            value = trade.get(field)
-            # Convert datetime objects to ISO strings for JSON serialisation
-            if isinstance(value, datetime):
-                value = value.isoformat()
-            entry[field] = value
+            # Copy every known trade field (missing fields get None)
+            for field in self._TRADE_FIELDS:
+                value = trade.get(field)
+                # Convert datetime objects to ISO strings for JSON serialisation
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                entry[field] = value
 
-        entry["signal_metadata"] = dict(signal_metadata) if signal_metadata else {}
-        entry["recorded_at"] = now.isoformat()
+            entry["signal_metadata"] = dict(signal_metadata) if signal_metadata else {}
+            entry["recorded_at"] = now.isoformat()
 
-        self.trades.append(entry)
-        self._save()
-        logger.info("Recorded trade %s", trade_id)
-        return trade_id
+            self.trades.append(entry)
+            self._save()
+            logger.info("Recorded trade %s", trade_id)
+            return trade_id
+        finally:
+            self._lock.release()
 
     def update_trade(self, trade_id: str, exit_data: Dict[str, Any], trade_dict: Optional[Dict[str, Any]] = None) -> bool:
         """Update an existing trade with exit information.
@@ -143,57 +149,62 @@ class TradeJournal:
         Returns:
             ``True`` if the trade was found and updated, ``False`` otherwise.
         """
-        # Try finding by trade_id first
-        if trade_id:
-            for entry in self.trades:
-                if entry.get("trade_id") == trade_id:
+        self._lock.acquire()
+        try:
+            # Try finding by trade_id first
+            if trade_id:
+                for entry in self.trades:
+                    if entry.get("trade_id") == trade_id:
+                        for key, value in exit_data.items():
+                            if isinstance(value, datetime):
+                                value = value.isoformat()
+                            entry[key] = value
+                        entry["updated_at"] = datetime.now(tz=IST).isoformat()
+                        self._save()
+                        logger.info("Updated trade %s with exit data", trade_id)
+                        return True
+
+            # Fallback: Try finding by fields if trade_dict is provided
+            # NOTE: We do NOT filter by Status=="OPEN" because trade_manager may have
+            # already set Status="CLOSED" on the in-memory dict before journal.update_trade
+            # is called. We match on the most recent entry (no updated_at) first.
+            if trade_dict:
+                idx = trade_dict.get("Index")
+                etime = trade_dict.get("Entry Time")
+                strike = trade_dict.get("Strike")
+                sig = trade_dict.get("Signal")
+                # Prefer entries that haven't been updated yet (no updated_at)
+                candidates = [
+                    entry for entry in self.trades
+                    if (entry.get("Index") == idx
+                        and entry.get("Entry Time") == etime
+                        and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
+                        and entry.get("Signal") == sig)
+                ]
+                # Sort: prefer not-yet-updated entries first
+                candidates.sort(key=lambda e: (1 if "updated_at" in e else 0))
+                if candidates:
+                    entry = candidates[0]
                     for key, value in exit_data.items():
                         if isinstance(value, datetime):
                             value = value.isoformat()
                         entry[key] = value
                     entry["updated_at"] = datetime.now(tz=IST).isoformat()
                     self._save()
-                    logger.info("Updated trade %s with exit data", trade_id)
+                    logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
                     return True
 
-        # Fallback: Try finding by fields if trade_dict is provided
-        # NOTE: We do NOT filter by Status=="OPEN" because trade_manager may have
-        # already set Status="CLOSED" on the in-memory dict before journal.update_trade
-        # is called. We match on the most recent entry (no updated_at) first.
-        if trade_dict:
-            idx = trade_dict.get("Index")
-            etime = trade_dict.get("Entry Time")
-            strike = trade_dict.get("Strike")
-            sig = trade_dict.get("Signal")
-            # Prefer entries that haven't been updated yet (no updated_at)
-            candidates = [
-                entry for entry in self.trades
-                if (entry.get("Index") == idx
-                    and entry.get("Entry Time") == etime
-                    and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
-                    and entry.get("Signal") == sig)
-            ]
-            # Sort: prefer not-yet-updated entries first
-            candidates.sort(key=lambda e: (1 if "updated_at" in e else 0))
-            if candidates:
-                entry = candidates[0]
-                for key, value in exit_data.items():
-                    if isinstance(value, datetime):
-                        value = value.isoformat()
-                    entry[key] = value
-                entry["updated_at"] = datetime.now(tz=IST).isoformat()
-                self._save()
-                logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
-                return True
-
-        logger.warning("Trade %s not found for update", trade_id)
-        return False
+            logger.warning("Trade %s not found for update", trade_id)
+            return False
+        finally:
+            self._lock.release()
 
     def get_all_trades(self) -> List[Dict[str, Any]]:
         """Return a copy of every trade in the journal."""
-        if not self.trades:
-            self._load()
-        return list(self.trades)
+        with self._lock:
+            if not self.trades:
+                self._load()
+            return list(self.trades)
 
     def get_trades_for_date(self, date_str: str) -> List[Dict[str, Any]]:
         """Return trades whose recorded_at falls on *date_str*.
@@ -201,12 +212,13 @@ class TradeJournal:
         Args:
             date_str: Date in ``YYYY-MM-DD`` format.
         """
-        results: List[Dict[str, Any]] = []
-        for t in self.trades:
-            recorded_at = t.get("recorded_at", "")
-            if recorded_at and str(recorded_at)[:10] == date_str:
-                results.append(t)
-        return results
+        with self._lock:
+            results: List[Dict[str, Any]] = []
+            for t in self.trades:
+                recorded_at = t.get("recorded_at", "")
+                if recorded_at and str(recorded_at)[:10] == date_str:
+                    results.append(t)
+            return results
 
     def get_analytics(self, days: int = 7) -> Dict[str, Any]:
         """Compute comprehensive analytics over the last *days* days.
@@ -218,10 +230,11 @@ class TradeJournal:
             by_index, by_signal_type, by_hour,
             current_streak, consecutive_losses.
         """
-        if not self.trades:
-            self._load()
-        cutoff = datetime.now(tz=IST) - timedelta(days=days)
-        trades = self._filter_since(cutoff)
+        with self._lock:
+            if not self.trades:
+                self._load()
+            cutoff = datetime.now(tz=IST) - timedelta(days=days)
+            trades = self._filter_since(cutoff)
 
         analytics: Dict[str, Any] = {
             "total_trades": 0,
@@ -385,7 +398,8 @@ class TradeJournal:
         try:
             import glob
             import pandas as pd
-            csv_files = glob.glob("trade_log_*.csv")
+            from config import LOG_DIR
+            csv_files = glob.glob(os.path.join(LOG_DIR, "trade_log_*.csv"))
             imported_count = 0
             for filepath in csv_files:
                 filename = os.path.basename(filepath)

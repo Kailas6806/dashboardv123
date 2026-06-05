@@ -80,6 +80,8 @@ def close_trade():
             if t["Entry Time"] == entry_time and str(t["Strike"]) == str(strike) and t["Signal"] == signal and t["Status"] == "OPEN":
                 trade_mgr.close_manually(idx, t, lp)
                 trade_mgr.save_log(idx, tlog)
+                state[idx]["last_signal"] = "WAIT"
+                state[idx]["last_played"] = "WAIT"
                 journal.update_trade(
                     t.get("_journal_id", ""),
                     {
@@ -133,7 +135,8 @@ def send_report():
     report_lines = [f"📊 *DAILY P&L REPORT — {current_date}* (Manual)\n"]
 
     for idx in INDEX_CONFIG:
-        tlog = state[idx].get("trade_log", [])
+        with state_locks[idx]:
+            tlog = list(state[idx].get("trade_log", []))
         if not tlog:
             continue
         df = pd.DataFrame(tlog)
@@ -357,8 +360,8 @@ def refresh_idx(idx):
         "bias": str(md["bias"]),
         "support": float(md["support"]) if md.get("support") else None,
         "resistance": float(md["resistance"]) if md.get("resistance") else None,
-        "secondary_support": float(md.get("secondary_support")) if pd.notnull(md.get("secondary_support")) else None,
-        "secondary_resistance": float(md.get("secondary_resistance")) if pd.notnull(md.get("secondary_resistance")) else None,
+        "secondary_support": float(md["secondary_support"]) if md.get("secondary_support") is not None else None,
+        "secondary_resistance": float(md["secondary_resistance"]) if md.get("secondary_resistance") is not None else None,
         "signal": str(final_signal),
         "confidence": str(final_conf),
         "conf_score": float(conf_score),

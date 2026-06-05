@@ -49,6 +49,9 @@ def main():
     notifier = TelegramNotifier()
     lines = build_report()
     notifier.send_daily_report(lines)
+    if notifier._enabled:
+        print("Waiting for Telegram queue to drain...")
+        notifier._queue.join()
     print('Daily report sent via Telegram (or logged if not configured).')
 
 if __name__ == '__main__':

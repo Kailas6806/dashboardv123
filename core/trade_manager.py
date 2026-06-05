@@ -215,9 +215,8 @@ class TradeManager:
         if isinstance(chain_records, list):
             chain_records = {float(r.get("strikePrice", 0)): r for r in chain_records if r.get("strikePrice") is not None}
 
-        self._cleanup_exit_sets()
-
         with self._lock:
+            self._cleanup_exit_sets()
             for trade in trade_log:
                 if trade.get("Status") != "OPEN":
                     continue
@@ -359,6 +358,7 @@ class TradeManager:
         with self._lock:
             trade_key = f"{trade.get('Index')}_{trade.get('Entry Time')}_{trade.get('Strike')}_{trade.get('Signal')}"
             self._processed_exits.add(trade_key)
+            self._notified_exits.add(trade_key)
 
             now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
 
@@ -426,7 +426,9 @@ class TradeManager:
             for col in LOG_COLS:
                 if col not in df.columns:
                     df[col] = None
-            df[LOG_COLS].to_csv(filename, index=False)
+            temp_filename = filename + ".tmp"
+            df[LOG_COLS].to_csv(temp_filename, index=False)
+            os.replace(temp_filename, filename)
             log.debug("Trade log saved: %s (%d trades)", filename, len(trade_log))
         except Exception as e:
             log.error("Failed to save trade log %s: %s", filename, e)

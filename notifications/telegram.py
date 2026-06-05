@@ -207,7 +207,7 @@ class TelegramNotifier:
                 log.warning("Telegram request failed (attempt %d): %s", attempt, exc)
 
             if attempt < TELEGRAM_MAX_RETRIES:
-                backoff = RETRY_BACKOFF_BASE ** attempt
+                backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
                 log.debug("Retrying in %.1f s …", backoff)
                 time.sleep(backoff)
 
