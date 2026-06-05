@@ -11,6 +11,7 @@ class TTLCache:
         self._lock = threading.Lock()
         self._default_ttl = default_ttl or CACHE_TTL_SECONDS
         self._stats = {"hits": 0, "misses": 0, "evictions": 0}
+        self._write_count = 0  # counter for periodic cleanup
     
     def get(self, key):
         """Get value if exists and not expired. Returns None if miss."""
@@ -31,6 +32,19 @@ class TTLCache:
         ttl = ttl or self._default_ttl
         with self._lock:
             self._store[key] = (value, time.time() + ttl)
+            self._write_count += 1
+        # Periodic cleanup every 100 writes
+        if self._write_count % 100 == 0:
+            self.cleanup()
+    
+    def cleanup(self) -> None:
+        """Remove all expired entries from the cache."""
+        now = time.time()
+        with self._lock:
+            expired_keys = [k for k, (_, exp) in self._store.items() if now >= exp]
+            for k in expired_keys:
+                del self._store[k]
+                self._stats["evictions"] += 1
     
     def invalidate(self, key):
         """Force-expire a specific key."""

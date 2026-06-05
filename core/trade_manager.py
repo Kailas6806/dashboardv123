@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from config import LOG_COLS, IST, AUTO_SQUARE_OFF_TIME, INDEX_CONFIG
+from config import LOG_COLS, IST, AUTO_SQUARE_OFF_TIME, INDEX_CONFIG, NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, LOG_DIR
 
 try:
     from utils.logger import get_logger
@@ -116,6 +116,14 @@ class TradeManager:
         dict
             Trade dict with all LOG_COLS fields populated.
         """
+        now_time = datetime.datetime.now(IST).time()
+        if now_time >= NO_NEW_TRADE_TIME:
+            log.warning("Trade entry blocked: past NO_NEW_TRADE_TIME (%s)", NO_NEW_TRADE_TIME)
+            return None
+        if ep < MIN_ENTRY_PRICE:
+            log.warning("Trade entry blocked: entry price %.2f below MIN_ENTRY_PRICE %.2f", ep, MIN_ENTRY_PRICE)
+            return None
+
         now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
 
         # Use ATR-based SL if sufficient history, else basic
@@ -161,6 +169,15 @@ class TradeManager:
         return trade
 
     # ──────────────────────────────────────────────
+    # CLEANUP STALE EXIT TRACKING
+    # ──────────────────────────────────────────────
+    def _cleanup_exit_sets(self) -> None:
+        """Remove stale entries from exit tracking sets (keep today only)."""
+        today = datetime.datetime.now(IST).strftime("%Y%m%d")
+        self._processed_exits = {k for k in self._processed_exits if today in k}
+        self._notified_exits = {k for k in self._notified_exits if today in k}
+
+    # ──────────────────────────────────────────────
     # 2. UPDATE LIVE PRICES
     # ──────────────────────────────────────────────
     def update_live_prices(
@@ -191,11 +208,14 @@ class TradeManager:
                          "trade": trade, "pnl": float}
         """
         events: List[Dict[str, Any]] = []
+        pending_notifications: List[str] = []
         now_str = now.strftime("%I:%M:%S %p")
         auto_sq = now.time() >= AUTO_SQUARE_OFF_TIME
 
         if isinstance(chain_records, list):
             chain_records = {float(r.get("strikePrice", 0)): r for r in chain_records if r.get("strikePrice") is not None}
+
+        self._cleanup_exit_sets()
 
         with self._lock:
             for trade in trade_log:
@@ -249,7 +269,7 @@ class TradeManager:
                     self._notified_exits.add(trade_key)
                     events.append({"type": "AUTO_SQ", "trade": trade, "pnl": pnl})
                     if should_notify:
-                        self._notify(
+                        pending_notifications.append(
                             f"🟡 *AUTO-SQUARE OFF — {idx} {signal}*\n"
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
@@ -272,7 +292,7 @@ class TradeManager:
                     self._notified_exits.add(trade_key)
                     events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
                     if should_notify:
-                        self._notify(
+                        pending_notifications.append(
                             f"🔴 *SL HIT — {idx} {signal}*\n"
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
@@ -295,7 +315,7 @@ class TradeManager:
                     self._notified_exits.add(trade_key)
                     events.append({"type": "TARGET_HIT", "trade": trade, "pnl": pnl})
                     if should_notify:
-                        self._notify(
+                        pending_notifications.append(
                             f"🟢 *TARGET HIT — {idx} {signal}*\n"
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
@@ -304,6 +324,10 @@ class TradeManager:
                         "TARGET HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                         idx, signal, trade.get("Strike"), lp, pnl,
                     )
+
+        # Send notifications outside the lock to avoid potential deadlock
+        for notification_msg in pending_notifications:
+            self._notify(notification_msg)
 
         return events
 
@@ -362,13 +386,17 @@ class TradeManager:
                 idx, signal, trade.get("Strike"), lp, pnl,
             )
 
-            self._notify(
+            pending_msg = (
                 f"🟡 *MANUAL EXIT — {idx} {signal}*\n"
                 f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                 f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
             )
+            result = {"type": "MANUAL", "trade": trade, "pnl": pnl}
 
-            return {"type": "MANUAL", "trade": trade, "pnl": pnl}
+        # Send notification outside the lock to avoid potential deadlock
+        self._notify(pending_msg)
+
+        return result
 
     # ──────────────────────────────────────────────
     # 4. SAVE LOG
@@ -386,10 +414,12 @@ class TradeManager:
         if not trade_log:
             return
 
-        filename = (
+        filename = os.path.join(
+            LOG_DIR,
             f"trade_log_{idx}_"
             f"{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv"
         )
+        os.makedirs(LOG_DIR, exist_ok=True)
         try:
             df = pd.DataFrame(trade_log)
             # Ensure all LOG_COLS exist
@@ -417,7 +447,8 @@ class TradeManager:
         list[dict]
             List of trade dicts, or empty list if file doesn't exist.
         """
-        filename = (
+        filename = os.path.join(
+            LOG_DIR,
             f"trade_log_{idx}_"
             f"{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv"
         )
@@ -426,6 +457,7 @@ class TradeManager:
 
         try:
             df = pd.read_csv(filename)
+            df = df.where(pd.notnull(df), None)
             # Ensure all LOG_COLS exist
             for col in LOG_COLS:
                 if col not in df.columns:

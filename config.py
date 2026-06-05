@@ -29,7 +29,7 @@ def is_expiry_day(idx: str) -> bool:
     if expiry_wd is None:
         return False
     import datetime as _dt
-    return _dt.datetime.now().weekday() == expiry_wd
+    return _dt.datetime.now(IST).weekday() == expiry_wd
 
 # ── TRADE LOG COLUMNS ──
 LOG_COLS = [

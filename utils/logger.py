@@ -1,14 +1,14 @@
-"""Structured logging with rotating file handler for V12 PRO MAX."""
+"""Structured logging with timed rotating file handler for V12 PRO MAX."""
 import os
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 import datetime
-from config import LOG_DIR, LOG_MAX_BYTES, LOG_BACKUP_COUNT, IST
+from config import LOG_DIR, LOG_BACKUP_COUNT, IST
 
 _loggers = {}  # cache to avoid duplicate handlers
 
 def setup_logger(name="v12", level=logging.INFO):
-    """Create or return a named logger with console + rotating file output."""
+    """Create or return a named logger with console + timed rotating file output."""
     if name in _loggers:
         return _loggers[name]
     
@@ -19,10 +19,13 @@ def setup_logger(name="v12", level=logging.INFO):
     # Create log directory
     os.makedirs(LOG_DIR, exist_ok=True)
     
-    # File handler — rotating
-    today = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-    log_file = os.path.join(LOG_DIR, f"v12_{today}.log")
-    fh = RotatingFileHandler(log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8")
+    # File handler — timed rotation at midnight
+    log_file = os.path.join(LOG_DIR, "v12.log")
+    fh = TimedRotatingFileHandler(
+        log_file, when="midnight", interval=1, backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8"
+    )
+    fh.suffix = "%Y-%m-%d"
     fh.setLevel(logging.DEBUG)
     
     # Console handler

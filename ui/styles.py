@@ -154,10 +154,8 @@ def get_styles():
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
-/* ── Hide Streamlit noise ── */
-[data-testid="stStatusWidget"] {visibility:hidden !important;}
+/* ── Streamlit overrides ── */
 div[data-stale="true"] {opacity:1 !important;}
-.stSpinner {display:none !important;}
 
 /* ── Mobile Responsive ── */
 @media(max-width:640px){

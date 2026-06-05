@@ -66,7 +66,7 @@ class RiskManager:
             max_loss – max loss in ₹
             target_pnl – target profit in ₹
         """
-        qty = lot  # Always 1 lot
+        qty = max(1, lot)  # Always 1 lot; clamp to 1 to prevent division-by-zero
         sl_u = round(MAX_LOSS / qty, 2)
         tgt_u = round(DAILY_TGT / qty, 2)  # Use 2000 as target per trade
         sl_p = max(0.05, round(ep - sl_u, 2))
@@ -134,7 +134,8 @@ class RiskManager:
             and t.get("Result", "")  # has a result
         ]
         if closed_trades:
-            last_closed = closed_trades[0]  # most recent (list is newest-first)
+            # Trade log uses .insert(0, ...) so index 0 is newest (newest-first ordering).
+            last_closed = closed_trades[0]
             if "LOSS" in str(last_closed.get("Result", "")):
                 exit_time_str = last_closed.get("Exit Time", "")
                 if exit_time_str:
@@ -185,7 +186,8 @@ class RiskManager:
         if not closed:
             return True, ""
 
-        # Count consecutive losses from most recent
+        # Count consecutive losses from most recent.
+        # Trade log uses .insert(0, ...) so closed[0] is newest (newest-first ordering).
         consecutive_losses = 0
         for t in closed:
             result = str(t.get("Result", ""))

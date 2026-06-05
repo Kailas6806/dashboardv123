@@ -1,4 +1,6 @@
-function switchTab(tabId) {
+function escapeAttr(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function switchTab(event, tabId) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     event.target.classList.add('active');
@@ -44,6 +46,7 @@ async function pollData() {
     for (let idx of indices) {
         try {
             const res = await fetch(`/api/refresh/${idx}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status} for ${idx}`);
             const data = await res.json();
             if (data.error) continue;
             
@@ -68,9 +71,9 @@ async function pollData() {
             </div>`;
             
             html += `<div class="grid tracker-grid">
-                <div class="card"><div class="label">CAPITAL</div><div class="kpi" style="font-size:22px">₹${data.risk.capital.toLocaleString()}</div></div>
+                <div class="card"><div class="label">CAPITAL</div><div class="kpi" style="font-size:22px">₹${(data.risk.capital || 0).toLocaleString()}</div></div>
                 <div class="card"><div class="label">TRADES TODAY</div><div class="kpi" style="font-size:22px">${data.closed_count}</div></div>
-                <div class="card"><div class="label">NET P&L</div><div class="kpi ${data.idx_pnl >= 0 ? 'pnl-green' : 'pnl-red'}" style="font-size:22px">₹${data.idx_pnl.toLocaleString()}</div></div>
+                <div class="card"><div class="label">NET P&L</div><div class="kpi ${data.idx_pnl >= 0 ? 'pnl-green' : 'pnl-red'}" style="font-size:22px">₹${(data.idx_pnl || 0).toLocaleString()}</div></div>
                 <div class="card"><div class="label">PROGRESS (${progress.toFixed(1)}%)</div>
                     <div class="conf-bar-outer"><div class="conf-bar-inner ${data.idx_pnl >= 0 ? 'conf-bar-high' : 'conf-bar-low'}" style="width: ${Math.abs(progress)}%"></div></div>
                 </div>
@@ -110,11 +113,11 @@ async function pollData() {
                 </div>
                 <div class="card">
                     <div class="label">CE OI Flow</div>
-                    <div style="color:#EF4444; font-weight:800; font-size:18px;">${filters.total_ce_delta.toLocaleString()}</div>
+                    <div style="color:#EF4444; font-weight:800; font-size:18px;">${(filters.total_ce_delta || 0).toLocaleString()}</div>
                 </div>
                 <div class="card">
                     <div class="label">PE OI Flow</div>
-                    <div style="color:#10B981; font-weight:800; font-size:18px;">${filters.total_pe_delta.toLocaleString()}</div>
+                    <div style="color:#10B981; font-weight:800; font-size:18px;">${(filters.total_pe_delta || 0).toLocaleString()}</div>
                 </div>
             </div>`;
             
@@ -137,7 +140,7 @@ async function pollData() {
             let sigClass = 'signal-gray';
             if (data.signal === 'BUY CE') sigClass = 'signal-green';
             else if (data.signal === 'BUY PE') sigClass = 'signal-red';
-            else if (data.signal.includes('SIDEWAYS')) sigClass = 'signal-yellow';
+            else if ((data.signal || '').includes('SIDEWAYS')) sigClass = 'signal-yellow';
             
             html += `<div class="card ${sigClass}">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
@@ -190,11 +193,11 @@ async function pollData() {
 
                 let isAtm = row.Strike === data.atm;
                 ocHtml += `<tr style="${isAtm ? 'background:rgba(252, 211, 77, 0.1);' : ''}">
-                    <td style="color:#F87171; font-weight:600;">${row['CE OI'].toLocaleString()}</td>
+                    <td style="color:#F87171; font-weight:600;">${(row['CE OI'] || 0).toLocaleString()}</td>
                     <td>₹${row['CE LTP']}</td>
                     <td style="font-weight:800; font-size:15px; ${isAtm ? 'color:#FCD34D' : ''}">${row.Strike} ${isAtm ? '🎯' : ''}</td>
                     <td>₹${row['PE LTP']}</td>
-                    <td style="color:#34D399; font-weight:600;">${row['PE OI'].toLocaleString()}</td>
+                    <td style="color:#34D399; font-weight:600;">${(row['PE OI'] || 0).toLocaleString()}</td>
                 </tr>`;
             }
             ocHtml += `</tbody></table></div></div>`;
@@ -218,7 +221,7 @@ async function pollData() {
                             <td>₹${t['Entry Price']}</td>
                             <td>₹${t['Exit Price']}</td>
                             <td class="${t['Actual P&L ₹'] >= 0 ? 'pnl-green' : 'pnl-red'}">₹${t['Actual P&L ₹']}</td>
-                            <td><span class="badge ${t.Result.includes('PROFIT') ? 'badge-ok' : (t.Result.includes('LOSS') ? 'badge-warning' : 'badge-cooldown')}">${t.Result}</span></td>
+                            <td><span class="badge ${(t.Result || '').includes('PROFIT') ? 'badge-ok' : ((t.Result || '').includes('LOSS') ? 'badge-warning' : 'badge-cooldown')}">${t.Result}</span></td>
                         </tr>`;
                     }
                     html += `</tbody></table></div></div>`;
@@ -247,6 +250,7 @@ async function pollData() {
 
         } catch (e) {
             console.error(e);
+            throw e; // Re-throw so schedulePoll can detect failure and backoff
         }
     }
     
@@ -271,18 +275,13 @@ async function pollData() {
             let ev = parseFloat(t['Entry Price']);
             let lv = parseFloat(t['Live Price']);
             let qty = parseInt(t.Qty);
-            let upl = (lv - ev) * qty;
-            if (t.Signal.includes('PE')) upl = (ev - lv) * qty; // Quick inversion for PE logic visual only if needed, backend handles logic. Actually backend PnL logic applies.
-            
-            // Re-calculate UPL generically based on live price direction. If CE, up is good. If PE, down is good.
-            let dir = t.Signal.includes('CE') ? 1 : -1;
-            upl = Math.round((lv - ev) * dir * qty);
+            let upl = Math.round((lv - ev) * qty);
             
             let uc = upl >= 0 ? '#34D399' : '#F87171';
             let uarrow = upl >= 0 ? '▲' : '▼';
             
             return `
-            <div class="card ${t.Signal.includes('CE') ? 'signal-green' : 'signal-red'}">
+            <div class="card ${(t.Signal || '').includes('CE') ? 'signal-green' : 'signal-red'}">
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom:16px;">
                     <div>
                         <span class="badge" style="background:#6366F1; margin-right:8px">${t.Index}</span>
@@ -306,7 +305,7 @@ async function pollData() {
                 
                 <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
                     <div style="color:#64748B; font-size:13px; font-weight:600;">Entered: ${t['Entry Time']}</div>
-                    <button onclick="closeTrade('${t.Index}', '${t['Entry Time']}', '${t.Strike}', '${t.Signal}', ${lv})" class="danger">❌ Close Position</button>
+                    <button onclick="closeTrade('${escapeAttr(t.Index)}', '${escapeAttr(t['Entry Time'])}', '${escapeAttr(t.Strike)}', '${escapeAttr(t.Signal)}', ${lv})" class="danger">❌ Close Position</button>
                 </div>
             </div>`;
         }).join('');
@@ -402,7 +401,7 @@ async function pollData() {
                     sigHtml += `<div style="background:rgba(255,255,255,0.05); padding:16px; border-radius:12px; margin-bottom:12px; display:flex; justify-content:space-between;">
                         <div><div class="label" style="color:white; font-size:14px;">${sigName}</div>
                         <div style="color:#94A3B8; font-size:12px; margin-top:4px;">${s.trades} trades · ${wr}% WR</div></div>
-                        <div style="font-size:20px; font-weight:700; color:${s.pnl >= 0 ? '#10B981' : '#EF4444'}">₹${s.pnl.toLocaleString()}</div>
+                        <div style="font-size:20px; font-weight:700; color:${(s.pnl || 0) >= 0 ? '#10B981' : '#EF4444'}">₹${(s.pnl || 0).toLocaleString()}</div>
                     </div>`;
                 }
                 document.getElementById('signal-cards-container').innerHTML = sigHtml;
@@ -424,5 +423,18 @@ async function closeTrade(idx, entryTime, strike, signal, livePrice) {
     pollData();
 }
 
-setInterval(pollData, 3000);
-pollData();
+let pollInterval = 3000;
+const MIN_POLL = 3000;
+const MAX_POLL = 30000;
+
+async function schedulePoll() {
+    try {
+        await pollData();
+        pollInterval = MIN_POLL; // Reset on success
+    } catch(e) {
+        pollInterval = Math.min(pollInterval * 2, MAX_POLL); // Backoff
+        console.error('Poll failed, backing off to', pollInterval, 'ms');
+    }
+    setTimeout(schedulePoll, pollInterval);
+}
+schedulePoll();

@@ -4,6 +4,14 @@ Each function returns an HTML string for st.markdown(unsafe_allow_html=True).
 """
 
 
+def _safe_int(val, default=0):
+    """Safely convert a value to int, returning default on NaN/None/error."""
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def render_kpi_grid(idx, spot, atm_actual, pcr, bias, support, resistance,
                     secondary_support=None, secondary_resistance=None):
     """Top KPI cards: Spot, ATM, PCR, Bias, Support, Resistance."""
@@ -45,9 +53,12 @@ def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
         if isinstance(cooldown_info, dict):
             cooldown_allowed = cooldown_info.get("allowed", True)
             cooldown_reason = cooldown_info.get("reason", "ACTIVE")
-        else:
+        elif isinstance(cooldown_info, (tuple, list)) and len(cooldown_info) >= 2:
             cooldown_allowed = cooldown_info[0]
             cooldown_reason = cooldown_info[1]
+        else:
+            cooldown_allowed = True
+            cooldown_reason = ""
         
         if not cooldown_allowed:
             extra_cards += f"""
@@ -65,7 +76,7 @@ def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
   <div class="card" style="padding:10px;"><div class="label">🔄 PCR Momentum</div>
     <div style="color:{pm_c};font-weight:700;">{pcr_momentum}</div></div>
   <div class="card" style="padding:10px;"><div class="label">📊 OI Flow</div>
-    <div style="color:#F59E0B;font-weight:700;">CE Δ:{int(total_ce_delta)} PE Δ:{int(total_pe_delta)}</div></div>{extra_cards}
+    <div style="color:#F59E0B;font-weight:700;">CE Δ:{_safe_int(total_ce_delta)} PE Δ:{_safe_int(total_pe_delta)}</div></div>{extra_cards}
 </div>"""
 
 

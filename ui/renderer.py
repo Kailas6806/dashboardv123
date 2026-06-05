@@ -49,7 +49,7 @@ def init_state(idx):
 def load_log(idx):
     """Load trade log from CSV file for today."""
     import os
-    f = f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+    f = f"trade_log_{idx}_{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv"
     if os.path.exists(f):
         df = pd.read_csv(f)
         for c in LOG_COLS:
@@ -282,6 +282,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                         day=now_ist.day,
                         tzinfo=IST,
                     )
+                    # Handle midnight rollover
+                    if exit_time > now_ist:
+                        exit_time -= datetime.timedelta(days=1)
                     elapsed = (now_ist - exit_time).total_seconds()
                     if elapsed < COOLDOWN_SECONDS:
                         cooldown_remaining = int(COOLDOWN_SECONDS - elapsed)
@@ -423,7 +426,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             st.session_state[sk(idx, "oi_baseline")] = None
             st.session_state[sk(idx, "prev_df")] = None
             import os
-            f = f"trade_log_{idx}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+            f = f"trade_log_{idx}_{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv"
             if os.path.exists(f):
                 os.remove(f)
             st.rerun()

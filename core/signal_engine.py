@@ -91,6 +91,8 @@ class SignalEngine:
         # ── ATM ──
         atm = round(spot / step) * step
         df["dist"] = (df["Strike"] - spot).abs()
+        if df.empty:
+            return None
         atm_actual = int(df.loc[df["dist"].idxmin(), "Strike"])
         atm_row = df[df["Strike"] == atm_actual].iloc[0]
 

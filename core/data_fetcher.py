@@ -7,6 +7,7 @@ Fetches option chain data from NSE via jugaad_data with:
 - Per-index rate limiting
 - Health check
 """
+import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -138,6 +139,7 @@ class NSEDataFetcher:
                     self._cache.set(idx_name, data)
                     return data
                 else:
+                    self._consecutive_failures += 1
                     log.warning(
                         "%s: Empty/invalid response on attempt %d",
                         idx_name, attempt + 1,
@@ -324,12 +326,13 @@ class NSEDataFetcher:
 
 
 # ──────────────────────────────────────────────────
-# STREAMLIT SESSION STATE SINGLETON
+# THREAD-SAFE SINGLETON
 # ──────────────────────────────────────────────────
+_fetcher_lock = threading.Lock()
 _global_fetcher = None
 
 def get_fetcher() -> NSEDataFetcher:
-    """Get or create the singleton NSEDataFetcher.
+    """Get or create the singleton NSEDataFetcher (thread-safe).
 
     Returns
     -------
@@ -338,5 +341,7 @@ def get_fetcher() -> NSEDataFetcher:
     """
     global _global_fetcher
     if _global_fetcher is None:
-        _global_fetcher = NSEDataFetcher()
+        with _fetcher_lock:
+            if _global_fetcher is None:
+                _global_fetcher = NSEDataFetcher()
     return _global_fetcher
