@@ -10,7 +10,9 @@ def get_styles():
 
 * {
     box-sizing: border-box;
-    font-family: 'Inter', sans-serif !important;
+}
+body, .stApp {
+    font-family: 'Inter', sans-serif;
 }
 
 /* ── Base App Styles ── */
