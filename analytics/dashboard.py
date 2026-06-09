@@ -14,32 +14,42 @@ import pandas as pd
 logger = logging.getLogger("v12.analytics_dashboard")
 
 # ── Colour palette ────────────────────────────────────────────────────
-_GREEN = "#00c853"
-_RED = "#ff1744"
+_GREEN = "#10b981"
+_RED = "#ef4444"
 _CARD_CSS = """
 <style>
 .analytics-card {
-    background: linear-gradient(135deg, #1a1a2e 60%, #16213e);
-    border-radius: 12px;
+    background: rgba(24, 24, 27, 0.65);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+    border-radius: 16px;
     padding: 18px 22px;
-    margin: 6px 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    margin: 8px 0;
     text-align: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.analytics-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.6);
+    border-color: rgba(255, 255, 255, 0.12);
 }
 .analytics-card .label {
-    font-size: 0.85rem;
-    color: #8892b0;
-    margin-bottom: 4px;
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    margin-bottom: 6px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.15em;
+    font-weight: 600;
 }
 .analytics-card .value {
-    font-size: 1.6rem;
-    font-weight: 700;
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.2;
 }
-.analytics-card .value.green { color: #00c853; }
-.analytics-card .value.red   { color: #ff1744; }
-.analytics-card .value.neutral { color: #e0e0e0; }
+.analytics-card .value.green { color: #10b981; }
+.analytics-card .value.red   { color: #ef4444; }
+.analytics-card .value.neutral { color: #e4e4e7; }
 </style>
 """
 
@@ -227,6 +237,9 @@ def _render_cumulative_pnl(trades: List[Dict[str, Any]]) -> None:
     fig.update_traces(line_color=last_color, marker_color=colors)
     fig.update_layout(
         template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#a1a1aa",
         height=350,
         margin=dict(l=40, r=20, t=30, b=40),
         xaxis_title="",
@@ -260,6 +273,9 @@ def _render_pnl_by_index(analytics: Dict[str, Any]) -> None:
     )
     fig.update_layout(
         template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#a1a1aa",
         height=320,
         margin=dict(l=40, r=20, t=30, b=40),
         legend_title_text="",
@@ -294,6 +310,9 @@ def _render_pnl_by_hour(analytics: Dict[str, Any]) -> None:
     fig.update_traces(marker_color=colors)
     fig.update_layout(
         template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#a1a1aa",
         height=320,
         margin=dict(l=40, r=20, t=30, b=40),
         xaxis_title="Hour of Day",
@@ -326,6 +345,9 @@ def _render_win_loss_pie(analytics: Dict[str, Any]) -> None:
     )
     fig.update_layout(
         template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#a1a1aa",
         height=320,
         margin=dict(l=20, r=20, t=30, b=20),
         legend=dict(orientation="h", y=-0.1),

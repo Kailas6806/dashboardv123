@@ -17,6 +17,17 @@ from config import JOURNAL_FILE, IST
 logger = logging.getLogger("v12.trade_journal")
 
 
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        import numpy as np
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 class TradeJournal:
     """Persistent JSON-backed trade journal with analytics capabilities."""
 
@@ -371,7 +382,7 @@ class TradeJournal:
             import shutil
             fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_tmp_", suffix=".json", text=True)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(self.trades, fh, indent=2, ensure_ascii=False)
+                json.dump(self.trades, fh, indent=2, ensure_ascii=False, cls=NpEncoder)
             os.replace(tmp_path, self.journal_path)
         except (OSError, TypeError) as exc:
             logger.error("Failed to save journal: %s", exc)
@@ -425,7 +436,7 @@ class TradeJournal:
                 date_part = parts[3]
 
                 try:
-                    df = pd.read_csv(filepath)
+                    df = pd.read_csv(filepath, encoding="utf-8")
                 except Exception:
                     continue
 

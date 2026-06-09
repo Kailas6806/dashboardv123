@@ -427,7 +427,7 @@ class TradeManager:
                 if col not in df.columns:
                     df[col] = None
             temp_filename = filename + ".tmp"
-            df[LOG_COLS].to_csv(temp_filename, index=False)
+            df[LOG_COLS].to_csv(temp_filename, index=False, encoding="utf-8")
             os.replace(temp_filename, filename)
             log.debug("Trade log saved: %s (%d trades)", filename, len(trade_log))
         except Exception as e:
@@ -458,7 +458,7 @@ class TradeManager:
             return []
 
         try:
-            df = pd.read_csv(filename)
+            df = pd.read_csv(filename, encoding="utf-8")
             df = df.where(pd.notnull(df), None)
             # Ensure all LOG_COLS exist
             for col in LOG_COLS:

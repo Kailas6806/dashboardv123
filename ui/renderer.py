@@ -52,7 +52,7 @@ def load_log(idx):
     import os
     f = os.path.join(LOG_DIR, f"trade_log_{idx}_{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv")
     if os.path.exists(f):
-        df = pd.read_csv(f)
+        df = pd.read_csv(f, encoding="utf-8")
         for c in LOG_COLS:
             if c not in df.columns:
                 df[c] = None
@@ -337,12 +337,12 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             st.warning(f"⚠️ Option price ₹{ep} is too low (min ₹{MIN_ENTRY_PRICE}) — skipping")
         elif oi_unusual:
             st.warning("🚨 Unusual OI activity detected — holding off entry")
-        elif conf_score <= 20:
-            st.warning(f"⚠️ Confidence score ({conf_score}) is too low to enter trade (Minimum: 21)")
+        elif conf_score < 30:
+            st.warning(f"⚠️ Confidence score ({conf_score}) is too low to enter trade (Minimum: 30)")
         elif expiry_today and ep < MIN_ENTRY_PRICE:
             st.info(f"📅 Expiry day — cheap option ₹{ep} allowed (fast moves expected)")
 
-        can_enter = not too_late and not price_too_low and not oi_unusual and conf_score > 20
+        can_enter = not too_late and not price_too_low and not oi_unusual and conf_score >= 30
 
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):
@@ -452,9 +452,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
     def hl(v):
         if isinstance(v, (int, float)):
             if v > 0:
-                return "background-color:#064E3B;color:white"
+                return "background-color:rgba(16,185,129,0.2);color:#10b981;"
             if v < 0:
-                return "background-color:#7F1D1D;color:white"
+                return "background-color:rgba(239,68,68,0.2);color:#ef4444;"
         return ""
 
     with st.expander(f"📊 {idx} Option Chain & Charts"):
@@ -462,16 +462,16 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             disp.style.map(hl, subset=["CE OI Δ", "PE OI Δ"]),
             use_container_width=True,
         )
-        st.plotly_chart(
-            px.bar(disp, x="Strike", y=["CE OI", "PE OI"], barmode="group",
-                   color_discrete_map={"CE OI": "#34D399", "PE OI": "#F87171"}),
-            use_container_width=True,
-        )
-        st.plotly_chart(
-            px.bar(disp, x="Strike", y=["CE OI Δ", "PE OI Δ"], barmode="group",
-                   color_discrete_map={"CE OI Δ": "#6EE7B7", "PE OI Δ": "#FCA5A5"}),
-            use_container_width=True,
-        )
+        
+        fig1 = px.bar(disp, x="Strike", y=["CE OI", "PE OI"], barmode="group",
+                      color_discrete_map={"CE OI": "#10b981", "PE OI": "#ef4444"})
+        fig1.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        fig2 = px.bar(disp, x="Strike", y=["CE OI Δ", "PE OI Δ"], barmode="group",
+                      color_discrete_map={"CE OI Δ": "#34d399", "PE OI Δ": "#f87171"})
+        fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig2, use_container_width=True)
 
     # ── POSITIONS ──
     with st.expander(f"📜 {idx} Trade Positions"):
@@ -517,8 +517,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                 def cp(v):
                     try:
                         f = float(v)
-                        return ("color:#34D399;font-weight:700" if f >= 0
-                                else "color:#F87171;font-weight:700")
+                        return ("color:#10b981;font-weight:800" if f >= 0
+                                else "color:#ef4444;font-weight:800")
                     except (ValueError, TypeError):
                         return ""
 

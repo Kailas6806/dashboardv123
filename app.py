@@ -37,9 +37,14 @@ from notifications.telegram import TelegramNotifier
 from utils.logger import setup_logger
 
 # ── STREAMLIT CONFIG ──
-st.set_page_config(page_title="V12 PRO MAX", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="V12 PRO MAX", page_icon="⚡", layout="wide")
 st.markdown(get_styles(), unsafe_allow_html=True)
-st.title("🧠 V12 PRO MAX — TRADER DASHBOARD")
+st.markdown("""
+<div style="padding: 10px 0 20px 0;">
+    <h1 style="font-size: 38px; font-weight: 800; background: linear-gradient(135deg, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; letter-spacing: -0.02em;">V12 PRO MAX</h1>
+    <p style="color: #a1a1aa; font-size: 13px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px;">Algorithmic Trading Engine</p>
+</div>
+""", unsafe_allow_html=True)
 
 # ── INITIALIZE LOGGER ──
 logger = setup_logger()

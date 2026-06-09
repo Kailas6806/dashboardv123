@@ -68,7 +68,7 @@ ATR_SL_MULTIPLIER        = 1.5   # SL = entry ∓ (multiplier × ATR)
 MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
 
 # ── CACHING ──
-CACHE_TTL_SECONDS = 2            # option chain cache TTL
+CACHE_TTL_SECONDS = 1            # option chain cache TTL
 
 # ── NSE FETCH ──
 MAX_RETRIES            = 3       # retry attempts for NSE fetch
@@ -104,6 +104,6 @@ CONF_WEIGHT_SR_PROX   = 10   # max points from S/R proximity
 CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 
 # ── STREAMLIT REFRESH ──
-FRAGMENT_REFRESH_SECONDS = 3   # @st.fragment(run_every=N)
+FRAGMENT_REFRESH_SECONDS = 1   # @st.fragment(run_every=N)
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)

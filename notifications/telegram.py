@@ -122,6 +122,7 @@ class TelegramNotifier:
     @staticmethod
     def _escape_md(text: str) -> str:
         """Escape Telegram Markdown special characters."""
+        text = str(text)
         for ch in ('_', '*', '`', '['):
             text = text.replace(ch, f'\\{ch}')
         return text
