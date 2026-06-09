@@ -92,8 +92,8 @@ LOG_BACKUP_COUNT  = 5                  # keep 5 rotated files
 JOURNAL_FILE = os.path.join(BASE_DIR, "trade_journal.json")
 
 # ── TELEGRAM CREDENTIALS ──
-TELEGRAM_TOKEN   = "8628909339:AAFACrGOquQ9iF1IS1baOkC5WD7tBG39YCc"  # Add token here to hardcode, e.g. "123456:ABC..."
-TELEGRAM_CHAT_ID = "1310976570"  # Add chat ID here to hardcode, e.g. "-100..."
+TELEGRAM_TOKEN   = ""  # Add token here to hardcode, e.g. "123456:ABC..."
+TELEGRAM_CHAT_ID = ""  # Add chat ID here to hardcode, e.g. "-100..."
 
 # ── CONFIDENCE SCORING WEIGHTS (display only, does NOT gate signals) ──
 CONF_WEIGHT_PCR       = 25   # max points from PCR strength
