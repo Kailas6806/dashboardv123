@@ -204,11 +204,14 @@ def render_open_trade_detail(trade, idx_color, sc, uc, upl, pnl_disp, upl_arrow)
 
 def render_expander_open_trade(trade, sc):
     """Open trade card inside the per-index expander."""
+    import datetime
     ev = float(trade.get("Entry Price") or 0)
     lv = float(trade.get("Live Price") or ev)
     qv = int(trade.get("Qty") or 0)
     upl = round((lv - ev) * qv, 2)
     uc = "#10b981" if upl >= 0 else "#ef4444"
+    
+    now_str = datetime.datetime.now().strftime("%H:%M:%S")
 
     return f"""<div class="card" style="border-left:4px solid {sc};padding:14px 20px;">
 <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
@@ -220,6 +223,9 @@ def render_expander_open_trade(trade, sc):
   <div><div class="label">Target</div><div class="kpi" style="font-size:18px;color:#10b981;-webkit-text-fill-color:#10b981;">₹{trade.get('Target')}</div></div>
   <div><div class="label">Qty</div><div class="kpi" style="font-size:18px;">{qv}</div></div>
   <div style="margin-left:auto;"><div class="label">Unrealized P&L</div><div class="kpi" style="font-size:22px;color:{uc};-webkit-text-fill-color:{uc};">₹{upl:,.0f}</div></div>
+</div>
+<div style="margin-top:12px;font-size:11px;color:#71717a;font-weight:600;text-align:right;">
+  Last Refreshed: {now_str}
 </div>
 </div>"""
 
