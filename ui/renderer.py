@@ -457,7 +457,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                 return "background-color:rgba(239,68,68,0.2);color:#ef4444;"
         return ""
 
-    with st.expander(f"📊 {idx} Option Chain & Charts"):
+    with st.expander(f"{idx} Option Chain & Charts 📊"):
         st.dataframe(
             disp.style.map(hl, subset=["CE OI Δ", "PE OI Δ"]),
             use_container_width=True,
@@ -474,7 +474,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         st.plotly_chart(fig2, use_container_width=True)
 
     # ── POSITIONS ──
-    with st.expander(f"📜 {idx} Trade Positions"):
+    with st.expander(f"{idx} Trade Positions 📜"):
         t1, t2 = st.tabs(["🟢 Open", "📋 History"])
         with t1:
             opens = [t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"]
