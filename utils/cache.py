@@ -33,8 +33,8 @@ class TTLCache:
         with self._lock:
             self._store[key] = (value, time.time() + ttl)
             self._write_count += 1
-        # Periodic cleanup every 100 writes
-        if self._write_count % 100 == 0:
+            should_cleanup = (self._write_count % 100 == 0)
+        if should_cleanup:
             self.cleanup()
     
     def cleanup(self) -> None:

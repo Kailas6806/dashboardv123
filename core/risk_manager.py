@@ -4,12 +4,11 @@ Position sizing, fixed stop-loss (₹1000), cooldown, and daily loss limits.
 IMPORTANT: qty is ALWAYS = lot (1 lot only, no dynamic scaling).
 """
 import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from config import (
     MAX_LOSS,
     DAILY_TGT,
-    CAPITAL,
     ATR_PERIOD,
     ATR_SL_MULTIPLIER,
     COOLDOWN_SECONDS,
@@ -79,7 +78,41 @@ class RiskManager:
     def calc_trade_with_atr(
         self, ep: float, lot: int, spot_history: List[float]
     ) -> Tuple[int, float, float, float, float]:
-        """Statically calculate trade parameters with fixed Stop Loss at MAX_LOSS (1000) and Target at DAILY_TGT (2000)."""
+        """Calculate trade parameters using ATR-based stop loss.
+
+        If spot_history has enough bars, computes ATR as the mean of
+        absolute bar-to-bar changes over the last ATR_PERIOD bars and
+        derives SL/target from that. Falls back to calc_trade() when
+        history is insufficient.
+
+        Returns
+        -------
+        (qty, sl_p, tgt_p, max_loss, target_pnl)
+        """
+        if len(spot_history) >= ATR_PERIOD:
+            recent = spot_history[-ATR_PERIOD:]
+            atr = sum(
+                abs(recent[i] - recent[i - 1]) for i in range(1, len(recent))
+            ) / (ATR_PERIOD - 1)
+
+            atr_sl_points = round(atr * ATR_SL_MULTIPLIER, 2)
+            qty = max(1, lot)
+            sl_p = max(0.05, round(ep - atr_sl_points, 2))
+            tgt_p = round(ep + (atr_sl_points * 2), 2)   # 1:2 R:R
+            max_loss = round(atr_sl_points * qty, 2)
+            target_pnl = round((tgt_p - ep) * qty, 2)
+
+            log.debug(
+                "ATR SL: atr=%.2f mult=%.2f sl_pts=%.2f sl_p=%.2f tgt_p=%.2f",
+                atr, ATR_SL_MULTIPLIER, atr_sl_points, sl_p, tgt_p,
+            )
+            return qty, sl_p, tgt_p, max_loss, target_pnl
+
+        # Fallback: insufficient history
+        log.debug(
+            "ATR fallback: only %d bars available (need %d)",
+            len(spot_history), ATR_PERIOD,
+        )
         return self.calc_trade(ep, lot)
 
 

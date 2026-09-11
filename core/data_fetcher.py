@@ -1,9 +1,8 @@
 """
 V12 PRO MAX — NSE Data Fetcher
-Fetches option chain data from NSE via jugaad_data with:
+Fetches option chain data from NSE via indian_options_fetcher with:
 - TTL cache to avoid duplicate fetches within refresh cycles
 - Exponential backoff retries on failure
-- Auto session recovery after consecutive failures
 - Per-index rate limiting
 - Health check
 """
@@ -11,14 +10,12 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
-import streamlit as st
 from jugaad_data.nse import NSELive
 
 from config import (
     CACHE_TTL_SECONDS,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
-    AUTO_RECOVERY_THRESHOLD,
     MIN_REQUEST_INTERVAL,
     INDEX_CONFIG,
 )
@@ -40,55 +37,83 @@ except ImportError:
 log = get_logger("data_fetcher")
 
 
-class NSEDataFetcher:
-    """Resilient NSE option chain fetcher with caching and auto-recovery.
+def _map_response(raw: Any) -> Optional[Dict[str, Any]]:
+    """Map indian_options_fetcher compact response to the NSE dict shape.
 
-    Uses jugaad_data's NSELive under the hood. Wraps it with:
+    Expected output shape:
+        {
+            "records": {
+                "data": [ {"strikePrice": N, "CE": {"lastPrice": N, "openInterest": N}, "PE": {...}}, ... ],
+                "underlyingValue": N,
+            }
+        }
+    """
+    if raw is None:
+        return None
+
+    # indian_options_fetcher returns a dict with "data" list and "underlyingValue"
+    # Handle both flat dict and nested-records dict returned by the library.
+    if isinstance(raw, dict) and "records" in raw:
+        # Already NSE-shaped — pass through
+        return raw
+
+    # Compact format: top-level keys "data" and "underlyingValue"
+    try:
+        underlying = float(raw.get("underlyingValue") or raw.get("underlying_value") or 0)
+        rows = raw.get("data") or raw.get("strikes") or []
+
+        mapped_rows = []
+        for row in rows:
+            strike = row.get("strikePrice") or row.get("strike_price") or row.get("strike", 0)
+            ce_raw = row.get("CE") or row.get("ce") or {}
+            pe_raw = row.get("PE") or row.get("pe") or {}
+
+            mapped_rows.append({
+                "strikePrice": float(strike),
+                "CE": {
+                    "lastPrice": float(ce_raw.get("lastPrice") or ce_raw.get("last_price") or 0),
+                    "openInterest": float(ce_raw.get("openInterest") or ce_raw.get("open_interest") or 0),
+                    "changeinOpenInterest": float(
+                        ce_raw.get("changeinOpenInterest") or ce_raw.get("change_in_open_interest") or 0
+                    ),
+                },
+                "PE": {
+                    "lastPrice": float(pe_raw.get("lastPrice") or pe_raw.get("last_price") or 0),
+                    "openInterest": float(pe_raw.get("openInterest") or pe_raw.get("open_interest") or 0),
+                    "changeinOpenInterest": float(
+                        pe_raw.get("changeinOpenInterest") or pe_raw.get("change_in_open_interest") or 0
+                    ),
+                },
+            })
+
+        return {
+            "records": {
+                "data": mapped_rows,
+                "underlyingValue": underlying,
+            }
+        }
+    except Exception as e:
+        log.error("_map_response: failed to map response: %s", e)
+        return None
+
+
+class NSEDataFetcher:
+    """Resilient NSE option chain fetcher with caching.
+
+    Uses indian_options_fetcher under the hood. Wraps it with:
     - TTLCache to avoid hammering NSE within the same refresh cycle
     - Exponential backoff on transient failures
-    - Full session rebuild after AUTO_RECOVERY_THRESHOLD consecutive failures
     - Per-index rate limiting to respect MIN_REQUEST_INTERVAL
     """
 
     def __init__(self) -> None:
-        """Initialize fetcher with fresh NSELive session."""
-        self._nse: Optional[NSELive] = None
+        """Initialize fetcher."""
         self._cache = TTLCache(default_ttl=CACHE_TTL_SECONDS)
-        self._consecutive_failures: int = 0
         self._total_fetches: int = 0
         self._total_errors: int = 0
         self._last_request_time: Dict[str, float] = {}  # idx -> timestamp
-
-        self._create_session()
-        log.info("NSEDataFetcher initialized")
-
-    # ──────────────────────────────────────────────
-    # SESSION MANAGEMENT
-    # ──────────────────────────────────────────────
-    def _create_session(self) -> None:
-        """Create a fresh NSELive instance."""
-        try:
-            self._nse = NSELive()
-            log.info("NSELive session created")
-        except Exception as e:
-            log.error("Failed to create NSELive session: %s", e)
-            self._nse = None
-
-    def _rebuild_session(self) -> None:
-        """Full teardown and rebuild of the NSE session."""
-        log.warning(
-            "Rebuilding NSE session after %d consecutive failures",
-            self._consecutive_failures,
-        )
-        # Teardown
-        self._nse = None
-        self._cache.clear()
-        time.sleep(1)  # brief pause before reconnecting
-
-        # Rebuild
-        self._create_session()
-        self._consecutive_failures = 0
-        log.info("NSE session rebuilt successfully")
+        self._nse = NSELive()
+        log.info("NSEDataFetcher initialized (jugaad_data backend)")
 
     # ──────────────────────────────────────────────
     # FETCH OPTION CHAIN
@@ -104,7 +129,8 @@ class NSEDataFetcher:
         Returns
         -------
         dict or None
-            Raw option chain dict from NSE, or None on failure.
+            Option chain dict with keys records.data and records.underlyingValue,
+            or None on failure.
         """
         # ── Check cache first ──
         cached = self._cache.get(idx_name)
@@ -126,20 +152,19 @@ class NSEDataFetcher:
                 self._last_request_time[idx_name] = time.time()
                 self._total_fetches += 1
 
-                if self._nse is None:
-                    self._create_session()
-                    if self._nse is None:
-                        raise ConnectionError("Cannot create NSELive session")
+                try:
+                    raw = self._nse.index_option_chain(idx_name)
+                except Exception:
+                    # Recreate session if expired
+                    self._nse = NSELive()
+                    raw = self._nse.index_option_chain(idx_name)
 
-                data = self._nse.index_option_chain(idx_name)
+                data = _map_response(raw)
 
                 if data and "records" in data and data["records"].get("data"):
-                    # Success — reset failure counter, cache, return
-                    self._consecutive_failures = 0
                     self._cache.set(idx_name, data)
                     return data
                 else:
-                    self._consecutive_failures += 1
                     log.warning(
                         "%s: Empty/invalid response on attempt %d",
                         idx_name, attempt + 1,
@@ -147,15 +172,10 @@ class NSEDataFetcher:
 
             except Exception as e:
                 self._total_errors += 1
-                self._consecutive_failures += 1
                 log.warning(
                     "%s: Fetch error on attempt %d/%d: %s",
                     idx_name, attempt + 1, MAX_RETRIES, e,
                 )
-
-                # Auto recovery check
-                if self._consecutive_failures >= AUTO_RECOVERY_THRESHOLD:
-                    self._rebuild_session()
 
                 # Exponential backoff
                 if attempt < MAX_RETRIES - 1:
@@ -163,12 +183,9 @@ class NSEDataFetcher:
                     log.debug("Backing off %.2fs before retry", backoff)
                     time.sleep(backoff)
 
-                # Session might be stale — recreate for next attempt
-                self._nse = None
-
         log.error(
-            "%s: All %d fetch attempts failed (%d consecutive failures)",
-            idx_name, MAX_RETRIES, self._consecutive_failures,
+            "%s: All %d fetch attempts failed",
+            idx_name, MAX_RETRIES,
         )
         return None
 
@@ -297,31 +314,17 @@ class NSEDataFetcher:
     # CACHE MANAGEMENT
     # ──────────────────────────────────────────────
     def invalidate_cache(self, idx_name: str) -> None:
-        """Force-expire cache for a specific index.
-
-        Parameters
-        ----------
-        idx_name : str
-            Index name whose cache entry should be invalidated.
-        """
+        """Force-expire cache for a specific index."""
         self._cache.invalidate(idx_name)
         log.debug("Cache invalidated for %s", idx_name)
 
     def get_cache_stats(self) -> Dict[str, Any]:
-        """Return cache and fetcher performance statistics.
-
-        Returns
-        -------
-        dict
-            Combined stats: cache hits/misses + fetcher totals/errors.
-        """
+        """Return cache and fetcher performance statistics."""
         cache_stats = self._cache.get_stats()
         return {
             **cache_stats,
             "total_fetches": self._total_fetches,
             "total_errors": self._total_errors,
-            "consecutive_failures": self._consecutive_failures,
-            "session_active": self._nse is not None,
         }
 
 
@@ -332,13 +335,7 @@ _fetcher_lock = threading.Lock()
 _global_fetcher = None
 
 def get_fetcher() -> NSEDataFetcher:
-    """Get or create the singleton NSEDataFetcher (thread-safe).
-
-    Returns
-    -------
-    NSEDataFetcher
-        The shared fetcher instance.
-    """
+    """Get or create the singleton NSEDataFetcher (thread-safe)."""
     global _global_fetcher
     if _global_fetcher is None:
         with _fetcher_lock:

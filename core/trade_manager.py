@@ -7,11 +7,11 @@ auto-square-off, manual close, and CSV log persistence.
 import datetime
 import os
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import pandas as pd
 
-from config import LOG_COLS, IST, AUTO_SQUARE_OFF_TIME, INDEX_CONFIG, NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, LOG_DIR
+from config import LOG_COLS, IST, AUTO_SQUARE_OFF_TIME, NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, LOG_DIR
 
 try:
     from utils.logger import get_logger

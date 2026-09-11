@@ -16,16 +16,21 @@ import os
 
 # ── CONFIGURATION ──
 from config import (
-    INDEX_CONFIG, IST, CAPITAL, DAILY_TGT,
+    INDEX_CONFIG, IST,
     FRAGMENT_REFRESH_SECONDS, DAILY_REPORT_CHECK_SECS,
-    DAILY_REPORT_TIME, LOG_DIR,
+    DAILY_REPORT_TIME, LOG_DIR, BASE_DIR,
+    MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
 )
 
 # ── MODULES ──
 from ui.styles import get_styles
 from ui.renderer import (
     render_index, render_open_trades_tab,
+    render_trade_history_tab, render_settings_tab,
     init_state, load_log, sk,
+)
+from ui.components import (
+    render_app_header, render_market_ticker,
 )
 from core.signal_engine import SignalEngine
 from core.risk_manager import RiskManager
@@ -39,12 +44,6 @@ from utils.logger import setup_logger
 # ── STREAMLIT CONFIG ──
 st.set_page_config(page_title="V12 PRO MAX", page_icon="⚡", layout="wide")
 st.markdown(get_styles(), unsafe_allow_html=True)
-st.markdown("""
-<div style="padding: 10px 0 20px 0;">
-    <h1 style="font-size: 38px; font-weight: 800; background: linear-gradient(135deg, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; letter-spacing: -0.02em;">V12 PRO MAX</h1>
-    <p style="color: #a1a1aa; font-size: 13px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px;">Algorithmic Trading Engine</p>
-</div>
-""", unsafe_allow_html=True)
 
 # ── INITIALIZE LOGGER ──
 logger = setup_logger()
@@ -78,47 +77,80 @@ for idx in INDEX_CONFIG:
     if not st.session_state[sk(idx, "trade_log")]:
         st.session_state[sk(idx, "trade_log")] = load_log(idx)
 
-# ── TABS ──
-tab0, tab1, tab2, tab3, tab4 = st.tabs([
-    "🟢 Open Trades", "📈 NIFTY", "🏦 BANKNIFTY", "💹 FINNIFTY", "📊 Analytics"
-])
+# ── COMPUTE TICKER & MARKET STATUS ──
+now_ist = datetime.datetime.now(IST)
+market_open = MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME
+datetime_str = now_ist.strftime("%d %b %Y | %I:%M %p")
 
+ticker_items = []
+import json
+for idx in INDEX_CONFIG:
+    spot = None
+    hist = st.session_state.get(sk(idx, "spot_history"), [])
+    if hist:
+        spot = hist[-1]
+    if spot is None:
+        cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    cache_d = json.load(f)
+                spot = cache_d.get("records", {}).get("underlyingValue")
+            except Exception:
+                pass
+    ticker_items.append({"symbol": idx, "spot": spot})
+
+is_connected = any(it.get("spot") is not None for it in ticker_items)
+
+# ── RENDER HEADER & TICKER ──
+st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
+st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
+
+# ── DYNAMIC NAVIGATION TABS ──
+open_count = sum(
+    len([t for t in st.session_state.get(sk(idx, "trade_log"), []) if t.get("Status") == "OPEN"])
+    for idx in INDEX_CONFIG
+)
+open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
+
+tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_history, tab_analytics, tab_settings = st.tabs([
+    open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
+])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_open_trades():
     render_open_trades_tab(trade_mgr, fetcher)
 
-
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_nifty():
     render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
-
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_banknifty():
     render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
 
-
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_finnifty():
     render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
 
-
 def show_analytics():
     render_analytics_tab(journal)
 
-
-with tab0:
+with tab_open:
     show_open_trades()
-with tab1:
+with tab_nifty:
     show_nifty()
-with tab2:
+with tab_banknifty:
     show_banknifty()
-with tab3:
+with tab_finnifty:
     show_finnifty()
-with tab4:
+with tab_history:
+    render_trade_history_tab(journal)
+with tab_analytics:
     show_analytics()
+with tab_settings:
+    render_settings_tab(trade_mgr, journal)
 
 
 # ── DAILY P&L REPORT ──

@@ -379,7 +379,6 @@ class TradeJournal:
                 os.makedirs(dir_name, exist_ok=True)
             
             import tempfile
-            import shutil
             fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_tmp_", suffix=".json", text=True)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(self.trades, fh, indent=2, ensure_ascii=False, cls=NpEncoder)

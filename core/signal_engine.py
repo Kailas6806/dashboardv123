@@ -11,7 +11,6 @@ import pandas as pd
 
 from config import (
     SIGNAL_BUFFER_SIZE,
-    SIGNAL_CONFIRM_COUNT,
     SIDEWAYS_PCR_LOW,
     SIDEWAYS_PCR_HIGH,
     SIDEWAYS_SPOT_STDEV_PCT,
@@ -317,10 +316,6 @@ class SignalEngine:
         elif buf.count("BUY PE") >= 2:
             final_signal = "BUY PE"
             final_conf = confidence if confidence == "HIGH" else "MEDIUM"
-        elif buf.count("BUY CE") >= 1 and confidence in ("HIGH", "MEDIUM"):
-            final_signal = "BUY CE"; final_conf = "MEDIUM"
-        elif buf.count("BUY PE") >= 1 and confidence in ("HIGH", "MEDIUM"):
-            final_signal = "BUY PE"; final_conf = "MEDIUM"
         else:
             final_signal = "WAIT"; final_conf = "LOW"
 

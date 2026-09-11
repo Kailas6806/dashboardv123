@@ -8,17 +8,18 @@ import plotly.express as px
 import datetime
 
 from config import (
-    INDEX_CONFIG, CAPITAL, MAX_LOSS, DAILY_TGT, IST, LOG_COLS,
-    MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
+    INDEX_CONFIG, CAPITAL, DAILY_TGT, IST, LOG_COLS,
+    MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
-    FRAGMENT_REFRESH_SECONDS, MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
+    MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
     BASE_DIR, LOG_DIR,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
     render_trade_entry_card, render_trap_alert, render_tracker_grid,
-    render_risk_card, render_open_trade_detail, render_expander_open_trade,
-    render_empty_open_trades,
+    render_risk_card, render_open_positions_summary, render_open_trade_detail,
+    render_expander_open_trade, render_empty_open_trades,
+    normalize_trade, render_trade_card_html,
 )
 from utils.logger import get_logger
 
@@ -243,7 +244,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
     st.markdown(render_signal_card(
         idx, final_signal, final_conf, signal, confidence,
         md["pcr"], updated_buf, filter_reason, conf_score,
-        oi_unusual=md.get("oi_unusual_activity", False)
+        oi_unusual=md.get("oi_unusual_activity", False),
+        spot=spot, atm=md["atm_actual"]
     ), unsafe_allow_html=True)
 
     # ── RISK MANAGEMENT CARD ──
@@ -314,12 +316,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         ), unsafe_allow_html=True)
 
         # Check cooldown and daily limits before entering
-        trade_allowed = cooldown_info.get("allowed", True) if isinstance(cooldown_info, dict) else cooldown_info[0]
-        daily_allowed = True
-        if isinstance(daily_limits, dict):
-            daily_allowed = daily_limits.get("allowed", True)
-        elif isinstance(daily_limits, tuple):
-            daily_allowed = daily_limits[0]
+        trade_allowed = cooldown_info[0]
+        daily_allowed = daily_limits[0]
 
         # ── PRE-ENTRY GUARDS ──
         # 1. Block new entries after 3:20 PM (auto-square at 3:25 — not worth entering)
@@ -593,135 +591,326 @@ def render_open_trades_tab(trade_mgr, fetcher):
         except Exception as e:
             logger.warning(f"Open trades update error for {idx}: {e}")
 
-    col_hdr, col_report = st.columns([3, 2])
-    with col_hdr:
-        st.subheader("🟢 All Open Trades")
-    with col_report:
-        st.write("")
-        if st.button("📨 Send Daily Report Now", key="send_report_manual", use_container_width=True, help="Manually generate and send the daily P&L report via Telegram"):
-            import os
-            from config import LOG_DIR
-            current_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-            lock_file = os.path.join(LOG_DIR, f"daily_report_{current_date}.lock")
-
-            total_pnl = 0
-            total_trades = 0
-            wins = 0
-            losses = 0
-            report_lines = [f"📊 *DAILY P&L REPORT — {current_date}*\n"]
-
-            for idx in INDEX_CONFIG:
-                tlog = st.session_state.get(sk(idx, "trade_log"), [])
-                if not tlog:
-                    continue
-
-                df = pd.DataFrame(tlog)
-                closed = df[df["Status"] == "CLOSED"] if not df.empty else pd.DataFrame()
-                if closed.empty:
-                    continue
-
-                pnl_s = closed["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
-                idx_pnl = pnl_s.sum()
-                idx_trades = len(closed)
-                idx_wins = (pnl_s > 0).sum()
-                idx_losses = (pnl_s <= 0).sum()
-
-                total_pnl += idx_pnl
-                total_trades += idx_trades
-                wins += idx_wins
-                losses += idx_losses
-
-                emoji = "🟢" if idx_pnl >= 0 else "🔴"
-                report_lines.append(
-                    f"{emoji} *{idx}*: ₹{idx_pnl:,.0f} ({idx_wins}W/{idx_losses}L)"
-                )
-
-            report_lines.append(f"\n📈 *TOTAL TRADES*: {total_trades} ({wins}W / {losses}L)")
-            final_emoji = "🟢" if total_pnl >= 0 else "🔴"
-            report_lines.append(f"{final_emoji} *NET P&L*: ₹{total_pnl:,.0f}")
-
-            if total_trades > 0:
-                trade_mgr.notifier.send_daily_report(report_lines)
-                os.makedirs(LOG_DIR, exist_ok=True)
-                try:
-                    with open(lock_file, "w") as f:
-                        f.write(f"sent_at: {datetime.datetime.now(IST).isoformat()} (manual)\n")
-                except Exception as e:
-                    logger.error(f"Failed to write manual daily report lock file: {e}")
-                st.success("✅ Daily P&L report sent to Telegram!")
-            else:
-                st.warning("⚠️ No closed trades found for today. Report not sent.")
-
     all_open = []
+    closed_today = []
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
         for t in tlog:
             if t.get("Status") == "OPEN":
                 all_open.append(t)
+            elif t.get("Status") == "CLOSED":
+                closed_today.append(t)
 
+    # ── Summary KPI calculations (Real data only) ──
+    trades_count = len(all_open)
+    realized_pnl = sum(float(t.get("Actual P&L ₹") or 0) for t in closed_today)
+    unrealized_pnl = 0.0
+    total_max_loss = 0.0
+    for t in all_open:
+        ev = float(t.get("Entry Price") or 0)
+        lv = float(t.get("Live Price") or ev)
+        qty = int(t.get("Qty") or 0)
+        unrealized_pnl += (lv - ev) * qty
+        try:
+            total_max_loss += float(t.get("Max Loss ₹") or 0)
+        except (ValueError, TypeError):
+            pass
+
+    today_pnl = (realized_pnl + unrealized_pnl) if (all_open or closed_today) else 0.0
+    if total_max_loss == 0 and all_open:
+        from config import MAX_LOSS
+        total_max_loss = float(MAX_LOSS * len(all_open))
+
+    wins = sum(1 for t in closed_today if float(t.get("Actual P&L ₹") or 0) > 0)
+    win_rate = (wins / len(closed_today) * 100.0) if closed_today else None
+
+    # ── 1. Summary Cards ──
+    st.markdown(
+        render_open_positions_summary(trades_count, today_pnl, total_max_loss, win_rate),
+        unsafe_allow_html=True,
+    )
+
+    # ── 2. Open Positions Cards & Confirmation UX ──
     if not all_open:
         st.markdown(render_empty_open_trades(), unsafe_allow_html=True)
     else:
-        total_trades = len(all_open)
-        indices_active = list({t.get("Index", "") for t in all_open})
-        st.markdown(f"""
-<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-  <div class="card" style="padding:10px 18px;min-width:130px;">
-    <div class="label">Open Trades</div>
-    <div class="kpi" style="color:#34D399;">{total_trades}</div>
-  </div>
-  <div class="card" style="padding:10px 18px;min-width:130px;">
-    <div class="label">Active Indices</div>
-    <div class="kpi">{" · ".join(indices_active)}</div>
-  </div>
-</div>""", unsafe_allow_html=True)
-
         for i_t, t in enumerate(all_open):
-            idx = t.get("Index", "")
-            sig = t.get("Signal", "")
-            ev = float(t.get("Entry Price") or 0)
-            lv = float(t.get("Live Price") or ev)
-            qty = int(t.get("Qty") or 0)
-            upl = round((lv - ev) * qty, 2)
-            sc = "#34D399" if "CE" in str(sig) else "#F87171"
-            uc = "#34D399" if upl >= 0 else "#F87171"
-            upl_arrow = "▲" if upl >= 0 else "▼"
-            idx_color = "#6366F1" if idx == "NIFTY" else (
-                "#F59E0B" if idx == "BANKNIFTY" else "#22D3EE")
-            pnl_disp = f"+₹{upl:,.0f}" if upl >= 0 else f"-₹{abs(upl):,.0f}"
+            norm = normalize_trade(t)
+            idx = norm["instrument"]
+            sig = norm["signal"]
+            strk = norm["strike"]
+            trade_id = f"{idx}_{norm['entry_time']}_{strk}_{sig}".replace(" ", "_")
 
-            col_card, col_btn = st.columns([5, 1])
-            with col_card:
-                st.markdown(render_open_trade_detail(
-                    t, idx_color, sc, uc, upl, pnl_disp, upl_arrow
-                ), unsafe_allow_html=True)
-            with col_btn:
-                st.write("")
-                st.write("")
-                if st.button(
-                    "❌ Close", key=f"close_open_{idx}_{i_t}",
-                    type="primary", use_container_width=True,
-                    help=f"Close {idx} {sig} @ {t.get('Strike')} at market price",
-                ):
-                    lp = float(t.get("Live Price") or t.get("Entry Price") or 0)
-                    trade_mgr.close_manually(idx, t, lp)
-                    tlog_key = sk(idx, "trade_log")
-                    st.session_state[sk(idx, "signal_buffer")] = []
-                    st.session_state[sk(idx, "last_signal")] = "WAIT"
-                    trade_mgr.save_log(idx, st.session_state.get(tlog_key, []))
-                    
-                    # Record exit in journal
-                    journal = st.session_state.get("_journal")
-                    if journal:
-                        journal.update_trade(
-                            t.get("_journal_id", ""),
-                            {
-                                "Exit Time": t.get("Exit Time"),
-                                "Exit Price": t.get("Exit Price"),
-                                "Actual P&L ₹": t.get("Actual P&L ₹"),
-                                "Status": "CLOSED",
-                                "Result": "🟡 MANUAL",
-                            },
-                            t
-                        )
-                    st.rerun()
+            # Render normalized card
+            st.markdown(render_trade_card_html(norm), unsafe_allow_html=True)
+
+            # Confirmation UX for Close Position
+            if st.session_state.get("_confirm_close") == trade_id:
+                with st.container():
+                    st.markdown(f"""
+                    <div class="confirm-box">
+                      <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;color:#ffffff;font-size:14px;">
+                        ⚠️ Close {idx} {strk} {norm['option_type']} at market price?
+                      </div>
+                      <div style="font-size:12px;color:var(--text-1);">
+                        Current P&L: <b>{norm['pnl_disp']}</b> &nbsp;•&nbsp; 
+                        Quantity: <b>{norm['quantity']}</b> &nbsp;•&nbsp; 
+                        Live Price: <b>₹{norm['live_price']:.2f}</b>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    c_cancel, c_confirm = st.columns([1, 1])
+                    with c_cancel:
+                        if st.button("✕ CANCEL", key=f"cancel_{trade_id}", use_container_width=True):
+                            st.session_state["_confirm_close"] = None
+                            st.rerun()
+                    with c_confirm:
+                        if st.button("✓ CONFIRM CLOSE", key=f"confirm_{trade_id}", type="primary", use_container_width=True):
+                            st.session_state["_confirm_close"] = None
+                            lp = float(t.get("Live Price") or t.get("Entry Price") or 0)
+                            trade_mgr.close_manually(idx, t, lp)
+                            tlog_key = sk(idx, "trade_log")
+                            st.session_state[sk(idx, "signal_buffer")] = []
+                            st.session_state[sk(idx, "last_signal")] = "WAIT"
+                            trade_mgr.save_log(idx, st.session_state.get(tlog_key, []))
+
+                            journal = st.session_state.get("_journal")
+                            if journal:
+                                journal.update_trade(
+                                    t.get("_journal_id", ""),
+                                    {
+                                        "Exit Time": t.get("Exit Time"),
+                                        "Exit Price": t.get("Exit Price"),
+                                        "Actual P&L ₹": t.get("Actual P&L ₹"),
+                                        "Status": "CLOSED",
+                                        "Result": "🟡 MANUAL",
+                                    },
+                                    t
+                                )
+                            st.toast(f"Closed {idx} {strk} at ₹{lp:.2f}", icon="✅")
+                            st.rerun()
+            else:
+                c_sp, c_close = st.columns([3, 2])
+                with c_close:
+                    if st.button("CLOSE POSITION", key=f"req_close_{trade_id}", type="primary", use_container_width=True):
+                        st.session_state["_confirm_close"] = trade_id
+                        st.rerun()
+
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
+
+
+# ──────────────────────────────────────────────────
+# TRADE HISTORY TAB
+# ──────────────────────────────────────────────────
+def render_trade_history_tab(journal):
+    """
+    Renders dedicated Trade History with interactive filters:
+    Instrument, Outcome, and Search query.
+    """
+    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY</div>', unsafe_allow_html=True)
+
+    all_trades = []
+    # 1. Gather closed trades from session state logs
+    for idx in INDEX_CONFIG:
+        for t in st.session_state.get(sk(idx, "trade_log"), []):
+            if t.get("Status") == "CLOSED":
+                all_trades.append(t)
+
+    # 2. Merge from persistent journal
+    if journal:
+        for jt in journal.get_all_trades():
+            if jt.get("Status") == "CLOSED":
+                key = (jt.get("Index"), jt.get("Entry Time"), str(jt.get("Strike")), jt.get("Signal"))
+                exists = any(
+                    (t.get("Index"), t.get("Entry Time"), str(t.get("Strike")), t.get("Signal")) == key
+                    for t in all_trades
+                )
+                if not exists:
+                    all_trades.append(jt)
+
+    if not all_trades:
+        st.markdown("""
+        <div class="empty-state">
+          <div class="icon">📜</div>
+          <div class="msg">NO TRADE HISTORY</div>
+          <div class="sub">Closed positions and historical execution logs will automatically display here.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Normalize trades
+    normalized = [normalize_trade(t) for t in all_trades]
+
+    # Filters row
+    c_inst, c_res, c_search = st.columns([2, 2, 3])
+    with c_inst:
+        selected_inst = st.selectbox(
+            "Instrument",
+            options=["ALL"] + list(INDEX_CONFIG.keys()),
+            key="hist_filter_inst",
+        )
+    with c_res:
+        selected_res = st.selectbox(
+            "Outcome",
+            options=["ALL", "WINS ONLY", "LOSSES ONLY"],
+            key="hist_filter_res",
+        )
+    with c_search:
+        search_query = st.text_input(
+            "Search (Strike / Signal)",
+            placeholder="e.g. 23350, BUY CE...",
+            key="hist_filter_search",
+        )
+
+    # Filter trades
+    filtered = []
+    for t in normalized:
+        if selected_inst != "ALL" and t["instrument"] != selected_inst:
+            continue
+        if selected_res == "WINS ONLY" and t["pnl"] <= 0:
+            continue
+        if selected_res == "LOSSES ONLY" and t["pnl"] > 0:
+            continue
+        if search_query:
+            q = search_query.strip().lower()
+            match_txt = f"{t['instrument']} {t['signal']} {t['strike']} {t['raw'].get('Result', '')}".lower()
+            if q not in match_txt:
+                continue
+        filtered.append(t)
+
+    if not filtered:
+        st.info("No trades match the selected filters.")
+        return
+
+    # Render tabular view
+    rows = []
+    for t in filtered:
+        pnl = t["pnl"]
+        pnl_sign = "+" if pnl >= 0 else ""
+        pnl_arrow = "▲" if pnl >= 0 else "▼"
+        pnl_disp = f"{pnl_arrow} {pnl_sign}₹{pnl:,.0f}"
+
+        exit_p = t["raw"].get("Exit Price")
+        exit_disp = f"₹{float(exit_p):.2f}" if exit_p else "—"
+        exit_time = t["raw"].get("Exit Time") or "—"
+        res = t["raw"].get("Result") or "CLOSED"
+
+        rows.append({
+            "Time": t["entry_time"],
+            "Exit Time": exit_time,
+            "Instrument": t["instrument"],
+            "Signal": t["signal"],
+            "Strike": t["strike"],
+            "Entry": f"₹{t['entry_price']:.2f}",
+            "Exit": exit_disp,
+            "Qty": t["quantity"],
+            "P&L": pnl_disp,
+            "Result": res,
+        })
+
+    df_hist = pd.DataFrame(rows)
+    st.dataframe(
+        df_hist,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ──────────────────────────────────────────────────
+# SETTINGS & CONTROLS TAB
+# ──────────────────────────────────────────────────
+def render_settings_tab(trade_mgr, journal):
+    """
+    Renders Settings & System Controls:
+    - Manual Daily Report generation with Telegram feedback
+    - Engine parameters HUD
+    - Telegram connection status
+    """
+    import os
+    from config import (
+        CAPITAL, MAX_LOSS, DAILY_TGT,
+        COOLDOWN_SECONDS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
+        AUTO_SQUARE_OFF_TIME, NO_NEW_TRADE_TIME, LOG_DIR,
+        TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+    )
+
+    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">SYSTEM SETTINGS & CONTROLS</div>', unsafe_allow_html=True)
+
+    # 1. Telegram & Daily Report
+    with st.container():
+        st.markdown('<div class="card" style="padding:16px 18px;margin-bottom:16px;"><div class="label">TELEGRAM NOTIFICATIONS & DAILY REPORT</div>', unsafe_allow_html=True)
+        col_tg, col_btn = st.columns([3, 2])
+        with col_tg:
+            has_token = bool(TELEGRAM_TOKEN or os.environ.get("TELEGRAM_TOKEN"))
+            has_chat = bool(TELEGRAM_CHAT_ID or os.environ.get("TELEGRAM_CHAT_ID"))
+            if has_token and has_chat:
+                st.markdown('<span class="badge badge-ce">● TELEGRAM CONFIGURED</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="badge badge-warning">● TELEGRAM NOT CONFIGURED</span>', unsafe_allow_html=True)
+            st.caption("Daily P&L summaries and automated trade alerts are dispatched to your configured Telegram channel.")
+        with col_btn:
+            if st.button("📨 SEND DAILY REPORT NOW", key="btn_send_report_settings", use_container_width=True):
+                with st.spinner("Compiling and sending report..."):
+                    current_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+                    total_pnl = 0
+                    total_trades = 0
+                    wins = 0
+                    losses = 0
+                    report_lines = [f"📊 *DAILY P&L REPORT — {current_date}*\n"]
+
+                    for idx in INDEX_CONFIG:
+                        tlog = st.session_state.get(sk(idx, "trade_log"), [])
+                        if not tlog:
+                            continue
+                        df = pd.DataFrame(tlog)
+                        closed = df[df["Status"] == "CLOSED"] if not df.empty else pd.DataFrame()
+                        if closed.empty:
+                            continue
+
+                        pnl_s = closed["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
+                        idx_pnl = pnl_s.sum()
+                        idx_trades = len(closed)
+                        idx_wins = (pnl_s > 0).sum()
+                        idx_losses = (pnl_s <= 0).sum()
+
+                        total_pnl += idx_pnl
+                        total_trades += idx_trades
+                        wins += idx_wins
+                        losses += idx_losses
+
+                        emoji = "🟢" if idx_pnl >= 0 else "🔴"
+                        report_lines.append(f"{emoji} *{idx}*: ₹{idx_pnl:,.0f} ({idx_wins}W/{idx_losses}L)")
+
+                    report_lines.append(f"\n📈 *TOTAL TRADES*: {total_trades} ({wins}W / {losses}L)")
+                    final_emoji = "🟢" if total_pnl >= 0 else "🔴"
+                    report_lines.append(f"{final_emoji} *NET P&L*: ₹{total_pnl:,.0f}")
+
+                    if total_trades > 0:
+                        trade_mgr.notifier.send_daily_report(report_lines)
+                        lock_file = os.path.join(LOG_DIR, f"daily_report_{current_date}.lock")
+                        os.makedirs(LOG_DIR, exist_ok=True)
+                        try:
+                            with open(lock_file, "w") as f:
+                                f.write(f"sent_at: {datetime.datetime.now(IST).isoformat()} (manual)\n")
+                        except Exception:
+                            pass
+                        st.success(f"Report sent to Telegram! Net P&L: ₹{total_pnl:,.0f}")
+                    else:
+                        st.warning("No closed trades recorded today yet.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # 2. Risk & Core Parameters HUD
+    st.markdown(f"""
+    <div class="card" style="padding:16px 18px;margin-bottom:16px;">
+      <div class="label">CORE ENGINE RISK & EXECUTION PARAMETERS</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-top:10px;">
+        <div class="card-inset"><div class="label">CAPITAL</div><div class="kpi num">₹{CAPITAL:,}</div></div>
+        <div class="card-inset"><div class="label">DAILY TARGET</div><div class="kpi num c-ce">₹{DAILY_TGT:,}</div></div>
+        <div class="card-inset"><div class="label">MAX DAILY LOSS</div><div class="kpi num c-pe">₹{MAX_LOSS:,}</div></div>
+        <div class="card-inset"><div class="label">SL COOLDOWN</div><div class="kpi num">{COOLDOWN_SECONDS}s</div></div>
+        <div class="card-inset"><div class="label">MARKET HOURS</div><div class="kpi-sm num" style="color:#ffffff;">{MARKET_OPEN_TIME} – {MARKET_CLOSE_TIME}</div></div>
+        <div class="card-inset"><div class="label">AUTO SQUARE-OFF</div><div class="kpi-sm num c-amber">{AUTO_SQUARE_OFF_TIME}</div></div>
+        <div class="card-inset"><div class="label">NO NEW TRADES</div><div class="kpi-sm num">{NO_NEW_TRADE_TIME}</div></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)

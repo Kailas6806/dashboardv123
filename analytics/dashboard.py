@@ -14,42 +14,40 @@ import pandas as pd
 logger = logging.getLogger("v12.analytics_dashboard")
 
 # ── Colour palette ────────────────────────────────────────────────────
-_GREEN = "#10b981"
-_RED = "#ef4444"
+_GREEN = "#00E5A0"
+_RED = "#FF4D6D"
 _CARD_CSS = """
 <style>
 .analytics-card {
-    background: rgba(24, 24, 27, 0.65);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
-    border-radius: 16px;
-    padding: 18px 22px;
-    margin: 8px 0;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 14px 16px;
+    margin: 6px 0;
     text-align: center;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: border-color 0.15s ease;
 }
 .analytics-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.6);
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: var(--border-hi);
 }
 .analytics-card .label {
-    font-size: 0.75rem;
-    color: #a1a1aa;
-    margin-bottom: 6px;
+    font-size: 10px;
+    color: var(--text-2);
+    margin-bottom: 4px;
     text-transform: uppercase;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.12em;
     font-weight: 600;
 }
 .analytics-card .value {
-    font-size: 26px;
-    font-weight: 800;
-    line-height: 1.2;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
 }
-.analytics-card .value.green { color: #10b981; }
-.analytics-card .value.red   { color: #ef4444; }
-.analytics-card .value.neutral { color: #e4e4e7; }
+.analytics-card .value.green { color: #00E5A0; -webkit-text-fill-color: #00E5A0; }
+.analytics-card .value.red   { color: #FF4D6D; -webkit-text-fill-color: #FF4D6D; }
+.analytics-card .value.neutral { color: #ffffff; -webkit-text-fill-color: #ffffff; }
 </style>
 """
 

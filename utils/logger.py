@@ -2,8 +2,7 @@
 import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
-import datetime
-from config import LOG_DIR, LOG_BACKUP_COUNT, IST
+from config import LOG_DIR, LOG_BACKUP_COUNT
 
 _loggers = {}  # cache to avoid duplicate handlers
 
