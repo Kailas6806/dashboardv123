@@ -501,13 +501,16 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             else:
                 st.info("No open position. Waiting for signal...")
         with t2:
-            if st.session_state[tlog_key]:
+            display_trades = list(st.session_state.get(tlog_key, []))
+            if not display_trades and journal:
+                display_trades = [t for t in journal.get_all_trades() if t.get("Index") == idx]
+            if display_trades:
                 cols = [
                     "Entry Time", "Exit Time", "Signal", "Strike",
                     "Entry Price", "Exit Price", "Qty",
                     "Actual P&L ₹", "Status", "Result",
                 ]
-                hdf = pd.DataFrame(st.session_state[tlog_key])
+                hdf = pd.DataFrame(display_trades)
                 for c in cols:
                     if c not in hdf.columns:
                         hdf[c] = None
@@ -705,28 +708,67 @@ def render_open_trades_tab(trade_mgr, fetcher):
 def render_trade_history_tab(journal):
     """
     Renders dedicated Trade History with interactive filters:
-    Instrument, Outcome, and Search query.
+    Timeframe, Instrument, Outcome, and Search query, plus Backup/Restore controls.
     """
     st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY</div>', unsafe_allow_html=True)
 
     all_trades = []
-    # 1. Gather closed trades from session state logs
+    # 1. Gather all historical trades from persistent journal
+    if journal:
+        all_trades.extend(journal.get_all_trades())
+
+    # 2. Merge from active session state logs (avoiding duplicates)
     for idx in INDEX_CONFIG:
         for t in st.session_state.get(sk(idx, "trade_log"), []):
-            if t.get("Status") == "CLOSED":
+            t_date = str(t.get("recorded_at") or datetime.datetime.now(IST).strftime("%Y-%m-%d"))[:10]
+            t_key = (t.get("Index"), t_date, t.get("Entry Time"), str(t.get("Strike")), t.get("Signal"))
+            exists = any(
+                (jt.get("Index"), str(jt.get("recorded_at") or "")[:10], jt.get("Entry Time"), str(jt.get("Strike")), jt.get("Signal")) == t_key
+                for jt in all_trades
+            )
+            if not exists:
                 all_trades.append(t)
 
-    # 2. Merge from persistent journal
-    if journal:
-        for jt in journal.get_all_trades():
-            if jt.get("Status") == "CLOSED":
-                key = (jt.get("Index"), jt.get("Entry Time"), str(jt.get("Strike")), jt.get("Signal"))
-                exists = any(
-                    (t.get("Index"), t.get("Entry Time"), str(t.get("Strike")), t.get("Signal")) == key
-                    for t in all_trades
+    # ── Persistence & Backup Toolbar ──
+    with st.expander("💾 Backup & Restore Trade History", expanded=False):
+        b_c1, b_c2, b_c3 = st.columns([1.5, 1.5, 3])
+        with b_c1:
+            if journal:
+                st.download_button(
+                    "📥 Export JSON",
+                    data=journal.export_to_json(),
+                    file_name="trade_history_backup.json",
+                    mime="application/json",
+                    use_container_width=True,
+                    key="hist_dl_json",
+                    help="Download complete trade history as JSON"
                 )
-                if not exists:
-                    all_trades.append(jt)
+        with b_c2:
+            if journal:
+                st.download_button(
+                    "📥 Export CSV",
+                    data=journal.export_to_csv(),
+                    file_name="trade_history_backup.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="hist_dl_csv",
+                    help="Download complete trade history as CSV"
+                )
+        with b_c3:
+            uploaded_file = st.file_uploader(
+                "Restore Backup",
+                type=["json"],
+                key="hist_upload_journal",
+                label_visibility="collapsed"
+            )
+            if uploaded_file is not None and journal:
+                try:
+                    content = uploaded_file.read().decode("utf-8")
+                    imported_count = journal.import_from_json_string(content)
+                    st.success(f"✅ Restored {imported_count} trades into journal!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Failed to restore backup: {e}")
 
     if not all_trades:
         st.markdown("""
@@ -738,11 +780,38 @@ def render_trade_history_tab(journal):
         """, unsafe_allow_html=True)
         return
 
-    # Normalize trades
-    normalized = [normalize_trade(t) for t in all_trades]
+    # Normalize trades and extract dates
+    normalized = []
+    now_ist = datetime.datetime.now(IST)
+    today_str = now_ist.strftime("%Y-%m-%d")
+
+    for t in all_trades:
+        norm = normalize_trade(t)
+        # Extract trade date
+        rec_at = str(t.get("recorded_at") or "")
+        t_date = rec_at[:10] if len(rec_at) >= 10 else ""
+        if not t_date:
+            tid = str(t.get("trade_id") or "")
+            parts = tid.split("_")
+            if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
+                t_date = f"{parts[1][:4]}-{parts[1][4:6]}-{parts[1][6:]}"
+            else:
+                t_date = today_str
+        norm["date"] = t_date
+        norm["recorded_at_str"] = rec_at
+        normalized.append(norm)
+
+    # Sort newest first
+    normalized.sort(key=lambda x: str(x.get("recorded_at_str") or x.get("date") or ""), reverse=True)
 
     # Filters row
-    c_inst, c_res, c_search = st.columns([2, 2, 3])
+    c_time, c_inst, c_res, c_search = st.columns([2, 2, 2, 3])
+    with c_time:
+        selected_time = st.selectbox(
+            "Timeframe",
+            options=["ALL TIME", "TODAY", "LAST 7 DAYS", "LAST 30 DAYS"],
+            key="hist_filter_time",
+        )
     with c_inst:
         selected_inst = st.selectbox(
             "Instrument",
@@ -752,30 +821,53 @@ def render_trade_history_tab(journal):
     with c_res:
         selected_res = st.selectbox(
             "Outcome",
-            options=["ALL", "WINS ONLY", "LOSSES ONLY"],
+            options=["ALL", "CLOSED ONLY", "WINS ONLY", "LOSSES ONLY", "OPEN ONLY"],
             key="hist_filter_res",
         )
     with c_search:
         search_query = st.text_input(
-            "Search (Strike / Signal)",
-            placeholder="e.g. 23350, BUY CE...",
+            "Search (Date / Strike / Signal)",
+            placeholder="e.g. 2026-09-11, 23350, BUY CE...",
             key="hist_filter_search",
         )
 
     # Filter trades
     filtered = []
+    seven_days_ago = (now_ist - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+    thirty_days_ago = (now_ist - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+
     for t in normalized:
+        t_date = t["date"]
+        # Timeframe filter
+        if selected_time == "TODAY" and t_date != today_str:
+            continue
+        elif selected_time == "LAST 7 DAYS" and t_date < seven_days_ago:
+            continue
+        elif selected_time == "LAST 30 DAYS" and t_date < thirty_days_ago:
+            continue
+
+        # Instrument filter
         if selected_inst != "ALL" and t["instrument"] != selected_inst:
             continue
-        if selected_res == "WINS ONLY" and t["pnl"] <= 0:
+
+        # Outcome filter
+        status = t["status"]
+        if selected_res == "CLOSED ONLY" and status != "CLOSED":
             continue
-        if selected_res == "LOSSES ONLY" and t["pnl"] > 0:
+        elif selected_res == "OPEN ONLY" and status != "OPEN":
             continue
+        elif selected_res == "WINS ONLY" and (status != "CLOSED" or t["pnl"] <= 0):
+            continue
+        elif selected_res == "LOSSES ONLY" and (status != "CLOSED" or t["pnl"] > 0):
+            continue
+
+        # Search filter
         if search_query:
             q = search_query.strip().lower()
-            match_txt = f"{t['instrument']} {t['signal']} {t['strike']} {t['raw'].get('Result', '')}".lower()
+            match_txt = f"{t_date} {t['instrument']} {t['signal']} {t['strike']} {t['raw'].get('Result', '')}".lower()
             if q not in match_txt:
                 continue
+
         filtered.append(t)
 
     if not filtered:
@@ -788,14 +880,18 @@ def render_trade_history_tab(journal):
         pnl = t["pnl"]
         pnl_sign = "+" if pnl >= 0 else ""
         pnl_arrow = "▲" if pnl >= 0 else "▼"
-        pnl_disp = f"{pnl_arrow} {pnl_sign}₹{pnl:,.0f}"
+        if t["status"] == "OPEN":
+            pnl_disp = f"⏳ ₹{pnl:,.0f}"
+        else:
+            pnl_disp = f"{pnl_arrow} {pnl_sign}₹{pnl:,.0f}"
 
         exit_p = t["raw"].get("Exit Price")
         exit_disp = f"₹{float(exit_p):.2f}" if exit_p else "—"
         exit_time = t["raw"].get("Exit Time") or "—"
-        res = t["raw"].get("Result") or "CLOSED"
+        res = t["raw"].get("Result") or t["status"]
 
         rows.append({
+            "Date": t["date"],
             "Time": t["entry_time"],
             "Exit Time": exit_time,
             "Instrument": t["instrument"],

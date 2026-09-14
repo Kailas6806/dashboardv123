@@ -92,8 +92,8 @@ def render_analytics_tab(journal: Any) -> None:
     """
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
 
-    # ── Header row with title + reset button ──
-    hdr_col, days_col, reset_col = st.columns([3, 1, 1])
+    # ── Header row with title + timeframe + reset button ──
+    hdr_col, days_col, reset_col = st.columns([3, 1.2, 0.8])
     with hdr_col:
         st.markdown("## 📊 Trade Analytics")
     with days_col:
@@ -122,7 +122,12 @@ def render_analytics_tab(journal: Any) -> None:
             if st.button("✅ Yes, Reset", key="confirm_reset_journal", type="primary",
                           use_container_width=True):
                 journal.trades = []
-                journal._save()
+                # Force save empty list by clearing load failed flag
+                try:
+                    with open(journal.journal_path, "w", encoding="utf-8") as fh:
+                        fh.write("[]")
+                except Exception:
+                    pass
                 st.session_state["_confirm_reset_journal"] = False
                 st.success("✅ Trade journal cleared!")
                 st.rerun()
@@ -130,6 +135,48 @@ def render_analytics_tab(journal: Any) -> None:
             if st.button("❌ Cancel", key="cancel_reset_journal", use_container_width=True):
                 st.session_state["_confirm_reset_journal"] = False
                 st.rerun()
+
+    # ── Persistence & Backup Toolbar ──
+    with st.expander("💾 Backup, Restore & Streamlit Cloud Persistence", expanded=False):
+        st.caption(
+            "💡 **Streamlit Cloud Note:** Streamlit Community Cloud runs in stateless containers. "
+            "To prevent data loss on container sleep or reboot, download periodic backups or restore "
+            "your saved journal JSON file here."
+        )
+        b_c1, b_c2, b_c3 = st.columns([1.5, 1.5, 3])
+        with b_c1:
+            st.download_button(
+                "📥 Export JSON",
+                data=journal.export_to_json(),
+                file_name="trade_journal_backup.json",
+                mime="application/json",
+                use_container_width=True,
+                help="Download full trade history as JSON"
+            )
+        with b_c2:
+            st.download_button(
+                "📥 Export CSV",
+                data=journal.export_to_csv(),
+                file_name="trade_journal_backup.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Download trade history as CSV"
+            )
+        with b_c3:
+            uploaded_journal = st.file_uploader(
+                "Restore Backup",
+                type=["json"],
+                key="analytics_upload_journal",
+                label_visibility="collapsed"
+            )
+            if uploaded_journal is not None:
+                try:
+                    content = uploaded_journal.read().decode("utf-8")
+                    imported_count = journal.import_from_json_string(content)
+                    st.success(f"✅ Restored {imported_count} trades into journal!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Failed to restore backup: {e}")
 
     analytics: Dict[str, Any] = journal.get_analytics(days=days)
     
@@ -145,7 +192,8 @@ def render_analytics_tab(journal: Any) -> None:
         st.info(
             "🗒️ **No trades recorded yet.**\n\n"
             "Once your first trade is executed and journaled, "
-            "analytics will appear here automatically."
+            "analytics will appear here automatically. "
+            "If you have a previous backup, expand **Backup, Restore & Streamlit Cloud Persistence** above to restore it."
         )
         return
 

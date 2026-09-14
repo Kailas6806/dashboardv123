@@ -1,0 +1,141 @@
+[
+  {
+    "trade_id": "NIFTY_20260911_131121",
+    "Entry Time": "01:11:21 PM",
+    "Exit Time": "03:30:00 PM",
+    "Index": "NIFTY",
+    "Signal": "BUY CE",
+    "Spot": 23329.05,
+    "Strike": 23350,
+    "Entry Price": 98.35,
+    "Live Price": 98.35,
+    "Exit Price": null,
+    "Stop Loss": 82.97,
+    "Target": 129.12,
+    "Qty": 65,
+    "Max Loss ₹": 1000.0,
+    "Target P&L ₹": 2000.0,
+    "Actual P&L ₹": 0.0,
+    "Status": "CLOSED",
+    "Result": "🟡 AUTO-CLOSED (EOD)",
+    "signal_metadata": {
+      "pcr": 1.39,
+      "vwap": 23329.05,
+      "oi_delta_ce": 0,
+      "oi_delta_pe": 0,
+      "confidence_score": 33,
+      "pcr_momentum": "FLAT",
+      "trap": "NONE",
+      "buffer_state": [
+        "BUY CE",
+        "BUY CE"
+      ]
+    },
+    "recorded_at": "2026-09-11T13:11:21.674260+05:30"
+  },
+  {
+    "trade_id": "BANKNIFTY_20260911_131123",
+    "Entry Time": "01:11:23 PM",
+    "Exit Time": "01:31:26 PM",
+    "Index": "BANKNIFTY",
+    "Signal": "BUY CE",
+    "Spot": 56220.8,
+    "Strike": 56200,
+    "Entry Price": 804.25,
+    "Live Price": 804.25,
+    "Exit Price": 882.45,
+    "Stop Loss": 770.92,
+    "Target": 870.92,
+    "Qty": 30,
+    "Max Loss ₹": 1000.0,
+    "Target P&L ₹": 2000.0,
+    "Actual P&L ₹": 2346.0,
+    "Status": "CLOSED",
+    "Result": "🟢 WIN",
+    "signal_metadata": {
+      "pcr": 1.62,
+      "vwap": 56220.8,
+      "oi_delta_ce": 0,
+      "oi_delta_pe": 0,
+      "confidence_score": 36,
+      "pcr_momentum": "FLAT",
+      "trap": "NONE",
+      "buffer_state": [
+        "BUY CE",
+        "BUY CE"
+      ]
+    },
+    "recorded_at": "2026-09-11T13:11:23.059935+05:30",
+    "updated_at": "2026-09-11T13:31:26.999503+05:30"
+  },
+  {
+    "trade_id": "FINNIFTY_20260911_131123",
+    "Entry Time": "01:11:23 PM",
+    "Exit Time": "03:30:00 PM",
+    "Index": "FINNIFTY",
+    "Signal": "BUY CE",
+    "Spot": 25307.4,
+    "Strike": 25300,
+    "Entry Price": 368.65,
+    "Live Price": 368.65,
+    "Exit Price": null,
+    "Stop Loss": 351.98,
+    "Target": 401.98,
+    "Qty": 60,
+    "Max Loss ₹": 1000.0,
+    "Target P&L ₹": 2000.0,
+    "Actual P&L ₹": 0.0,
+    "Status": "CLOSED",
+    "Result": "🟡 AUTO-CLOSED (EOD)",
+    "signal_metadata": {
+      "pcr": 1.78,
+      "vwap": 25307.4,
+      "oi_delta_ce": 0,
+      "oi_delta_pe": 0,
+      "confidence_score": 36,
+      "pcr_momentum": "FLAT",
+      "trap": "NONE",
+      "buffer_state": [
+        "BUY CE",
+        "BUY CE"
+      ]
+    },
+    "recorded_at": "2026-09-11T13:11:23.424411+05:30"
+  },
+  {
+    "trade_id": "BANKNIFTY_20260911_133129",
+    "Entry Time": "01:31:29 PM",
+    "Exit Time": "01:44:16 PM",
+    "Index": "BANKNIFTY",
+    "Signal": "BUY CE",
+    "Spot": 56334.8,
+    "Strike": 56300,
+    "Entry Price": 822.55,
+    "Live Price": 822.55,
+    "Exit Price": 757.25,
+    "Stop Loss": 789.22,
+    "Target": 889.22,
+    "Qty": 30,
+    "Max Loss ₹": 1000.0,
+    "Target P&L ₹": 2000.0,
+    "Actual P&L ₹": -1959.0,
+    "Status": "CLOSED",
+    "Result": "🔴 LOSS",
+    "signal_metadata": {
+      "pcr": 1.51,
+      "vwap": 56321.15,
+      "oi_delta_ce": 0,
+      "oi_delta_pe": 0,
+      "confidence_score": 34,
+      "pcr_momentum": "FLAT",
+      "trap": "NONE",
+      "buffer_state": [
+        "BUY CE",
+        "BUY CE",
+        "BUY CE"
+      ]
+    },
+    "recorded_at": "2026-09-11T13:31:29.222623+05:30",
+    "updated_at": "2026-09-11T13:44:17.094730+05:30"
+  }
+]

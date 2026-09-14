@@ -51,8 +51,9 @@ class TradeJournal:
         self.trades: List[Dict[str, Any]] = []
         self._load_failed = False
         self._load()
-        if not self._load_failed:
+        if not self._load_failed and (journal_path is None or journal_path == JOURNAL_FILE):
             self._import_from_csv()
+            self._reconcile_stale_open_trades()
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -76,14 +77,22 @@ class TradeJournal:
         entry_time: str,
         strike: Any,
         signal: str,
+        date_str: Optional[str] = None,
     ) -> bool:
-        """Check if a trade with the same key fields already exists."""
+        """Check if a trade with the same key fields already exists.
+        
+        If date_str is provided, only matches entries recorded on that date.
+        """
         norm_strike = self._normalize_strike(strike)
         for entry in self.trades:
             if (entry.get("Index") == idx
                     and entry.get("Entry Time") == entry_time
                     and self._normalize_strike(entry.get("Strike")) == norm_strike
                     and entry.get("Signal") == signal):
+                if date_str:
+                    rec_date = str(entry.get("recorded_at") or "")[:10]
+                    if rec_date and rec_date != date_str:
+                        continue
                 return True
         return False
 
@@ -94,7 +103,7 @@ class TradeJournal:
     ) -> str:
         """Append a new trade entry and persist immediately.
 
-        Deduplicates by (Index, Entry Time, Strike, Signal) — if a matching
+        Deduplicates by (Index, Date, Entry Time, Strike, Signal) — if a matching
         entry already exists, the existing trade_id is returned and no new
         record is created.
 
@@ -115,20 +124,23 @@ class TradeJournal:
             entry_time = trade.get("Entry Time", "")
             strike = trade.get("Strike", "")
             signal = trade.get("Signal", "")
+            now = datetime.now(tz=IST)
+            today_str = now.strftime("%Y-%m-%d")
 
-            # Dedup: skip if this trade already exists in the journal
-            if self._trade_exists(idx, entry_time, strike, signal):
+            # Dedup: skip if this trade already exists in the journal today
+            if self._trade_exists(idx, entry_time, strike, signal, date_str=today_str):
                 # Return existing trade_id
                 for entry in self.trades:
+                    rec_date = str(entry.get("recorded_at") or "")[:10]
                     if (entry.get("Index") == idx
                             and entry.get("Entry Time") == entry_time
                             and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
-                            and entry.get("Signal") == signal):
+                            and entry.get("Signal") == signal
+                            and (not rec_date or rec_date == today_str)):
                         existing_id = entry.get("trade_id", "")
                         logger.debug("Trade already exists: %s — skipping duplicate", existing_id)
                         return existing_id
 
-            now = datetime.now(tz=IST)
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             trade_id = f"{idx}_{timestamp}"
 
@@ -270,7 +282,12 @@ class TradeJournal:
             "consecutive_losses": 0,
         }
 
-        if not trades:
+        closed_trades = [t for t in trades if t.get("Status") == "CLOSED"]
+        open_trades = [t for t in trades if t.get("Status") == "OPEN"]
+
+        analytics["open_trades"] = len(open_trades)
+
+        if not closed_trades:
             return analytics
 
         win_pnls: List[float] = []
@@ -292,7 +309,7 @@ class TradeJournal:
             lambda: {"trades": 0, "pnl": 0.0}
         )
 
-        for t in trades:
+        for t in closed_trades:
             pnl = self._safe_float(t.get("Actual P&L ₹", 0))
             all_pnls.append(pnl)
             is_win = pnl > 0
@@ -333,7 +350,7 @@ class TradeJournal:
                 by_hour[hour]["trades"] += 1
                 by_hour[hour]["pnl"] += pnl
 
-        total = len(trades)
+        total = len(closed_trades)
         wins = len(win_pnls)
         losses = len(loss_pnls)
 
@@ -359,8 +376,8 @@ class TradeJournal:
         analytics["by_hour"] = {k: dict(v) for k, v in by_hour.items()}
 
         # Streaks
-        analytics["current_streak"] = self._current_streak(trades)
-        analytics["consecutive_losses"] = self._trailing_consecutive_losses(trades)
+        analytics["current_streak"] = self._current_streak(closed_trades)
+        analytics["consecutive_losses"] = self._trailing_consecutive_losses(closed_trades)
 
         return analytics
 
@@ -369,45 +386,76 @@ class TradeJournal:
     # ------------------------------------------------------------------ #
 
     def _save(self) -> None:
-        """Write the journal list to the JSON file atomically."""
+        """Write the journal list to the JSON file atomically and resiliently."""
         if self._load_failed:
             logger.error("Save blocked: Journal file load failed previously (corrupted file). Overwrite prevented to protect data.")
             return
-        try:
-            dir_name = os.path.dirname(self.journal_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            
-            import tempfile
-            fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_tmp_", suffix=".json", text=True)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(self.trades, fh, indent=2, ensure_ascii=False, cls=NpEncoder)
-            os.replace(tmp_path, self.journal_path)
-        except (OSError, TypeError) as exc:
-            logger.error("Failed to save journal: %s", exc)
+
+        # Protection: never wipe an existing non-empty file with an empty list unless forced
+        if not self.trades and os.path.isfile(self.journal_path):
+            try:
+                if os.path.getsize(self.journal_path) > 50:
+                    logger.warning("Save blocked: attempting to overwrite populated journal file with empty trades list")
+                    return
+            except OSError:
+                pass
+
+        dir_name = os.path.dirname(self.journal_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
+        import tempfile
+        import time
+        for attempt in range(3):
+            tmp_path = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_tmp_", suffix=".json", text=True)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(self.trades, fh, indent=2, ensure_ascii=False, cls=NpEncoder)
+                os.replace(tmp_path, self.journal_path)
+                return
+            except (OSError, TypeError) as exc:
+                logger.warning("Save attempt %d failed: %s", attempt + 1, exc)
+                time.sleep(0.05 * (attempt + 1))
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        logger.error("Failed to save journal after 3 attempts")
 
     def _load(self) -> None:
-        """Read the journal list from the JSON file."""
-        if os.path.isfile(self.journal_path):
-            if os.path.getsize(self.journal_path) > 0:
-                try:
-                    with open(self.journal_path, "r", encoding="utf-8") as fh:
-                        data = json.load(fh)
-                    if isinstance(data, list):
-                        self.trades = data
-                        logger.debug("Loaded %d trades from journal", len(self.trades))
-                    else:
-                        logger.warning("Journal file is not a list — starting fresh")
-                except (json.JSONDecodeError, OSError) as exc:
-                    logger.error("Failed to load journal (file is corrupted): %s", exc)
-                    self._load_failed = True
-            else:
-                self.trades = []
-        else:
-            self.trades = []
+        """Read the journal list from the JSON file with retry and fallback."""
+        import time
+        if not os.path.isfile(self.journal_path):
+            return
 
-        if not self._load_failed:
-            # Deduplicate any existing entries (cleanup from earlier bug)
+        loaded_data = None
+        for attempt in range(3):
+            try:
+                if os.path.getsize(self.journal_path) > 0:
+                    with open(self.journal_path, "r", encoding="utf-8") as fh:
+                        loaded_data = json.load(fh)
+                    break
+                else:
+                    time.sleep(0.05 * (attempt + 1))
+            except (json.JSONDecodeError, OSError) as exc:
+                time.sleep(0.05 * (attempt + 1))
+
+        if isinstance(loaded_data, list):
+            self.trades = loaded_data
+            self._load_failed = False
+            logger.debug("Loaded %d trades from journal", len(self.trades))
+        elif loaded_data is not None:
+            logger.warning("Journal file is not a list")
+        else:
+            if not self.trades:
+                self.trades = []
+            else:
+                logger.warning("Could not read journal file; preserving %d in-memory trades", len(self.trades))
+
+        if not self._load_failed and self.trades:
+            # Deduplicate any existing entries
             deduped = self._deduplicate(self.trades)
             if len(deduped) < len(self.trades):
                 logger.info(
@@ -417,13 +465,38 @@ class TradeJournal:
                 self.trades = deduped
                 self._save()
 
+    def _reconcile_stale_open_trades(self) -> None:
+        """Auto-close any open trades from previous dates to prevent stale open state."""
+        today_str = datetime.now(tz=IST).strftime("%Y-%m-%d")
+        reconciled = False
+        for t in self.trades:
+            if t.get("Status") == "OPEN":
+                rec_at = str(t.get("recorded_at") or "")[:10]
+                if rec_at and rec_at < today_str:
+                    t["Status"] = "CLOSED"
+                    t["Result"] = t.get("Result") if t.get("Result") not in ("⏳ OPEN", "OPEN", None) else "🟡 AUTO-CLOSED (EOD)"
+                    t["Exit Time"] = t.get("Exit Time") or "03:30:00 PM"
+                    if t.get("Actual P&L ₹") is None:
+                        ep = self._safe_float(t.get("Entry Price"))
+                        lp = self._safe_float(t.get("Live Price") or ep)
+                        qty = self._safe_float(t.get("Qty") or 0)
+                        t["Actual P&L ₹"] = round((lp - ep) * qty, 2)
+                    reconciled = True
+        if reconciled:
+            self._save()
+
     def _import_from_csv(self) -> None:
-        """Proactively import missing closed trades from daily CSV logs."""
+        """Proactively import missing closed trades from daily CSV logs across all dates."""
         try:
             import glob
             import pandas as pd
-            from config import LOG_DIR
-            csv_files = glob.glob(os.path.join(LOG_DIR, "trade_log_*.csv"))
+            from config import LOG_DIR, BASE_DIR
+            search_dirs = [LOG_DIR, BASE_DIR]
+            csv_files = []
+            for d in search_dirs:
+                if os.path.isdir(d):
+                    csv_files.extend(glob.glob(os.path.join(d, "trade_log_*.csv")))
+            csv_files = list(set(csv_files))
             imported_count = 0
             for filepath in csv_files:
                 filename = os.path.basename(filepath)
@@ -443,39 +516,51 @@ class TradeJournal:
                     continue
 
                 for _, row in df.iterrows():
-                    if str(row.get("Status", "")).upper() != "CLOSED":
-                        continue
-
-                    etime = row.get("Entry Time")
+                    etime = str(row.get("Entry Time") or "").strip()
                     strike = row.get("Strike")
-                    sig = row.get("Signal")
+                    sig = str(row.get("Signal") or "").strip()
+                    status = str(row.get("Status") or "").strip().upper()
 
                     # Check if already present in journal
-                    if self._trade_exists(idx_part, etime, strike, sig):
+                    if self._trade_exists(idx_part, etime, strike, sig, date_str=date_part):
                         continue
 
-                    # Construct a trade entry
+                    # Construct recorded_at timestamp
                     now_str = datetime.now(tz=IST).isoformat()
                     try:
                         dt_str = f"{date_part} {etime}"
                         dt = datetime.strptime(dt_str, "%Y-%m-%d %I:%M:%S %p").replace(tzinfo=IST)
                         recorded_at = dt.isoformat()
                     except Exception:
-                        recorded_at = now_str
+                        try:
+                            dt = datetime.strptime(f"{date_part} 09:15:00 AM", "%Y-%m-%d %I:%M:%S %p").replace(tzinfo=IST)
+                            recorded_at = dt.isoformat()
+                        except Exception:
+                            recorded_at = now_str
 
                     # Generate trade ID
-                    timestamp = datetime.fromisoformat(recorded_at).strftime("%Y%m%d_%H%M%S")
+                    try:
+                        timestamp = datetime.fromisoformat(recorded_at).strftime("%Y%m%d_%H%M%S")
+                    except Exception:
+                        timestamp = datetime.now(tz=IST).strftime("%Y%m%d_%H%M%S")
                     trade_id = f"{idx_part}_{timestamp}"
 
                     entry = {"trade_id": trade_id}
                     for field in self._TRADE_FIELDS:
                         val = row.get(field)
-                        # Convert NaN to None
                         if pd.isna(val):
                             val = None
                         elif isinstance(val, (int, float)):
                             val = float(val)
                         entry[field] = val
+
+                    today_str = datetime.now(tz=IST).strftime("%Y-%m-%d")
+                    if date_part < today_str and status == "OPEN":
+                        entry["Status"] = "CLOSED"
+                        entry["Result"] = "🟡 AUTO-CLOSED (EOD)"
+                        entry["Exit Time"] = entry.get("Exit Time") or "03:30:00 PM"
+                        if entry.get("Actual P&L ₹") is None:
+                            entry["Actual P&L ₹"] = 0.0
 
                     entry["signal_metadata"] = {}
                     entry["recorded_at"] = recorded_at
@@ -486,8 +571,7 @@ class TradeJournal:
 
             if imported_count > 0:
                 logger.info("Imported %d historical trades from CSV logs into journal", imported_count)
-                # Sort trades by recorded_at
-                self.trades.sort(key=lambda t: t.get("recorded_at", ""))
+                self.trades.sort(key=lambda t: str(t.get("recorded_at") or ""))
                 self._save()
         except Exception as e:
             logger.error("Failed to import historical trades from CSV logs: %s", e)
@@ -496,14 +580,23 @@ class TradeJournal:
     def _deduplicate(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate trades, keeping the most-updated copy of each.
 
-        Uniqueness key: (Index, Entry Time, Strike, Signal).
+        Uniqueness key: (Index, Date, Entry Time, Strike, Signal).
         When duplicates exist, prefer the entry that has ``updated_at``
         (i.e. was closed/updated), falling back to the last occurrence.
         """
-        seen: Dict[str, Dict[str, Any]] = {}  # key → best entry
+        seen: Dict[str, Dict[str, Any]] = {}
         for entry in trades:
+            rec_at = str(entry.get("recorded_at") or "")
+            date_part = rec_at[:10] if len(rec_at) >= 10 else ""
+            if not date_part:
+                tid = entry.get("trade_id", "")
+                parts = str(tid).split("_")
+                if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
+                    date_part = f"{parts[1][:4]}-{parts[1][4:6]}-{parts[1][6:]}"
+
             key = (
                 f"{entry.get('Index')}|"
+                f"{date_part}|"
                 f"{entry.get('Entry Time')}|"
                 f"{TradeJournal._normalize_strike(entry.get('Strike'))}|"
                 f"{entry.get('Signal')}"
@@ -512,15 +605,59 @@ class TradeJournal:
             if existing is None:
                 seen[key] = entry
             else:
-                # Prefer the entry with exit data / updated_at
                 new_has_update = "updated_at" in entry or entry.get("Status") == "CLOSED"
                 old_has_update = "updated_at" in existing or existing.get("Status") == "CLOSED"
                 if new_has_update and not old_has_update:
                     seen[key] = entry
                 elif new_has_update == old_has_update:
-                    # Both same — keep the later one (more complete data)
                     seen[key] = entry
         return list(seen.values())
+
+    def export_to_json(self) -> str:
+        """Export all trades to a formatted JSON string."""
+        with self._lock:
+            self._load()
+            return json.dumps(self.trades, indent=2, ensure_ascii=False, cls=NpEncoder)
+
+    def export_to_csv(self) -> str:
+        """Export all trades to a CSV string."""
+        import io
+        import pandas as pd
+        with self._lock:
+            self._load()
+            if not self.trades:
+                return ""
+            df = pd.DataFrame(self.trades)
+            # Remove complex objects from signal_metadata for clean CSV export
+            if "signal_metadata" in df.columns:
+                df["signal_metadata"] = df["signal_metadata"].apply(lambda x: json.dumps(x) if isinstance(x, dict) else x)
+            buf = io.StringIO()
+            df.to_csv(buf, index=False, encoding="utf-8")
+            return buf.getvalue()
+
+    def import_from_json_string(self, json_str: str) -> int:
+        """Import and merge trades from a JSON string.
+        
+        Returns the number of newly added trades.
+        """
+        with self._lock:
+            try:
+                data = json.loads(json_str)
+                if not isinstance(data, list):
+                    logger.error("Import failed: JSON data is not a list")
+                    return 0
+                
+                initial_count = len(self.trades)
+                merged = list(self.trades) + data
+                deduped = self._deduplicate(merged)
+                self.trades = deduped
+                self._save()
+                added = len(self.trades) - initial_count
+                logger.info("Imported %d new trades into journal", max(0, added))
+                return max(0, added)
+            except Exception as e:
+                logger.error("Failed to import trades from JSON: %s", e)
+                return 0
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #
