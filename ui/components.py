@@ -513,9 +513,12 @@ def render_tracker_grid(idx, capital, closed_count, rpnl, rc, prog):
 
 
 def render_risk_card(atr_sl=None, cooldown_remaining=0,
-                     daily_losses=0, max_daily_losses=3):
+                     daily_losses=0, max_daily_losses=3,
+                     trades_today=0, max_trades_today=3):
     """Risk HUD card."""
     items = []
+    trade_cls = "c-pe" if trades_today >= max_trades_today else "c-white"
+    items.append(f'<div><div class="label">TRADES TODAY</div><div class="num {trade_cls}" style="font-size:17px;">{trades_today} / {max_trades_today}</div></div>')
     if atr_sl is not None:
         items.append(f'<div><div class="label">ATR SL</div><div class="num c-amber" style="font-size:17px;">₹{atr_sl}</div></div>')
     if cooldown_remaining > 0:

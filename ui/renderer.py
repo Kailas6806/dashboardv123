@@ -11,7 +11,7 @@ from config import (
     INDEX_CONFIG, CAPITAL, DAILY_TGT, IST, LOG_COLS,
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
-    MAX_DAILY_LOSSES, COOLDOWN_SECONDS,
+    MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
     BASE_DIR, LOG_DIR,
 )
 from ui.components import (
@@ -189,9 +189,16 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
     )
     sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
+    # ── PORTFOLIO-WIDE TODAY TRADES ──
+    portfolio_today_trades = []
+    for _idx in INDEX_CONFIG:
+        portfolio_today_trades.extend(st.session_state.get(sk(_idx, "trade_log"), []))
+    valid_today_trades = [t for t in portfolio_today_trades if t.get("Entry Time")]
+    trades_today_count = len(valid_today_trades)
+
     # ── RISK CHECKS ──
     cooldown_info = risk_mgr.should_allow_trade(
-        idx, st.session_state[tlog_key], now_ist
+        idx, st.session_state[tlog_key], now_ist, portfolio_trades=portfolio_today_trades
     )
 
     ce_price = round(float(md["atm_row"]["CE LTP"]), 2)
@@ -260,9 +267,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             atr_val = statistics.mean(diffs[-ATR_PERIOD:])
             atr_sl_display = round(atr_val * ATR_SL_MULTIPLIER, 2)
 
-    daily_limits = risk_mgr.check_daily_limits(st.session_state[tlog_key])
+    daily_limits = risk_mgr.check_daily_limits(portfolio_today_trades)
     consec_losses = 0
-    closed_trades = [t for t in st.session_state[tlog_key] if t.get("Status") == "CLOSED"]
+    closed_trades = [t for t in portfolio_today_trades if t.get("Status") == "CLOSED"]
     for t in closed_trades:
         if "LOSS" in str(t.get("Result", "")):
             consec_losses += 1
@@ -298,7 +305,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         atr_sl=atr_sl_display,
         cooldown_remaining=cooldown_remaining,
         daily_losses=consec_losses,
-        max_daily_losses=MAX_DAILY_LOSSES
+        max_daily_losses=MAX_DAILY_LOSSES,
+        trades_today=trades_today_count,
+        max_trades_today=MAX_DAILY_TRADES,
     )
     if risk_html:
         st.markdown(risk_html, unsafe_allow_html=True)
@@ -328,8 +337,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         price_too_low = ep < MIN_ENTRY_PRICE and not expiry_today
         # 3. Block if unusual OI spike detected (manipulation risk)
         oi_unusual = md.get("oi_unusual_activity", False)
+        # 4. Strict daily trade limit: max 3 trades per day across portfolio
+        daily_trades_exceeded = trades_today_count >= MAX_DAILY_TRADES
 
-        if too_late:
+        if daily_trades_exceeded:
+            st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
+        elif not daily_allowed:
+            st.warning(f"🛑 {daily_limits[1]}")
+        elif too_late:
             st.warning(f"⏰ No new entries after {NO_NEW_TRADE_TIME.strftime('%I:%M %p')} — auto-square soon")
         elif price_too_low:
             st.warning(f"⚠️ Option price ₹{ep} is too low (min ₹{MIN_ENTRY_PRICE}) — skipping")
@@ -340,7 +355,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         elif expiry_today and ep < MIN_ENTRY_PRICE:
             st.info(f"📅 Expiry day — cheap option ₹{ep} allowed (fast moves expected)")
 
-        can_enter = not too_late and not price_too_low and not oi_unusual and conf_score >= 30
+        can_enter = (
+            not too_late
+            and not price_too_low
+            and not oi_unusual
+            and conf_score >= 30
+            and not daily_trades_exceeded
+            and daily_allowed
+        )
 
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):

@@ -9,9 +9,11 @@ import datetime
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # ── CAPITAL & RISK ──
-CAPITAL   = 20_000
-MAX_LOSS  = 1000
-DAILY_TGT = 2000
+CAPITAL                = 20_000
+MAX_LOSS               = 1000      # Max loss per trade (₹1,000 max)
+DAILY_TGT              = 2000      # Target profit per trade & daily target (₹2,000)
+MAX_DAILY_TRADES       = 3         # Strict limit: max 3 trades per day
+PROFIT_LOCK_THRESHOLD  = 2000      # When trade reaches +₹2,000, lock SL at +₹2,000
 
 # ── INDEX CONFIG ──
 # expiry_weekday: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri

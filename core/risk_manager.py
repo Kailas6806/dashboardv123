@@ -4,11 +4,14 @@ Position sizing, fixed stop-loss (₹1000), cooldown, and daily loss limits.
 IMPORTANT: qty is ALWAYS = lot (1 lot only, no dynamic scaling).
 """
 import datetime
-from typing import Any, Dict, List, Tuple
+import math
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
     MAX_LOSS,
     DAILY_TGT,
+    MAX_DAILY_TRADES,
+    PROFIT_LOCK_THRESHOLD,
     ATR_PERIOD,
     ATR_SL_MULTIPLIER,
     COOLDOWN_SECONDS,
@@ -66,11 +69,15 @@ class RiskManager:
             target_pnl – target profit in ₹
         """
         qty = max(1, lot)  # Always 1 lot; clamp to 1 to prevent division-by-zero
-        sl_u = round(MAX_LOSS / qty, 2)
-        tgt_u = round(DAILY_TGT / qty, 2)  # Use 2000 as target per trade
+        # Floor SL points so that (sl_u * qty) strictly NEVER exceeds MAX_LOSS (₹1,000)
+        sl_u = math.floor((MAX_LOSS / qty) * 100) / 100.0
+        # Ceil target points so that target profit strictly reaches at least DAILY_TGT (₹2,000)
+        tgt_u = math.ceil((DAILY_TGT / qty) * 100) / 100.0
         sl_p = max(0.05, round(ep - sl_u, 2))
         tgt_p = round(ep + tgt_u, 2)
-        return qty, sl_p, tgt_p, float(MAX_LOSS), float(DAILY_TGT)
+        max_loss = min(round(sl_u * qty, 2), float(MAX_LOSS))
+        target_pnl = round(tgt_u * qty, 2)
+        return qty, sl_p, tgt_p, max_loss, target_pnl
 
     # ──────────────────────────────────────────────
     # 2. CALC TRADE WITH ATR
@@ -95,16 +102,23 @@ class RiskManager:
                 abs(recent[i] - recent[i - 1]) for i in range(1, len(recent))
             ) / (ATR_PERIOD - 1)
 
-            atr_sl_points = round(atr * ATR_SL_MULTIPLIER, 2)
             qty = max(1, lot)
+            # HARD CEILING: Floored to ensure (max_sl_pts * qty) NEVER exceeds MAX_LOSS (₹1,000)
+            max_sl_pts = math.floor((MAX_LOSS / qty) * 100) / 100.0
+            atr_sl_points = min(round(atr * ATR_SL_MULTIPLIER, 2), max_sl_pts)
+
+            # Target must achieve at least DAILY_TGT (₹2,000), or 2x ATR SL points if larger
+            min_tgt_pts = math.ceil((DAILY_TGT / qty) * 100) / 100.0
+            tgt_pts = max(min_tgt_pts, round(atr_sl_points * 2, 2))
+
             sl_p = max(0.05, round(ep - atr_sl_points, 2))
-            tgt_p = round(ep + (atr_sl_points * 2), 2)   # 1:2 R:R
-            max_loss = round(atr_sl_points * qty, 2)
-            target_pnl = round((tgt_p - ep) * qty, 2)
+            tgt_p = round(ep + tgt_pts, 2)
+            max_loss = min(round(atr_sl_points * qty, 2), float(MAX_LOSS))
+            target_pnl = round(tgt_pts * qty, 2)
 
             log.debug(
-                "ATR SL: atr=%.2f mult=%.2f sl_pts=%.2f sl_p=%.2f tgt_p=%.2f",
-                atr, ATR_SL_MULTIPLIER, atr_sl_points, sl_p, tgt_p,
+                "ATR SL: atr=%.2f mult=%.2f sl_pts=%.2f sl_p=%.2f tgt_p=%.2f ml=%.2f tp=%.2f",
+                atr, ATR_SL_MULTIPLIER, atr_sl_points, sl_p, tgt_p, max_loss, target_pnl,
             )
             return qty, sl_p, tgt_p, max_loss, target_pnl
 
@@ -124,6 +138,7 @@ class RiskManager:
         idx: str,
         trade_log: List[Dict[str, Any]],
         now: datetime.datetime,
+        portfolio_trades: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[bool, str]:
         """Check whether a new trade entry is allowed.
 
@@ -131,9 +146,9 @@ class RiskManager:
         ------
         1. Cooldown: if last closed trade on this idx was SL hit within
            COOLDOWN_SECONDS, block.
-        2. Daily loss limit: if MAX_DAILY_LOSSES consecutive losses, block.
-        3. Market open buffer: if now is within MARKET_OPEN_BUFFER_MIN of
-           9:15, block.
+        2. Daily trade count: max MAX_DAILY_TRADES (3) trades per day.
+        3. Daily loss limit: max MAX_DAILY_LOSSES consecutive losses or total loss >= MAX_LOSS.
+        4. Market open buffer: if now is within MARKET_OPEN_BUFFER_MIN of 9:15, block.
 
         Parameters
         ----------
@@ -143,6 +158,8 @@ class RiskManager:
             Trade log for this index.
         now : datetime.datetime
             Current time (IST-aware).
+        portfolio_trades : list[dict], optional
+            Combined trade log across all indices for portfolio-wide limits.
 
         Returns
         -------
@@ -191,8 +208,9 @@ class RiskManager:
                     except (ValueError, TypeError):
                         pass  # can't parse time, skip cooldown check
 
-        # ── Daily loss limit ──
-        allowed, reason = self.check_daily_limits(trade_log)
+        # ── Daily limits (checked across entire portfolio if provided) ──
+        limits_trades = portfolio_trades if portfolio_trades is not None else trade_log
+        allowed, reason = self.check_daily_limits(limits_trades)
         if not allowed:
             return False, reason
 
@@ -204,7 +222,10 @@ class RiskManager:
     def check_daily_limits(
         self, trade_log: List[Dict[str, Any]]
     ) -> Tuple[bool, str]:
-        """Check consecutive loss limit across all indices.
+        """Check daily limits across all indices:
+        1. Max 3 trades per day total.
+        2. Consecutive loss limit.
+        3. Max daily loss limit (₹1,000).
 
         Parameters
         ----------
@@ -215,12 +236,22 @@ class RiskManager:
         -------
         (allowed, reason)
         """
+        if not trade_log:
+            return True, ""
+
+        # 1. Total trades taken today (Strict 3 trades/day limit)
+        valid_trades = [t for t in trade_log if t.get("Entry Time")]
+        if len(valid_trades) >= MAX_DAILY_TRADES:
+            return False, (
+                f"🛑 Daily limit reached: {len(valid_trades)}/{MAX_DAILY_TRADES} trades "
+                f"already taken today. No new trades allowed."
+            )
+
         closed = [t for t in trade_log if t.get("Status") == "CLOSED"]
         if not closed:
             return True, ""
 
-        # Count consecutive losses from most recent.
-        # Trade log uses .insert(0, ...) so closed[0] is newest (newest-first ordering).
+        # 2. Consecutive loss limit
         consecutive_losses = 0
         for t in closed:
             result = str(t.get("Result", ""))
@@ -233,6 +264,18 @@ class RiskManager:
             return False, (
                 f"🛑 Daily loss limit reached — {consecutive_losses} consecutive "
                 f"losses (max {MAX_DAILY_LOSSES}). Trading paused."
+            )
+
+        # 3. Max daily loss limit in ₹ (₹1,000)
+        total_pnl = sum(
+            float(t.get("Actual P&L ₹") or 0)
+            for t in closed
+            if t.get("Actual P&L ₹") is not None
+        )
+        if total_pnl <= -MAX_LOSS:
+            return False, (
+                f"🛑 Max daily loss reached (Realized P&L: -₹{abs(total_pnl):,.0f} ≤ -₹{MAX_LOSS:,}). "
+                f"Trading paused for today to preserve capital."
             )
 
         return True, ""
