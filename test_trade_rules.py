@@ -1,17 +1,22 @@
 """
 Unit test suite verifying:
 1. Stop loss strictly capped at <= ₹1,000 under all conditions (including large ATR).
-2. Profit target set to >= ₹2,000.
+2. Profit target set to ₹4,000.
 3. Max 3 trades per day across the portfolio.
-4. Trailing profit lock:
-   - Locks SL at +₹2,000 when profit reaches ₹2,000.
-   - Keeps trade open to capture further upside.
-   - Trails SL higher behind price.
-   - Closes with 'WIN (LOCKED)' at >= ₹2,000 profit if price reverses to SL.
+4. Cumulative daily loss limit at ₹2,000 (allows 2nd/3rd trade after 1 loss).
+5. Step Trailing Profit Lock:
+   - Locks SL at +₹2,000 when profit reaches ₹2,000 (trade stays open).
+   - Increases SL to +₹3,000 when profit reaches ₹3,000 (trade stays open).
+   - Pullback triggers exit with locked profit.
+6. Max Profit Exit:
+   - Exits immediately at +₹4,000 profit (TARGET 4K HIT).
 """
 import datetime
 import unittest
-from config import IST, MAX_LOSS, DAILY_TGT, MAX_DAILY_TRADES, PROFIT_LOCK_THRESHOLD
+from config import (
+    IST, MAX_LOSS, MAX_DAILY_LOSS, DAILY_TGT, MAX_DAILY_TRADES,
+    PROFIT_LOCK_START, PROFIT_LOCK_STEP, MAX_PROFIT_EXIT,
+)
 from core.risk_manager import RiskManager
 from core.trade_manager import TradeManager
 
@@ -39,7 +44,7 @@ class TestTradeRules(unittest.TestCase):
             qty, sl_p, tgt_p, ml, tp = self.risk_mgr.calc_trade(ep=200.0, lot=lot)
             self.assertEqual(qty, lot)
             self.assertLessEqual(ml, 1000.0)
-            self.assertGreaterEqual(tp, 2000.0)
+            self.assertGreaterEqual(tp, 4000.0)
             # Calculated loss if sl_p is hit
             actual_loss = round((200.0 - sl_p) * qty, 2)
             self.assertLessEqual(actual_loss, 1000.0)
@@ -55,16 +60,11 @@ class TestTradeRules(unittest.TestCase):
             self.assertLessEqual(ml, 1000.0, f"Max loss exceeded ₹1000 for lot {lot}: {ml}")
             actual_loss = round((250.0 - sl_p) * qty, 2)
             self.assertLessEqual(actual_loss, 1000.0, f"Calculated loss {actual_loss} > 1000 for lot {lot}")
-            self.assertGreaterEqual(tp, 2000.0)
+            self.assertGreaterEqual(tp, 4000.0)
 
     def test_max_3_trades_limit(self):
         """Portfolio should block new trades when 3 trades have already been taken."""
         now = datetime.datetime.now(IST)
-        # 0 trades: allowed
-        trades = []
-        allowed, _ = self.risk_mgr.check_daily_limits(trades)
-        self.assertTrue(allowed)
-
         # 2 trades: allowed
         trades = [
             {"Entry Time": "09:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": 500, "Result": "🟢 WIN"},
@@ -81,25 +81,37 @@ class TestTradeRules(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("Daily limit reached: 3/3", reason)
 
-        # Also verify should_allow_trade respects portfolio_trades
+        # Verify should_allow_trade respects portfolio_trades
         allowed_should, reason_should = self.risk_mgr.should_allow_trade(
             "NIFTY", [], now, portfolio_trades=trades
         )
         self.assertFalse(allowed_should)
         self.assertIn("Daily limit reached: 3/3", reason_should)
 
-    def test_trailing_profit_lock_lifecycle(self):
+    def test_daily_loss_limit_at_2000(self):
+        """Single ₹1,000 loss should NOT block next trade; ₹2,000 loss SHOULD block."""
+        # 1 loss of -₹999: should still be allowed
+        trades = [
+            {"Entry Time": "09:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -999.0, "Result": "🔴 LOSS"},
+        ]
+        allowed, _ = self.risk_mgr.check_daily_limits(trades)
+        self.assertTrue(allowed, "1 loss of ₹1,000 must not block trading for the day (allow 2nd/3rd trade)")
+
+        # 2 losses totaling -₹2,000: should be blocked
+        trades.append(
+            {"Entry Time": "10:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -1001.0, "Result": "🔴 LOSS"},
+        )
+        allowed, reason = self.risk_mgr.check_daily_limits(trades)
+        self.assertFalse(allowed)
+        self.assertIn("Max daily loss reached", reason)
+
+    def test_step_trailing_profit_lock_2k_and_3k(self):
         """
-        Verify complete profit lock lifecycle:
-        1. Trade enters @ 100 with 30 qty (BANKNIFTY). Initial SL = 66.67 (-1000 loss).
-        2. Price rises to 150 -> PnL = (150-100)*30 = +₹1500 (< 2000). Trade still open, not locked.
-        3. Price rises to 170 -> PnL = (170-100)*30 = +₹2100 (>= 2000).
-           -> Profit lock triggers: SL moved to 100 + (2000/30) = 166.67.
-           -> Trade stays OPEN to capture upside!
-        4. Price rises further to 200 -> Peak updates, SL trails to 200 - (500/30) = 183.33.
-        5. Price reverses to 180 (below trailed SL 183.33):
-           -> Exits with 'WIN (LOCKED)'!
-           -> Realized PnL = (180-100)*30 = +₹2400 (well above ₹2000!).
+        Verify step trailing:
+        1. Entry @ 100 with qty 30.
+        2. Price rises to 170 (+₹2,100) -> SL moves to +₹2,000 (166.67), stays OPEN.
+        3. Price rises to 205 (+₹3,150) -> SL moves to +₹3,000 (200.00), stays OPEN.
+        4. Price pulls back to 198 (below 200) -> Exits with WIN (LOCKED) at +₹2,940!
         """
         now = datetime.datetime.now(IST).replace(hour=10, minute=30)
         lot = 30
@@ -125,53 +137,44 @@ class TestTradeRules(unittest.TestCase):
             "Status": "OPEN",
             "Result": "⏳ OPEN",
             "_profit_locked": False,
+            "_locked_profit": 0,
             "_peak_price": ep,
         }
         trade_log = [trade]
 
-        # Step 2: Price goes to 150 (+₹1,500)
-        records = {51000.0: {"CE": {"lastPrice": 150.0}}}
-        events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
-        self.assertEqual(len(events), 0)
-        self.assertEqual(trade["Status"], "OPEN")
-        self.assertFalse(trade["_profit_locked"])
-        self.assertEqual(trade["Stop Loss"], sl_p)
-
-        # Step 3: Price goes to 170 (+₹2,100) -> PROFIT LOCK TRIGGERS!
+        # Step 2: Price reaches 170 (+₹2,100) -> First lock at ₹2,000
         records = {51000.0: {"CE": {"lastPrice": 170.0}}}
         events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
-        self.assertEqual(len(events), 0, "Trade should NOT close immediately at ₹2,000; it must ride upside!")
-        self.assertEqual(trade["Status"], "OPEN")
+        self.assertEqual(len(events), 0, "Trade should stay OPEN to capture more upside")
         self.assertTrue(trade["_profit_locked"])
-        expected_locked_sl = round(100.0 + (2000.0 / 30), 2)  # 166.67
-        self.assertEqual(trade["Stop Loss"], expected_locked_sl)
-        self.assertEqual(trade["Result"], "🟢 PROFIT LOCKED (+₹2,000)")
+        self.assertEqual(trade["_locked_profit"], 2000)
+        expected_sl_2k = round(100.0 + (2000.0 / 30), 2)  # 166.67
+        self.assertEqual(trade["Stop Loss"], expected_sl_2k)
 
-        # Step 4: Price climbs to 200 (+₹3,000) -> Trailing SL updates higher!
-        records = {51000.0: {"CE": {"lastPrice": 200.0}}}
+        # Step 3: Price reaches 205 (+₹3,150) -> Second lock at ₹3,000!
+        records = {51000.0: {"CE": {"lastPrice": 205.0}}}
         events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
-        self.assertEqual(len(events), 0)
-        self.assertEqual(trade["Status"], "OPEN")
-        expected_trailed_sl = round(200.0 - (500.0 / 30), 2)  # 183.33
-        self.assertEqual(trade["Stop Loss"], expected_trailed_sl)
+        self.assertEqual(len(events), 0, "Trade should stay OPEN to ride further")
+        self.assertEqual(trade["_locked_profit"], 3000)
+        expected_sl_3k = round(100.0 + (3000.0 / 30), 2)  # 200.00
+        self.assertEqual(trade["Stop Loss"], expected_sl_3k)
 
-        # Step 5: Price pulls back to 180 (drops below 183.33 SL) -> Exit with secured profit!
-        records = {51000.0: {"CE": {"lastPrice": 180.0}}}
+        # Step 4: Price pulls back to 198 (below 200 SL) -> Exits with locked profit!
+        records = {51000.0: {"CE": {"lastPrice": 198.0}}}
         events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["type"], "PROFIT_LOCKED_EXIT")
         self.assertEqual(trade["Status"], "CLOSED")
         self.assertEqual(trade["Result"], "🟢 WIN (LOCKED)")
-        self.assertEqual(trade["Exit Price"], 180.0)
-        self.assertEqual(trade["Actual P&L ₹"], 2400.0)
-        self.assertGreaterEqual(trade["Actual P&L ₹"], 2000.0)
+        self.assertEqual(trade["Actual P&L ₹"], 2940.0)
 
-    def test_regular_sl_loss_capped_at_1000(self):
-        """When price drops without reaching target, loss is capped at ₹1,000."""
+    def test_max_profit_exit_at_4k(self):
+        """When profit reaches +₹4,000, trade must immediately EXIT with full profit."""
         now = datetime.datetime.now(IST).replace(hour=10, minute=30)
         lot = 30
         ep = 100.0
         qty, sl_p, tgt_p, ml, tp = self.risk_mgr.calc_trade(ep=ep, lot=lot)
+
         trade = {
             "Entry Time": "10:30:00 AM",
             "Exit Time": None,
@@ -191,17 +194,20 @@ class TestTradeRules(unittest.TestCase):
             "Status": "OPEN",
             "Result": "⏳ OPEN",
             "_profit_locked": False,
+            "_locked_profit": 0,
             "_peak_price": ep,
         }
         trade_log = [trade]
-        # Price drops to sl_p
-        records = {51000.0: {"CE": {"lastPrice": sl_p}}}
+
+        # Price reaches 234 (+₹4,020 >= 4000) -> Immediate 4k Exit!
+        records = {51000.0: {"CE": {"lastPrice": 234.0}}}
         events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["type"], "SL_HIT")
+        self.assertEqual(events[0]["type"], "TARGET_4K_HIT")
         self.assertEqual(trade["Status"], "CLOSED")
-        self.assertEqual(trade["Result"], "🔴 LOSS")
-        self.assertGreaterEqual(trade["Actual P&L ₹"], -1000.0)
+        self.assertEqual(trade["Result"], "🟢 WIN (TARGET 4K HIT)")
+        self.assertEqual(trade["Exit Price"], 234.0)
+        self.assertEqual(trade["Actual P&L ₹"], 4020.0)
 
 
 if __name__ == "__main__":

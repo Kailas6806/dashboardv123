@@ -19,6 +19,9 @@ from config import (
     NO_NEW_TRADE_TIME,
     MIN_ENTRY_PRICE,
     LOG_DIR,
+    PROFIT_LOCK_START,
+    PROFIT_LOCK_STEP,
+    MAX_PROFIT_EXIT,
     PROFIT_LOCK_THRESHOLD,
 )
 
@@ -160,6 +163,7 @@ class TradeManager:
             "Status": "OPEN",
             "Result": "⏳ OPEN",
             "_profit_locked": False,
+            "_locked_profit": 0,
             "_peak_price": ep,
         }
 
@@ -262,46 +266,12 @@ class TradeManager:
                 tgt = float(trade.get("Target") or 0)
 
                 trade["Live Price"] = lp
-
-                # ── Profit Lock & Trailing Stop Evaluation ──
-                pts_for_lock = math.ceil((PROFIT_LOCK_THRESHOLD / qty_t) * 100) / 100.0
-                lock_sl_price = round(ep_t + pts_for_lock, 2)
                 unrealized_pnl = round((lp - ep_t) * qty_t, 2)
 
-                # Check if trade reached +₹2,000 profit threshold
-                if unrealized_pnl >= PROFIT_LOCK_THRESHOLD or lp >= lock_sl_price:
-                    if not trade.get("_profit_locked"):
-                        trade["_profit_locked"] = True
-                        trade["_peak_price"] = lp
-                        # Move stop loss to lock in +₹2,000 profit
-                        trade["Stop Loss"] = max(float(trade.get("Stop Loss") or 0), lock_sl_price)
-                        trade["Result"] = "🟢 PROFIT LOCKED (+₹2,000)"
-                        if trade_key not in self._notified_locks:
-                            self._notified_locks.add(trade_key)
-                            pending_notifications.append(
-                                f"🔒 *PROFIT SECURED (+₹2,000) — {idx} {signal}*\n"
-                                f"📍 Strike: `{trade.get('Strike')}` | Live: `{lp}`\n"
-                                f"🛡️ Stop Loss moved to `{trade['Stop Loss']}` (+₹2,000 locked in!)\n"
-                                f"🚀 Trade continues open to capture further upside!"
-                            )
-                            log.info(
-                                "PROFIT LOCKED: %s %s Strike=%s LP=%.2f NewSL=%.2f",
-                                idx, signal, trade.get("Strike"), lp, trade["Stop Loss"],
-                            )
-                    else:
-                        # Already profit-locked: trail SL higher if price rises further
-                        peak = float(trade.get("_peak_price") or lp)
-                        if lp > peak:
-                            trade["_peak_price"] = lp
-                            # Trail stop loss 500/qty behind peak, never below locked ₹2,000 profit
-                            trail_pts = round(500 / qty_t, 2)
-                            trailed_sl = round(lp - trail_pts, 2)
-                            if trailed_sl > float(trade.get("Stop Loss") or 0):
-                                trade["Stop Loss"] = max(lock_sl_price, trailed_sl)
+                # ── 1. Check Exit: Max Profit ₹4,000 Target Exit ──
+                pts_for_4k = math.ceil((MAX_PROFIT_EXIT / qty_t) * 100) / 100.0
+                tgt_4k_price = round(ep_t + pts_for_4k, 2)
 
-                current_sl = float(trade.get("Stop Loss") or sl)
-
-                # ── Check exit conditions ──
                 should_notify = trade_key not in self._notified_exits
 
                 if auto_sq:
@@ -322,59 +292,118 @@ class TradeManager:
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
                         )
-                    log.info(
-                        "AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                        idx, signal, trade.get("Strike"), lp, pnl,
-                    )
+                    log.info("AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f", idx, signal, trade.get("Strike"), lp, pnl)
 
-                elif trade.get("_profit_locked") and lp <= current_sl and lp > 0:
-                    # Trailing Profit Lock exit: secured at or above ₹2,000!
+                elif (unrealized_pnl >= MAX_PROFIT_EXIT or lp >= tgt_4k_price) and lp > 0:
+                    # Target ₹4,000 achieved! Exit immediately to secure full ₹4k profit
                     pnl = round((lp - ep_t) * qty_t, 2)
                     trade.update({
                         "Status": "CLOSED",
-                        "Result": "🟢 WIN (LOCKED)",
+                        "Result": "🟢 WIN (TARGET 4K HIT)",
                         "Exit Price": lp,
                         "Exit Time": now_str,
                         "Actual P&L ₹": pnl,
                     })
                     self._processed_exits.add(trade_key)
                     self._notified_exits.add(trade_key)
-                    events.append({"type": "PROFIT_LOCKED_EXIT", "trade": trade, "pnl": pnl})
+                    events.append({"type": "TARGET_4K_HIT", "trade": trade, "pnl": pnl})
                     if should_notify:
                         pending_notifications.append(
-                            f"🟢 *PROFIT LOCKED EXIT — {idx} {signal}*\n"
+                            f"🎯 *MAX TARGET HIT (+₹4,000) — {idx} {signal}*\n"
                             f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                            f"💸 Secured P&L: `₹{pnl:,.0f}` (≥ ₹2,000 protected!)\n"
-                            f"⏰ Time: `{now_str}`"
+                            f"💰 Realized Profit: `₹{pnl:,.0f}` | Time: `{now_str}`"
                         )
-                    log.info(
-                        "PROFIT LOCKED EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                        idx, signal, trade.get("Strike"), lp, pnl,
-                    )
+                    log.info("TARGET 4K HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f", idx, signal, trade.get("Strike"), lp, pnl)
 
-                elif not trade.get("_profit_locked") and lp <= current_sl and lp > 0:
-                    # Regular SL Hit (capped at ₹1,000 max loss)
-                    pnl = round((lp - ep_t) * qty_t, 2)
-                    trade.update({
-                        "Status": "CLOSED",
-                        "Result": "🔴 LOSS",
-                        "Exit Price": lp,
-                        "Exit Time": now_str,
-                        "Actual P&L ₹": pnl,
-                    })
-                    self._processed_exits.add(trade_key)
-                    self._notified_exits.add(trade_key)
-                    events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
-                    if should_notify:
-                        pending_notifications.append(
-                            f"🔴 *SL HIT — {idx} {signal}*\n"
-                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                            f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
-                        )
-                    log.info(
-                        "SL HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
-                        idx, signal, trade.get("Strike"), lp, pnl,
-                    )
+                else:
+                    # ── 2. Check Step Trailing SL Lock (+₹3,000 and +₹2,000) ──
+                    pts_for_3k = math.ceil((3000 / qty_t) * 100) / 100.0
+                    sl_3k = round(ep_t + pts_for_3k, 2)
+
+                    pts_for_2k = math.ceil((PROFIT_LOCK_START / qty_t) * 100) / 100.0
+                    sl_2k = round(ep_t + pts_for_2k, 2)
+
+                    if unrealized_pnl >= 3000 or lp >= sl_3k:
+                        if trade.get("_locked_profit", 0) < 3000:
+                            trade["_locked_profit"] = 3000
+                            trade["_profit_locked"] = True
+                            trade["Stop Loss"] = max(float(trade.get("Stop Loss") or 0), sl_3k)
+                            trade["Result"] = "🟢 PROFIT LOCKED (+₹3,000)"
+                            lock_key_3k = f"{trade_key}_lock_3000"
+                            if lock_key_3k not in self._notified_locks:
+                                self._notified_locks.add(lock_key_3k)
+                                pending_notifications.append(
+                                    f"🔒 *PROFIT LOCKED (+₹3,000) — {idx} {signal}*\n"
+                                    f"📍 Strike: `{trade.get('Strike')}` | Live: `{lp}`\n"
+                                    f"🛡️ Stop Loss moved up to `{trade['Stop Loss']}` (+₹3,000 locked in!)\n"
+                                    f"🚀 Final target: ₹4,000 exit!"
+                                )
+                                log.info("PROFIT LOCKED 3K: %s %s Strike=%s LP=%.2f NewSL=%.2f",
+                                         idx, signal, trade.get("Strike"), lp, trade["Stop Loss"])
+
+                    elif unrealized_pnl >= PROFIT_LOCK_START or lp >= sl_2k:
+                        if trade.get("_locked_profit", 0) < 2000:
+                            trade["_locked_profit"] = 2000
+                            trade["_profit_locked"] = True
+                            trade["Stop Loss"] = max(float(trade.get("Stop Loss") or 0), sl_2k)
+                            trade["Result"] = "🟢 PROFIT LOCKED (+₹2,000)"
+                            lock_key_2k = f"{trade_key}_lock_2000"
+                            if lock_key_2k not in self._notified_locks:
+                                self._notified_locks.add(lock_key_2k)
+                                pending_notifications.append(
+                                    f"🔒 *PROFIT SECURED (+₹2,000) — {idx} {signal}*\n"
+                                    f"📍 Strike: `{trade.get('Strike')}` | Live: `{lp}`\n"
+                                    f"🛡️ Stop Loss moved to `{trade['Stop Loss']}` (+₹2,000 locked in!)\n"
+                                    f"🚀 Trailing active — next lock at ₹3,000, final exit at ₹4,000!"
+                                )
+                                log.info("PROFIT LOCKED 2K: %s %s Strike=%s LP=%.2f NewSL=%.2f",
+                                         idx, signal, trade.get("Strike"), lp, trade["Stop Loss"])
+
+                    # ── 3. Check Pullback / SL Exit ──
+                    current_sl = float(trade.get("Stop Loss") or sl)
+
+                    if trade.get("_profit_locked") and lp <= current_sl and lp > 0:
+                        pnl = round((lp - ep_t) * qty_t, 2)
+                        trade.update({
+                            "Status": "CLOSED",
+                            "Result": "🟢 WIN (LOCKED)",
+                            "Exit Price": lp,
+                            "Exit Time": now_str,
+                            "Actual P&L ₹": pnl,
+                        })
+                        self._processed_exits.add(trade_key)
+                        self._notified_exits.add(trade_key)
+                        events.append({"type": "PROFIT_LOCKED_EXIT", "trade": trade, "pnl": pnl})
+                        if should_notify:
+                            pending_notifications.append(
+                                f"🟢 *PROFIT LOCKED EXIT — {idx} {signal}*\n"
+                                f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                                f"💸 Secured P&L: `₹{pnl:,.0f}` (≥ ₹2,000 protected!)\n"
+                                f"⏰ Time: `{now_str}`"
+                            )
+                        log.info("PROFIT LOCKED EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                                 idx, signal, trade.get("Strike"), lp, pnl)
+
+                    elif not trade.get("_profit_locked") and lp <= current_sl and lp > 0:
+                        pnl = round((lp - ep_t) * qty_t, 2)
+                        trade.update({
+                            "Status": "CLOSED",
+                            "Result": "🔴 LOSS",
+                            "Exit Price": lp,
+                            "Exit Time": now_str,
+                            "Actual P&L ₹": pnl,
+                        })
+                        self._processed_exits.add(trade_key)
+                        self._notified_exits.add(trade_key)
+                        events.append({"type": "SL_HIT", "trade": trade, "pnl": pnl})
+                        if should_notify:
+                            pending_notifications.append(
+                                f"🔴 *SL HIT — {idx} {signal}*\n"
+                                f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
+                                f"💸 P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
+                            )
+                        log.info("SL HIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                                 idx, signal, trade.get("Strike"), lp, pnl)
 
         # Send notifications outside the lock to avoid potential deadlock
         for notification_msg in pending_notifications:

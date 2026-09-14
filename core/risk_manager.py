@@ -9,8 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
     MAX_LOSS,
+    MAX_DAILY_LOSS,
     DAILY_TGT,
     MAX_DAILY_TRADES,
+    PROFIT_LOCK_START,
+    PROFIT_LOCK_STEP,
+    MAX_PROFIT_EXIT,
     PROFIT_LOCK_THRESHOLD,
     ATR_PERIOD,
     ATR_SL_MULTIPLIER,
@@ -266,15 +270,15 @@ class RiskManager:
                 f"losses (max {MAX_DAILY_LOSSES}). Trading paused."
             )
 
-        # 3. Max daily loss limit in ₹ (₹1,000)
+        # 3. Max daily loss limit in ₹ (₹2,000)
         total_pnl = sum(
             float(t.get("Actual P&L ₹") or 0)
             for t in closed
             if t.get("Actual P&L ₹") is not None
         )
-        if total_pnl <= -MAX_LOSS:
+        if total_pnl <= -MAX_DAILY_LOSS:
             return False, (
-                f"🛑 Max daily loss reached (Realized P&L: -₹{abs(total_pnl):,.0f} ≤ -₹{MAX_LOSS:,}). "
+                f"🛑 Max daily loss reached (Realized P&L: -₹{abs(total_pnl):,.0f} ≤ -₹{MAX_DAILY_LOSS:,}). "
                 f"Trading paused for today to preserve capital."
             )
 
