@@ -80,6 +80,11 @@ def normalize_trade(raw: Dict[str, Any]) -> Dict[str, Any]:
         prog = 0.0
     progress_pct = round(prog * 100, 1)
 
+    # Confidence Score extraction
+    conf_score = raw.get("Confidence Score") or raw.get("confidence_score") or raw.get("Score")
+    if conf_score is None and isinstance(raw.get("signal_metadata"), dict):
+        conf_score = raw["signal_metadata"].get("confidence_score")
+
     return {
         "raw": raw,
         "instrument": instrument,
@@ -100,6 +105,7 @@ def normalize_trade(raw: Dict[str, Any]) -> Dict[str, Any]:
         "pnl": pnl,
         "pnl_disp": pnl_disp,
         "progress_pct": progress_pct,
+        "conf_score": conf_score,
     }
 
 

@@ -36,7 +36,7 @@ class TradeJournal:
         "Entry Time", "Exit Time", "Index", "Signal", "Spot", "Strike",
         "Entry Price", "Live Price", "Exit Price",
         "Stop Loss", "Target", "Qty", "Max Loss ₹", "Target P&L ₹",
-        "Actual P&L ₹", "Status", "Result",
+        "Actual P&L ₹", "Status", "Result", "Confidence Score",
     ]
 
     def __init__(self, journal_path: Optional[str] = None) -> None:

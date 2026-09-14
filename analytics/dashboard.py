@@ -467,14 +467,20 @@ def _render_recent_trades(trades: List[Dict[str, Any]], count: int = 20) -> None
         return
 
     display_cols = [
-        "trade_id", "Entry Time", "Index", "Signal", "Strike",
+        "trade_id", "Entry Time", "Index", "Signal", "Score", "Strike",
         "Entry Price", "Exit Price", "Actual P&L ₹", "Result",
     ]
     rows = []
     for t in recent:
         row: Dict[str, Any] = {}
         for col in display_cols:
-            val = t.get(col, "—")
+            if col == "Score":
+                sc = t.get("Confidence Score") or t.get("Score")
+                if sc is None and isinstance(t.get("signal_metadata"), dict):
+                    sc = t["signal_metadata"].get("confidence_score")
+                val = f"{int(float(sc))}/100" if sc is not None and str(sc).strip() != "" else "—"
+            else:
+                val = t.get(col, "—")
             row[col] = val
         rows.append(row)
 

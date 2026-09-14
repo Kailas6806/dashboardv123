@@ -354,7 +354,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
                 "Target": tgt_p, "Qty": qty,
                 "Max Loss ₹": ml, "Target P&L ₹": tp,
                 "Actual P&L ₹": None, "Status": "OPEN",
-                "Result": "⏳ OPEN",
+                "Result": "⏳ OPEN", "Confidence Score": conf_score,
             }
             st.session_state[tlog_key].insert(0, trade_entry)
             trade_mgr.save_log(idx, st.session_state[tlog_key])
@@ -890,12 +890,22 @@ def render_trade_history_tab(journal):
         exit_time = t["raw"].get("Exit Time") or "—"
         res = t["raw"].get("Result") or t["status"]
 
+        score_val = t.get("conf_score")
+        if score_val is not None and str(score_val).strip() != "":
+            try:
+                score_disp = f"{int(float(score_val))}/100"
+            except (ValueError, TypeError):
+                score_disp = str(score_val)
+        else:
+            score_disp = "—"
+
         rows.append({
             "Date": t["date"],
             "Time": t["entry_time"],
             "Exit Time": exit_time,
             "Instrument": t["instrument"],
             "Signal": t["signal"],
+            "Score": score_disp,
             "Strike": t["strike"],
             "Entry": f"₹{t['entry_price']:.2f}",
             "Exit": exit_disp,
