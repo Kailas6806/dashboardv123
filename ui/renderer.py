@@ -1068,6 +1068,70 @@ def render_trade_history_tab(journal):
         })
 
     df_hist = pd.DataFrame(rows)
+
+    # ── AUTO-SQUARE OFF + CLOSE ALL button ──
+    open_rows = [t for t in filtered if t["status"] == "OPEN"]
+    now_close_time = datetime.datetime.now(IST)
+    past_square_off = now_close_time.time() >= AUTO_SQUARE_OFF_TIME
+
+    if open_rows:
+        ca_col, cb_col = st.columns([3, 2])
+        with ca_col:
+            if past_square_off:
+                st.warning(
+                    f"⏰ Market past {AUTO_SQUARE_OFF_TIME.strftime('%I:%M %p')} — "
+                    f"{len(open_rows)} open position(s) should be squared off."
+                )
+            else:
+                st.info(f"📂 {len(open_rows)} open position(s) in this view.")
+        with cb_col:
+            if st.button(
+                "❌ CLOSE ALL OPEN TRADES",
+                key="btn_close_all_open_hist",
+                type="primary",
+                use_container_width=True,
+            ):
+                exit_now = now_close_time.strftime("%I:%M:%S %p")
+                closed_count = 0
+                for idx in INDEX_CONFIG:
+                    tlog_k = sk(idx, "trade_log")
+                    tlog_ss = st.session_state.get(tlog_k, [])
+                    changed = False
+                    for t in tlog_ss:
+                        if t.get("Status") != "OPEN":
+                            continue
+                        lp = float(t.get("Live Price") or t.get("Entry Price") or 0)
+                        ep = float(t.get("Entry Price") or 0)
+                        qty = int(t.get("Qty") or 0)
+                        pnl = round((lp - ep) * qty, 2)
+                        t["Status"] = "CLOSED"
+                        t["Exit Time"] = exit_now
+                        t["Exit Price"] = lp
+                        t["Actual P&L ₹"] = pnl
+                        t["Result"] = "🟡 MANUAL" if not past_square_off else "🟠 AUTO-SQUARED"
+                        changed = True
+                        closed_count += 1
+                        if journal:
+                            journal.update_trade(
+                                t.get("_journal_id", ""),
+                                {
+                                    "Exit Time": exit_now,
+                                    "Exit Price": lp,
+                                    "Actual P&L ₹": pnl,
+                                    "Status": "CLOSED",
+                                    "Result": t["Result"],
+                                },
+                                t,
+                            )
+                    if changed:
+                        trade_mgr_ss = st.session_state.get("_trade_mgr")
+                        if trade_mgr_ss:
+                            trade_mgr_ss.save_log(idx, tlog_ss)
+                        st.session_state[sk(idx, "last_signal")] = "WAIT"
+                        st.session_state[sk(idx, "signal_buffer")] = []
+                st.success(f"✅ Closed {closed_count} open position(s)!")
+                st.rerun()
+
     st.dataframe(
         df_hist,
         use_container_width=True,
