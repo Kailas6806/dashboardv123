@@ -1261,12 +1261,59 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                 selected_idx, md, final_signal, conf_score, active_trades_count=open_trades_count
             )
             st.session_state[sk(selected_idx, "ai_analysis")] = analysis
+
+            # ── AUTO-TRADE: fire immediately if toggle is ON and conviction is high ──
+            if auto_trade:
+                auto_rec = analysis.get("recommendation", "AVOID_WAIT")
+                auto_conv = analysis.get("conviction_score", 0)
+                from config import AI_MIN_CONVICTION
+                if auto_conv >= AI_MIN_CONVICTION and "BUY" in auto_rec:
+                    exec_sig = "BUY CE" if "CE" in auto_rec else "BUY PE"
+                    # Block if there is already an open trade on this index
+                    already_open = any(
+                        t.get("Status") == "OPEN"
+                        for t in st.session_state.get(sk(selected_idx, "trade_log"), [])
+                    )
+                    if already_open:
+                        st.session_state[sk(selected_idx, "ai_auto_trade_msg")] = (
+                            "warn",
+                            f"Auto-Trade skipped — {selected_idx} already has an open position.",
+                        )
+                    else:
+                        ok, _, msg = copilot.take_trade(
+                            selected_idx, exec_sig, md, trade_mgr, risk_mgr, journal,
+                            st.session_state.get(sk(selected_idx, "trade_log"), []),
+                            ai_conviction=auto_conv,
+                            ai_reasoning=analysis.get("reasoning_summary", "Auto-Trade: High Conviction"),
+                        )
+                        st.session_state[sk(selected_idx, "ai_auto_trade_msg")] = (
+                            "ok" if ok else "err", msg
+                        )
+                else:
+                    st.session_state[sk(selected_idx, "ai_auto_trade_msg")] = (
+                        "info",
+                        f"Auto-Trade: conviction {auto_conv}/100 below threshold ({AI_MIN_CONVICTION}) or signal is AVOID — no trade fired.",
+                    )
+
             st.rerun()
 
     analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
     if not analysis:
         st.info("No analysis generated yet for this session. Click 'RUN AI SIGNAL ANALYSIS' above to begin.")
         return
+
+    # Show auto-trade result banner (if any)
+    at_msg = st.session_state.pop(sk(selected_idx, "ai_auto_trade_msg"), None)
+    if at_msg:
+        status, text = at_msg
+        if status == "ok":
+            st.success(f"🤖 **AUTO-TRADE FIRED:** {text}")
+        elif status == "err":
+            st.error(f"🤖 Auto-Trade failed: {text}")
+        elif status == "warn":
+            st.warning(f"⚡ {text}")
+        else:
+            st.info(f"⚡ {text}")
 
     # 3. Render AI Verdict Card
     bias = analysis.get("market_bias", "UNKNOWN")
