@@ -1,0 +1,18 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Runs at 03:25 UTC every weekday (Monday to Friday)
+    # 03:25 UTC is 08:55 AM IST
+    - cron: '25 3 * * 1-5'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          echo "Pinging https://dashboardv123.streamlit.app/ to keep it awake..."
+          curl -sS https://dashboardv123.streamlit.app/ > /dev/null
+          echo "Ping complete."
