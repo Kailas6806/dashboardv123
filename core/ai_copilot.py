@@ -8,8 +8,12 @@ import json
 import re
 import datetime
 from typing import Any, Dict, List, Optional, Tuple
-
-from openai import OpenAI
+try:
+    from openai import OpenAI
+    HAS_OPENAI = True
+except ImportError:
+    OpenAI = None
+    HAS_OPENAI = False
 
 from config import (
     NVIDIA_API_KEY,
@@ -55,6 +59,9 @@ class AICopilot:
 
     def _init_client(self) -> None:
         """Initialize the OpenAI client pointing to NVIDIA NIM."""
+        if not HAS_OPENAI or OpenAI is None:
+            log.warning("AICopilot: openai package is not installed.")
+            return
         if not self.api_key:
             log.warning("AICopilot: No NVIDIA_API_KEY found")
             return
