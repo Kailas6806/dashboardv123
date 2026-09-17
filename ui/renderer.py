@@ -1221,11 +1221,11 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     final_signal, final_conf, updated_buf = signal_engine.confirm_signal(
         signal, conf, st.session_state.get(sk(selected_idx, "signal_buffer"), [])
     )
-    conf_score = signal_engine.calculate_confidence(
-        md["pcr"], md["spot_vs_vwap"], md["oi_momentum_bullish"],
-        md["oi_momentum_bearish"], md["pcr_momentum"], final_signal,
-        spot, md["support"], md["resistance"], "NONE"
+    trap = signal_engine.detect_trap(
+        spot, md.get("support", 0), md.get("resistance", 0),
+        md.get("total_ce_delta", 0), md.get("total_pe_delta", 0)
     )
+    conf_score = signal_engine.compute_confidence_score(md, final_signal, trap)
 
     # 1. Telemetry Strip
     col1, col2, col3, col4, col5, col6 = st.columns(6)

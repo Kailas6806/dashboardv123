@@ -326,22 +326,29 @@ class SignalEngine:
     # ──────────────────────────────────────────────
     def detect_trap(
         self,
-        spot: float,
-        support: int,
-        resistance: int,
-        total_ce_delta: float,
-        total_pe_delta: float,
+        spot: Any = None,
+        support: Any = None,
+        resistance: Any = None,
+        total_ce_delta: Any = 0,
+        total_pe_delta: Any = 0,
     ) -> str:
         """Detect bull/bear traps based on spot vs S/R and OI delta flow.
-
-        Returns
-        -------
-        str
-            "NONE", "🚨 BULL TRAP", or "🚨 BEAR TRAP"
+        Supports both positional arguments and passing a market_data dict as first arg.
         """
-        trap="NONE"
-        if spot>resistance and total_ce_delta>total_pe_delta: trap="🚨 BULL TRAP"
-        elif spot<support and total_pe_delta>total_ce_delta:  trap="🚨 BEAR TRAP"
+        if isinstance(spot, dict):
+            md = spot
+            spot = float(md.get("spot", 0.0))
+            support = int(md.get("support", 0))
+            resistance = int(md.get("resistance", 0))
+            total_ce_delta = float(md.get("total_ce_delta", 0.0))
+            total_pe_delta = float(md.get("total_pe_delta", 0.0))
+
+        trap = "NONE"
+        if spot is not None and resistance and total_ce_delta is not None and total_pe_delta is not None:
+            if spot > resistance and total_ce_delta > total_pe_delta:
+                trap = "🚨 BULL TRAP"
+            elif support and spot < support and total_pe_delta > total_ce_delta:
+                trap = "🚨 BEAR TRAP"
         return trap
 
     # ──────────────────────────────────────────────
@@ -424,6 +431,18 @@ class SignalEngine:
             score -= CONF_PENALTY_TRAP
 
         return max(0, min(100, score))
+
+    def calculate_confidence(self, *args, **kwargs) -> int:
+        """Compatibility wrapper for compute_confidence_score."""
+        if args and isinstance(args[0], dict):
+            signal = args[1] if len(args) > 1 else "WAIT"
+            trap = args[2] if len(args) > 2 else "NONE"
+            return self.compute_confidence_score(args[0], signal, trap)
+        if "market_data" in kwargs:
+            return self.compute_confidence_score(
+                kwargs["market_data"], kwargs.get("signal", "WAIT"), kwargs.get("trap", "NONE")
+            )
+        return 50
 
     # ──────────────────────────────────────────────
     # 6. SIDEWAYS DETECTION (advisory only)
