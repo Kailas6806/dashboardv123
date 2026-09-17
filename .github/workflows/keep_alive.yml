@@ -2,9 +2,8 @@ name: Keep Streamlit App Awake
 
 on:
   schedule:
-    # Runs at 03:25 UTC every weekday (Monday to Friday)
-    # 03:25 UTC is 08:55 AM IST
-    - cron: '25 3 * * 1-5'
+    # Runs every 30 minutes to ensure the app never goes to sleep
+    - cron: '*/30 * * * *'
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
