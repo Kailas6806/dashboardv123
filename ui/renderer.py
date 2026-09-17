@@ -9,10 +9,10 @@ import datetime
 
 from config import (
     INDEX_CONFIG, CAPITAL, DAILY_TGT, IST, LOG_COLS,
-    MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
+    MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
-    MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
-    BASE_DIR, LOG_DIR,
+    MAX_LOSS, MAX_DAILY_LOSS, MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
+    BASE_DIR, LOG_DIR, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
@@ -1049,7 +1049,7 @@ def render_settings_tab(trade_mgr, journal):
     """
     import os
     from config import (
-        CAPITAL, MAX_LOSS, DAILY_TGT,
+        CAPITAL, MAX_LOSS, MAX_DAILY_LOSS, DAILY_TGT,
         COOLDOWN_SECONDS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
         AUTO_SQUARE_OFF_TIME, NO_NEW_TRADE_TIME, LOG_DIR,
         TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
