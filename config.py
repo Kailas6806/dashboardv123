@@ -99,8 +99,17 @@ LOG_BACKUP_COUNT  = 5                  # keep 5 rotated files
 JOURNAL_FILE = os.path.join(BASE_DIR, "trade_journal.json")
 
 # ── TELEGRAM CREDENTIALS ──
-TELEGRAM_TOKEN   = ""  # Add token here to hardcode, e.g. "123456:ABC..."
-TELEGRAM_CHAT_ID = ""  # Add chat ID here to hardcode, e.g. "-100..."
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets"):
+        if "TELEGRAM_TOKEN" in _st.secrets and not TELEGRAM_TOKEN:
+            TELEGRAM_TOKEN = str(_st.secrets["TELEGRAM_TOKEN"])
+        if "TELEGRAM_CHAT_ID" in _st.secrets and not TELEGRAM_CHAT_ID:
+            TELEGRAM_CHAT_ID = str(_st.secrets["TELEGRAM_CHAT_ID"])
+except Exception:
+    pass
 
 # ── CONFIDENCE SCORING WEIGHTS (display only, does NOT gate signals) ──
 CONF_WEIGHT_PCR       = 25   # max points from PCR strength
