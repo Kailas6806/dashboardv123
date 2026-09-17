@@ -1093,42 +1093,62 @@ def render_trade_history_tab(journal):
             ):
                 exit_now = now_close_time.strftime("%I:%M:%S %p")
                 closed_count = 0
-                for idx in INDEX_CONFIG:
-                    tlog_k = sk(idx, "trade_log")
-                    tlog_ss = st.session_state.get(tlog_k, [])
-                    changed = False
-                    for t in tlog_ss:
-                        if t.get("Status") != "OPEN":
-                            continue
-                        lp = float(t.get("Live Price") or t.get("Entry Price") or 0)
-                        ep = float(t.get("Entry Price") or 0)
-                        qty = int(t.get("Qty") or 0)
-                        pnl = round((lp - ep) * qty, 2)
-                        t["Status"] = "CLOSED"
-                        t["Exit Time"] = exit_now
-                        t["Exit Price"] = lp
-                        t["Actual P&L ₹"] = pnl
-                        t["Result"] = "🟡 MANUAL" if not past_square_off else "🟠 AUTO-SQUARED"
-                        changed = True
-                        closed_count += 1
-                        if journal:
-                            journal.update_trade(
-                                t.get("_journal_id", ""),
-                                {
-                                    "Exit Time": exit_now,
-                                    "Exit Price": lp,
-                                    "Actual P&L ₹": pnl,
-                                    "Status": "CLOSED",
-                                    "Result": t["Result"],
-                                },
-                                t,
-                            )
-                    if changed:
+                for t_row in open_rows:
+                    raw_trade = t_row.get("raw", {})
+                    idx_val = t_row["instrument"]
+                    
+                    # Compute exit metrics
+                    lp = float(raw_trade.get("Live Price") or raw_trade.get("Entry Price") or 0)
+                    ep = float(raw_trade.get("Entry Price") or 0)
+                    qty = int(raw_trade.get("Qty") or 0)
+                    pnl = round((lp - ep) * qty, 2)
+                    result_val = "🟡 MANUAL" if not past_square_off else "🟠 AUTO-SQUARED"
+                    
+                    # Update raw dictionary
+                    raw_trade["Status"] = "CLOSED"
+                    raw_trade["Exit Time"] = exit_now
+                    raw_trade["Exit Price"] = lp
+                    raw_trade["Actual P&L ₹"] = pnl
+                    raw_trade["Result"] = result_val
+                    
+                    # 1. Update Database & Journal
+                    trade_id = raw_trade.get("trade_id") or raw_trade.get("_journal_id", "")
+                    if journal:
+                        journal.update_trade(
+                            trade_id,
+                            {
+                                "Exit Time": exit_now,
+                                "Exit Price": lp,
+                                "Actual P&L ₹": pnl,
+                                "Status": "CLOSED",
+                                "Result": result_val,
+                            },
+                            raw_trade,
+                        )
+                    
+                    # 2. Update Session State (if it exists there)
+                    tlog_ss = st.session_state.get(sk(idx_val, "trade_log"), [])
+                    changed_ss = False
+                    for ss_t in tlog_ss:
+                        if (ss_t.get("trade_id") and ss_t.get("trade_id") == trade_id) or \
+                           (ss_t.get("Index") == idx_val and ss_t.get("Entry Time") == raw_trade.get("Entry Time")):
+                            ss_t["Status"] = "CLOSED"
+                            ss_t["Exit Time"] = exit_now
+                            ss_t["Exit Price"] = lp
+                            ss_t["Actual P&L ₹"] = pnl
+                            ss_t["Result"] = result_val
+                            changed_ss = True
+                            break
+                    
+                    if changed_ss:
                         trade_mgr_ss = st.session_state.get("_trade_mgr")
                         if trade_mgr_ss:
-                            trade_mgr_ss.save_log(idx, tlog_ss)
-                        st.session_state[sk(idx, "last_signal")] = "WAIT"
-                        st.session_state[sk(idx, "signal_buffer")] = []
+                            trade_mgr_ss.save_log(idx_val, tlog_ss)
+                        st.session_state[sk(idx_val, "last_signal")] = "WAIT"
+                        st.session_state[sk(idx_val, "signal_buffer")] = []
+                        
+                    closed_count += 1
+                    
                 st.success(f"✅ Closed {closed_count} open position(s)!")
                 st.rerun()
 
