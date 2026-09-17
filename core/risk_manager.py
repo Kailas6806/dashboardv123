@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
     MAX_LOSS,
+    MAX_INDEX_DAILY_LOSS,
     MAX_DAILY_LOSS,
     DAILY_TGT,
     MAX_DAILY_TRADES,
@@ -52,7 +53,7 @@ class RiskManager:
     # 1. CALC TRADE (basic, fixed SL)
     # ──────────────────────────────────────────────
     def calc_trade(
-        self, ep: float, lot: int
+        self, ep: float, lot: int, max_loss_override: Optional[float] = None
     ) -> Tuple[int, float, float, float, float]:
         """Calculate trade parameters with fixed stop-loss.
 
@@ -62,6 +63,8 @@ class RiskManager:
             Entry price (option premium).
         lot : int
             Lot size for the index.
+        max_loss_override : float, optional
+            Custom max loss limit (defaults to MAX_LOSS = ₹2,000).
 
         Returns
         -------
@@ -73,13 +76,14 @@ class RiskManager:
             target_pnl – target profit in ₹
         """
         qty = max(1, lot)  # Always 1 lot; clamp to 1 to prevent division-by-zero
-        # Floor SL points so that (sl_u * qty) strictly NEVER exceeds MAX_LOSS (₹1,000)
-        sl_u = math.floor((MAX_LOSS / qty) * 100) / 100.0
-        # Ceil target points so that target profit strictly reaches at least DAILY_TGT (₹2,000)
+        eff_max_loss = max_loss_override if max_loss_override is not None else MAX_LOSS
+        # Floor SL points so that (sl_u * qty) strictly NEVER exceeds MAX_LOSS (₹2,000)
+        sl_u = math.floor((eff_max_loss / qty) * 100) / 100.0
+        # Ceil target points so that target profit strictly reaches at least DAILY_TGT (₹4,000)
         tgt_u = math.ceil((DAILY_TGT / qty) * 100) / 100.0
         sl_p = max(0.05, round(ep - sl_u, 2))
         tgt_p = round(ep + tgt_u, 2)
-        max_loss = min(round(sl_u * qty, 2), float(MAX_LOSS))
+        max_loss = min(round(sl_u * qty, 2), float(eff_max_loss))
         target_pnl = round(tgt_u * qty, 2)
         return qty, sl_p, tgt_p, max_loss, target_pnl
 
@@ -87,7 +91,7 @@ class RiskManager:
     # 2. CALC TRADE WITH ATR
     # ──────────────────────────────────────────────
     def calc_trade_with_atr(
-        self, ep: float, lot: int, spot_history: List[float]
+        self, ep: float, lot: int, spot_history: List[float], max_loss_override: Optional[float] = None
     ) -> Tuple[int, float, float, float, float]:
         """Calculate trade parameters using ATR-based stop loss.
 
@@ -100,6 +104,7 @@ class RiskManager:
         -------
         (qty, sl_p, tgt_p, max_loss, target_pnl)
         """
+        eff_max_loss = max_loss_override if max_loss_override is not None else MAX_LOSS
         if len(spot_history) >= ATR_PERIOD:
             recent = spot_history[-ATR_PERIOD:]
             atr = sum(
@@ -107,17 +112,17 @@ class RiskManager:
             ) / (ATR_PERIOD - 1)
 
             qty = max(1, lot)
-            # HARD CEILING: Floored to ensure (max_sl_pts * qty) NEVER exceeds MAX_LOSS (₹1,000)
-            max_sl_pts = math.floor((MAX_LOSS / qty) * 100) / 100.0
+            # HARD CEILING: Floored to ensure (max_sl_pts * qty) NEVER exceeds MAX_LOSS (₹2,000)
+            max_sl_pts = math.floor((eff_max_loss / qty) * 100) / 100.0
             atr_sl_points = min(round(atr * ATR_SL_MULTIPLIER, 2), max_sl_pts)
 
-            # Target must achieve at least DAILY_TGT (₹2,000), or 2x ATR SL points if larger
+            # Target must achieve at least DAILY_TGT (₹4,000), or 2x ATR SL points if larger
             min_tgt_pts = math.ceil((DAILY_TGT / qty) * 100) / 100.0
             tgt_pts = max(min_tgt_pts, round(atr_sl_points * 2, 2))
 
             sl_p = max(0.05, round(ep - atr_sl_points, 2))
             tgt_p = round(ep + tgt_pts, 2)
-            max_loss = min(round(atr_sl_points * qty, 2), float(MAX_LOSS))
+            max_loss = min(round(atr_sl_points * qty, 2), float(eff_max_loss))
             target_pnl = round(tgt_pts * qty, 2)
 
             log.debug(
@@ -131,7 +136,7 @@ class RiskManager:
             "ATR fallback: only %d bars available (need %d)",
             len(spot_history), ATR_PERIOD,
         )
-        return self.calc_trade(ep, lot)
+        return self.calc_trade(ep, lot, max_loss_override=eff_max_loss)
 
 
     # ──────────────────────────────────────────────
@@ -212,6 +217,15 @@ class RiskManager:
                     except (ValueError, TypeError):
                         pass  # can't parse time, skip cooldown check
 
+        # ── Per-Index daily loss limit (₹2,000 max per index) ──
+        closed_idx = [t for t in trade_log if t.get("Status") == "CLOSED"]
+        idx_pnl = sum(float(t.get("Actual P&L ₹") or 0) for t in closed_idx if t.get("Actual P&L ₹") is not None)
+        if idx_pnl <= -MAX_INDEX_DAILY_LOSS:
+            return False, (
+                f"🛑 Max daily loss for {idx} reached (-₹{abs(idx_pnl):,.0f} ≤ -₹{MAX_INDEX_DAILY_LOSS:,}). "
+                f"Trading paused for {idx} today."
+            )
+
         # ── Daily limits (checked across entire portfolio if provided) ──
         limits_trades = portfolio_trades if portfolio_trades is not None else trade_log
         allowed, reason = self.check_daily_limits(limits_trades)
@@ -227,9 +241,9 @@ class RiskManager:
         self, trade_log: List[Dict[str, Any]]
     ) -> Tuple[bool, str]:
         """Check daily limits across all indices:
-        1. Max 3 trades per day total.
+        1. Max trades per day total (MAX_DAILY_TRADES = 6).
         2. Consecutive loss limit.
-        3. Max daily loss limit (₹1,000).
+        3. Max daily portfolio loss limit (₹6,000).
 
         Parameters
         ----------
@@ -243,7 +257,7 @@ class RiskManager:
         if not trade_log:
             return True, ""
 
-        # 1. Total trades taken today (Strict 3 trades/day limit)
+        # 1. Total trades taken today
         valid_trades = [t for t in trade_log if t.get("Entry Time")]
         if len(valid_trades) >= MAX_DAILY_TRADES:
             return False, (
@@ -270,7 +284,7 @@ class RiskManager:
                 f"losses (max {MAX_DAILY_LOSSES}). Trading paused."
             )
 
-        # 3. Max daily loss limit in ₹ (₹2,000)
+        # 3. Max daily loss limit in ₹ (₹6,000 portfolio total across 3 indices)
         total_pnl = sum(
             float(t.get("Actual P&L ₹") or 0)
             for t in closed
@@ -278,7 +292,7 @@ class RiskManager:
         )
         if total_pnl <= -MAX_DAILY_LOSS:
             return False, (
-                f"🛑 Max daily loss reached (Realized P&L: -₹{abs(total_pnl):,.0f} ≤ -₹{MAX_DAILY_LOSS:,}). "
+                f"🛑 Max daily portfolio loss reached (Realized P&L: -₹{abs(total_pnl):,.0f} ≤ -₹{MAX_DAILY_LOSS:,}). "
                 f"Trading paused for today to preserve capital."
             )
 

@@ -38,28 +38,28 @@ class TestTradeRules(unittest.TestCase):
         self.notifier = DummyNotifier()
         self.trade_mgr = TradeManager(self.notifier, self.risk_mgr)
 
-    def test_fixed_sl_capped_at_1000(self):
-        """Fixed SL must produce max loss <= ₹1,000 for all index lot sizes."""
+    def test_fixed_sl_capped_at_2000(self):
+        """Fixed SL must produce max loss <= ₹2,000 for all index lot sizes."""
         for lot in [65, 30, 60]:  # NIFTY, BANKNIFTY, FINNIFTY
             qty, sl_p, tgt_p, ml, tp = self.risk_mgr.calc_trade(ep=200.0, lot=lot)
             self.assertEqual(qty, lot)
-            self.assertLessEqual(ml, 1000.0)
+            self.assertLessEqual(ml, MAX_LOSS)
             self.assertGreaterEqual(tp, 4000.0)
             # Calculated loss if sl_p is hit
             actual_loss = round((200.0 - sl_p) * qty, 2)
-            self.assertLessEqual(actual_loss, 1000.0)
+            self.assertLessEqual(actual_loss, MAX_LOSS)
 
-    def test_atr_sl_strictly_clamped_to_1000(self):
-        """Even with huge spot ATR, SL must never exceed ₹1,000."""
+    def test_atr_sl_strictly_clamped_to_2000(self):
+        """Even with huge spot ATR, SL must never exceed ₹2,000."""
         # Spot history with wild swings: 100 pt moves
         huge_atr_history = [24000.0 + (100.0 if i % 2 == 0 else 0.0) for i in range(20)]
         for lot in [65, 30, 60]:
             qty, sl_p, tgt_p, ml, tp = self.risk_mgr.calc_trade_with_atr(
                 ep=250.0, lot=lot, spot_history=huge_atr_history
             )
-            self.assertLessEqual(ml, 1000.0, f"Max loss exceeded ₹1000 for lot {lot}: {ml}")
+            self.assertLessEqual(ml, MAX_LOSS, f"Max loss exceeded ₹{MAX_LOSS} for lot {lot}: {ml}")
             actual_loss = round((250.0 - sl_p) * qty, 2)
-            self.assertLessEqual(actual_loss, 1000.0, f"Calculated loss {actual_loss} > 1000 for lot {lot}")
+            self.assertLessEqual(actual_loss, MAX_LOSS, f"Calculated loss {actual_loss} > {MAX_LOSS} for lot {lot}")
             self.assertGreaterEqual(tp, 4000.0)
 
     def test_max_3_trades_limit(self):
@@ -88,22 +88,22 @@ class TestTradeRules(unittest.TestCase):
         self.assertFalse(allowed_should)
         self.assertIn("Daily limit reached: 3/3", reason_should)
 
-    def test_daily_loss_limit_at_2000(self):
-        """Single ₹1,000 loss should NOT block next trade; ₹2,000 loss SHOULD block."""
-        # 1 loss of -₹999: should still be allowed
+    def test_daily_loss_limit_at_6000(self):
+        """Portfolio loss limit allows up to ₹6,000 (3 indices x ₹2,000)."""
+        # 1 loss of -₹2,000: should still be allowed (portfolio limit is 6k)
         trades = [
-            {"Entry Time": "09:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -999.0, "Result": "🔴 LOSS"},
+            {"Entry Time": "09:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -2000.0, "Result": "🔴 LOSS"},
         ]
         allowed, _ = self.risk_mgr.check_daily_limits(trades)
-        self.assertTrue(allowed, "1 loss of ₹1,000 must not block trading for the day (allow 2nd/3rd trade)")
+        self.assertTrue(allowed, "1 loss of ₹2,000 must not block trading for the portfolio (allow other indices)")
 
-        # 2 losses totaling -₹2,000: should be blocked
+        # 2 losses totaling -₹6,001 (below 3-trade count limit): should be blocked
         trades.append(
-            {"Entry Time": "10:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -1001.0, "Result": "🔴 LOSS"},
+            {"Entry Time": "10:30:00 AM", "Status": "CLOSED", "Actual P&L ₹": -4001.0, "Result": "🔴 LOSS"},
         )
         allowed, reason = self.risk_mgr.check_daily_limits(trades)
         self.assertFalse(allowed)
-        self.assertIn("Max daily loss reached", reason)
+        self.assertIn("Max daily portfolio loss reached", reason)
 
     def test_step_trailing_profit_lock_2k_and_3k(self):
         """

@@ -1127,7 +1127,8 @@ def render_settings_tab(trade_mgr, journal):
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-top:10px;">
         <div class="card-inset"><div class="label">CAPITAL</div><div class="kpi num">₹{CAPITAL:,}</div></div>
         <div class="card-inset"><div class="label">DAILY TARGET</div><div class="kpi num c-ce">₹{DAILY_TGT:,}</div></div>
-        <div class="card-inset"><div class="label">MAX DAILY LOSS</div><div class="kpi num c-pe">₹{MAX_LOSS:,}</div></div>
+        <div class="card-inset"><div class="label">MAX LOSS / INDEX</div><div class="kpi num c-pe">₹{MAX_LOSS:,}</div></div>
+        <div class="card-inset"><div class="label">PORTFOLIO MAX LOSS</div><div class="kpi num c-pe">₹{MAX_DAILY_LOSS:,}</div></div>
         <div class="card-inset"><div class="label">SL COOLDOWN</div><div class="kpi num">{COOLDOWN_SECONDS}s</div></div>
         <div class="card-inset"><div class="label">MARKET HOURS</div><div class="kpi-sm num" style="color:#ffffff;">{MARKET_OPEN_TIME} – {MARKET_CLOSE_TIME}</div></div>
         <div class="card-inset"><div class="label">AUTO SQUARE-OFF</div><div class="kpi-sm num c-amber">{AUTO_SQUARE_OFF_TIME}</div></div>
