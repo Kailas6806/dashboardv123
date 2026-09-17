@@ -389,46 +389,84 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):
-            now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-            trade_entry = {
-                "Entry Time": now_str, "Exit Time": None,
-                "Index": idx, "Signal": final_signal,
-                "Spot": round(spot, 2), "Strike": md["atm_actual"],
-                "Entry Price": ep, "Live Price": ep,
-                "Exit Price": None, "Stop Loss": sl_p,
-                "Target": tgt_p, "Qty": qty,
-                "Max Loss ₹": ml, "Target P&L ₹": tp,
-                "Actual P&L ₹": None, "Status": "OPEN",
-                "Result": "⏳ OPEN", "Confidence Score": conf_score,
-            }
-            st.session_state[tlog_key].insert(0, trade_entry)
-            trade_mgr.save_log(idx, st.session_state[tlog_key])
-            st.session_state[sk(idx, "last_signal")] = final_signal
 
-            # Record in journal
-            journal_id = journal.record_trade(trade_entry, {
-                "pcr": md["pcr"], "vwap": md["vwap_proxy"],
-                "oi_delta_ce": md["total_ce_delta"],
-                "oi_delta_pe": md["total_pe_delta"],
-                "confidence_score": conf_score,
-                "pcr_momentum": md["pcr_momentum"],
-                "trap": trap, "buffer_state": updated_buf[-3:],
-            })
-            trade_entry["_journal_id"] = journal_id
+            # ── AI PRE-TRADE VALIDATION (if auto-trade mode is ON) ──
+            ai_auto_on = st.session_state.get("ai_auto_trade", False)
+            ai_conviction_ok = True       # default: allow trade
+            ai_pre_score = conf_score     # fallback to rule-engine score
+            ai_pre_summary = "Rule engine signal"
+            if copilot and copilot.is_configured() and ai_auto_on:
+                from config import AI_MIN_CONVICTION
+                with st.spinner(f"🧠 AI validating {idx} {final_signal} signal before entry..."):
+                    ai_pre = copilot.analyze_market_and_signals(
+                        idx, md, final_signal, conf_score,
+                        active_trades_count=len([t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"])
+                    )
+                    st.session_state[sk(idx, "ai_analysis")] = ai_pre
+                    ai_pre_score = ai_pre.get("conviction_score", 0)
+                    ai_pre_rec   = ai_pre.get("recommendation", "AVOID_WAIT")
+                    ai_pre_summary = ai_pre.get("reasoning_summary", "")
+                    # Block only if conviction is LOW or AI says avoid
+                    if ai_pre_score < AI_MIN_CONVICTION or "BUY" not in ai_pre_rec:
+                        ai_conviction_ok = False
+                        st.warning(
+                            f"🤖 AI blocked {idx} trade — conviction {ai_pre_score}/100 "
+                            f"(need ≥{AI_MIN_CONVICTION}) | AI says: `{ai_pre_rec.replace('_',' ')}`"
+                        )
+                    else:
+                        st.success(
+                            f"🤖 AI approved {idx} {final_signal} — conviction **{ai_pre_score}/100** ✅"
+                        )
 
-            # Telegram alert
-            trade_mgr.notifier.send_signal_alert(
-                idx=idx, signal=final_signal,
-                strike=md["atm_actual"], spot=round(spot, 2),
-                entry=ep, sl=sl_p, tgt=tgt_p,
-                qty=qty, ml=ml, tp=tp,
-                conf=final_conf, score=conf_score,
-                time_str=now_str,
-            )
-            logger.info(
-                f"[{idx}] TRADE ENTERED: {final_signal} | Strike: {md['atm_actual']} | "
-                f"Entry: {ep} | SL: {sl_p} | Tgt: {tgt_p} | Conf: {final_conf} | Score: {conf_score}"
-            )
+            if not ai_conviction_ok:
+                # AI blocked — don't enter, but mark signal as seen so it doesn't loop
+                st.session_state[sk(idx, "last_signal")] = final_signal
+            else:
+                now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+                trade_entry = {
+                    "Entry Time": now_str, "Exit Time": None,
+                    "Index": idx, "Signal": final_signal,
+                    "Spot": round(spot, 2), "Strike": md["atm_actual"],
+                    "Entry Price": ep, "Live Price": ep,
+                    "Exit Price": None, "Stop Loss": sl_p,
+                    "Target": tgt_p, "Qty": qty,
+                    "Max Loss ₹": ml, "Target P&L ₹": tp,
+                    "Actual P&L ₹": None, "Status": "OPEN",
+                    "Result": "⏳ OPEN",
+                    "Confidence Score": ai_pre_score if ai_auto_on else conf_score,
+                }
+                st.session_state[tlog_key].insert(0, trade_entry)
+                trade_mgr.save_log(idx, st.session_state[tlog_key])
+                st.session_state[sk(idx, "last_signal")] = final_signal
+
+                # Record in journal
+                journal_id = journal.record_trade(trade_entry, {
+                    "pcr": md["pcr"], "vwap": md["vwap_proxy"],
+                    "oi_delta_ce": md["total_ce_delta"],
+                    "oi_delta_pe": md["total_pe_delta"],
+                    "confidence_score": ai_pre_score if ai_auto_on else conf_score,
+                    "pcr_momentum": md["pcr_momentum"],
+                    "trap": trap, "buffer_state": updated_buf[-3:],
+                    "ai_validated": ai_auto_on,
+                    "ai_reasoning": ai_pre_summary if ai_auto_on else "",
+                })
+                trade_entry["_journal_id"] = journal_id
+
+                # Telegram alert
+                signal_label = f"🤖 [AI✅] {final_signal}" if ai_auto_on else final_signal
+                trade_mgr.notifier.send_signal_alert(
+                    idx=idx, signal=signal_label,
+                    strike=md["atm_actual"], spot=round(spot, 2),
+                    entry=ep, sl=sl_p, tgt=tgt_p,
+                    qty=qty, ml=ml, tp=tp,
+                    conf=final_conf, score=ai_pre_score if ai_auto_on else conf_score,
+                    time_str=now_str,
+                )
+                logger.info(
+                    f"[{idx}] TRADE ENTERED: {final_signal} | Strike: {md['atm_actual']} | "
+                    f"Entry: {ep} | SL: {sl_p} | Tgt: {tgt_p} | Conf: {final_conf} | "
+                    f"AI-validated: {ai_auto_on} | AI-score: {ai_pre_score}"
+                )
 
         if final_signal != st.session_state[sk(idx, "last_played")]:
             st.markdown(
