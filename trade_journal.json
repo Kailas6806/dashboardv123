@@ -137,5 +137,29 @@
     },
     "recorded_at": "2026-09-11T13:31:29.222623+05:30",
     "updated_at": "2026-09-11T13:44:17.094730+05:30"
+  },
+  {
+    "trade_id": "NIFTY_20260917_151307",
+    "Entry Time": "03:13:07 PM",
+    "Exit Time": null,
+    "Index": "NIFTY",
+    "Signal": "BUY CE",
+    "Spot": 24500.0,
+    "Strike": 24500.0,
+    "Entry Price": 120.0,
+    "Live Price": 120.0,
+    "Exit Price": null,
+    "Stop Loss": 104.62,
+    "Target": 181.54,
+    "Qty": 65.0,
+    "Max Loss ₹": 999.7,
+    "Target P&L ₹": 4000.1,
+    "Actual P&L ₹": null,
+    "Status": "OPEN",
+    "Result": "⏳ OPEN",
+    "Confidence Score": null,
+    "signal_metadata": {},
+    "recorded_at": "2026-09-17T15:13:07+05:30",
+    "imported_from_csv": true
   }
 ]

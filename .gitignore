@@ -24,3 +24,7 @@ logs/
 
 # Trade journal persistence (tracked by Git for Streamlit Cloud persistence)
 # trade_journal.json
+
+# Local SQLite databases
+*.db
+.env

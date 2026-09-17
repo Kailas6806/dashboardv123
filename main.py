@@ -27,6 +27,7 @@ from ui.styles import get_styles
 from ui.renderer import (
     render_index, render_open_trades_tab,
     render_trade_history_tab, render_settings_tab,
+    render_ai_copilot_tab,
     init_state, load_log, sk,
 )
 from ui.components import (
@@ -36,6 +37,7 @@ from core.signal_engine import SignalEngine
 from core.risk_manager import RiskManager
 from core.data_fetcher import get_fetcher
 from core.trade_manager import TradeManager
+from core.ai_copilot import AICopilot
 from analytics.trade_journal import TradeJournal
 from analytics.dashboard import render_analytics_tab
 from notifications.telegram import TelegramNotifier
@@ -63,12 +65,15 @@ if "_trade_mgr" not in st.session_state:
     )
 if "_journal" not in st.session_state:
     st.session_state["_journal"] = TradeJournal()
+if "_copilot" not in st.session_state:
+    st.session_state["_copilot"] = AICopilot()
 
 signal_engine = st.session_state["_signal_engine"]
 risk_mgr      = st.session_state["_risk_mgr"]
 notifier      = st.session_state["_notifier"]
 trade_mgr     = st.session_state["_trade_mgr"]
 journal       = st.session_state["_journal"]
+copilot       = st.session_state["_copilot"]
 fetcher       = get_fetcher()
 
 # ── INITIALIZE PER-INDEX STATE ──
@@ -113,8 +118,8 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_history, tab_analytics, tab_settings = st.tabs([
-    open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
+tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_history, tab_analytics, tab_settings = st.tabs([
+    open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
 ])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
@@ -124,15 +129,15 @@ def show_open_trades():
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_nifty():
-    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_banknifty():
-    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_finnifty():
-    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 def show_analytics():
     render_analytics_tab(journal)
@@ -145,6 +150,8 @@ with tab_banknifty:
     show_banknifty()
 with tab_finnifty:
     show_finnifty()
+with tab_ai:
+    render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
 with tab_history:
     render_trade_history_tab(journal)
 with tab_analytics:

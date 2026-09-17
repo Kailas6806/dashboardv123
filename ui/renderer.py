@@ -61,7 +61,7 @@ def load_log(idx):
     return []
 
 
-def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
+def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot=None):
     """
     Render a full index tab (NIFTY / BANKNIFTY / FINNIFTY).
     Fetches data, generates signals, manages trades, renders UI.
@@ -254,6 +254,29 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
         oi_unusual=md.get("oi_unusual_activity", False),
         spot=spot, atm=md["atm_actual"]
     ), unsafe_allow_html=True)
+
+    # ── AI SIGNAL VALIDATION SNIPPET ──
+    if copilot and copilot.is_configured():
+        ai_res = st.session_state.get(sk(idx, "ai_analysis"))
+        with st.container():
+            col_ai_btn, col_ai_txt = st.columns([2, 5])
+            with col_ai_btn:
+                if st.button(f"🧠 AI VALIDATE {idx}", key=f"btn_quick_ai_{idx}", use_container_width=True):
+                    with st.spinner("NVIDIA Nemotron evaluating signal..."):
+                        ai_res = copilot.analyze_market_and_signals(
+                            idx, md, final_signal, conf_score,
+                            active_trades_count=len([t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"])
+                        )
+                        st.session_state[sk(idx, "ai_analysis")] = ai_res
+                        st.rerun()
+            with col_ai_txt:
+                if ai_res:
+                    rec = ai_res.get("recommendation", "AVOID_WAIT").replace("_", " ")
+                    conv = ai_res.get("conviction_score", 0)
+                    summary = ai_res.get("reasoning_summary", "")
+                    st.caption(f"🤖 **AI Verdict:** `{rec}` (Conviction: **{conv}/100**) — {summary[:120]}...")
+                else:
+                    st.caption("🤖 NVIDIA Nemotron 550B ready to validate option chain signals.")
 
     # ── RISK MANAGEMENT CARD ──
     # Show ATR SL info if we have enough history
@@ -523,7 +546,11 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
             else:
                 st.info("No open position. Waiting for signal...")
         with t2:
-            display_trades = list(st.session_state.get(tlog_key, []))
+            from analytics.db import TradeDB
+            _idx_db = TradeDB()
+            display_trades = _idx_db.get_all_trades(instrument=idx)
+            if not display_trades:
+                display_trades = list(st.session_state.get(tlog_key, []))
             if not display_trades and journal:
                 display_trades = [t for t in journal.get_all_trades() if t.get("Index") == idx]
             if display_trades:
@@ -731,25 +758,91 @@ def render_trade_history_tab(journal):
     """
     Renders dedicated Trade History with interactive filters:
     Timeframe, Instrument, Outcome, and Search query, plus Backup/Restore controls.
+    Backed by SQLite database (trades.db) for permanent persistence.
     """
-    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY</div>', unsafe_allow_html=True)
+    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY (SQLITE & JOURNAL)</div>', unsafe_allow_html=True)
 
-    all_trades = []
-    # 1. Gather all historical trades from persistent journal
-    if journal:
-        all_trades.extend(journal.get_all_trades())
+    from analytics.db import TradeDB
+    db = TradeDB()
 
-    # 2. Merge from active session state logs (avoiding duplicates)
+    # 1. Action Bar: Sync & Status
+    col_sync, col_status = st.columns([2, 5])
+    with col_sync:
+        if st.button("🔄 SYNC ALL TRADES TO SQLITE", key="btn_sync_db", use_container_width=True):
+            imported = db.sync_from_json_and_csv()
+            st.success(f"Synced {imported} trades into SQLite database!")
+            st.rerun()
+    with col_status:
+        st.caption("All trades are permanently stored in SQLite database (`trades.db`) and mirrored to JSON/CSV.")
+
+    # 2. Gather trades: Query SQLite directly
+    all_trades = db.get_all_trades()
+    if not all_trades and journal:
+        all_trades = journal.get_all_trades()
+
+    # Merge active session trades if not yet committed
     for idx in INDEX_CONFIG:
         for t in st.session_state.get(sk(idx, "trade_log"), []):
-            t_date = str(t.get("recorded_at") or datetime.datetime.now(IST).strftime("%Y-%m-%d"))[:10]
-            t_key = (t.get("Index"), t_date, t.get("Entry Time"), str(t.get("Strike")), t.get("Signal"))
+            t_id = t.get("trade_id") or t.get("_journal_id")
+            if t_id and any(at.get("trade_id") == t_id for at in all_trades):
+                continue
+            t_strike = str(int(float(t.get("Strike", 0)))) if t.get("Strike") else "0"
+            t_etime = str(t.get("Entry Time") or "")
+            t_idx = str(t.get("Index") or "").upper()
             exists = any(
-                (jt.get("Index"), str(jt.get("recorded_at") or "")[:10], jt.get("Entry Time"), str(jt.get("Strike")), jt.get("Signal")) == t_key
-                for jt in all_trades
+                (str(at.get("Index") or "").upper() == t_idx
+                 and str(at.get("Entry Time") or "") == t_etime
+                 and (str(int(float(at.get("Strike", 0)))) if at.get("Strike") else "0") == t_strike)
+                for at in all_trades
             )
             if not exists:
                 all_trades.append(t)
+                db.upsert_trade(t)
+
+    # ── Manual Record Trade Expander ──
+    with st.expander("➕ Manually Record Past Trade (e.g. from Zerodha / AngelOne / Groww)", expanded=False):
+        with st.form("form_manual_trade"):
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+            with f_col1:
+                m_date = st.date_input("Trade Date", value=datetime.date.today(), key="m_trade_date")
+                m_idx = st.selectbox("Instrument", list(INDEX_CONFIG.keys()), key="m_trade_idx")
+            with f_col2:
+                m_sig = st.selectbox("Signal", ["BUY CE", "BUY PE"], key="m_trade_sig")
+                m_strike = st.number_input("Strike", value=24500, step=50, key="m_trade_strike")
+            with f_col3:
+                m_ep = st.number_input("Entry Price (₹)", value=100.0, step=1.0, key="m_trade_ep")
+                m_xp = st.number_input("Exit Price (₹)", value=120.0, step=1.0, key="m_trade_xp")
+            with f_col4:
+                m_qty = st.number_input("Quantity", value=INDEX_CONFIG.get("NIFTY", {}).get("lot", 65), step=1, key="m_trade_qty")
+                m_submit = st.form_submit_button("💾 Save Trade to History", use_container_width=True)
+
+            if m_submit:
+                m_pnl = round((m_xp - m_ep) * m_qty, 2)
+                m_res = "🟢 WIN" if m_pnl > 0 else ("🔴 LOSS" if m_pnl < 0 else "🟡 BREAKEVEN")
+                now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+                manual_entry = {
+                    "trade_id": f"{m_idx}_{m_date.strftime('%Y%m%d')}_{datetime.datetime.now(IST).strftime('%H%M%S')}",
+                    "date": m_date.strftime("%Y-%m-%d"),
+                    "Entry Time": now_str,
+                    "Exit Time": now_str,
+                    "Index": m_idx,
+                    "Signal": m_sig,
+                    "Strike": m_strike,
+                    "Entry Price": m_ep,
+                    "Exit Price": m_xp,
+                    "Live Price": m_xp,
+                    "Qty": m_qty,
+                    "Actual P&L ₹": m_pnl,
+                    "Status": "CLOSED",
+                    "Result": m_res,
+                    "Confidence Score": 100,
+                    "_ai_reasoning": "Manual User Entry",
+                }
+                db.upsert_trade(manual_entry)
+                if journal:
+                    journal.record_trade(manual_entry)
+                st.success(f"Recorded {m_idx} {m_sig} {m_strike} (P&L: ₹{m_pnl:+,.0f}) to SQLite database!")
+                st.rerun()
 
     # ── Persistence & Backup Toolbar ──
     with st.expander("💾 Backup & Restore Trade History", expanded=False):
@@ -1042,3 +1135,255 @@ def render_settings_tab(trade_mgr, journal):
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal):
+    """
+    Renders the AI Copilot tab:
+    - Market reasoning and signal confirmation using NVIDIA Nemotron 550B
+    - Direct 1-Click AI Trade Execution
+    - Auto-Trade Mode toggle
+    - Live options telemetry & AI thinking inspector
+    """
+    import os
+    import json
+    from config import INDEX_CONFIG, AI_AUTO_TRADE_DEFAULT, NVIDIA_MODEL
+
+    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">⚡ NVIDIA NEMOTRON AI COPILOT & TRADE EXECUTION</div>', unsafe_allow_html=True)
+
+    if not copilot or not copilot.is_configured():
+        st.error("NVIDIA API Key not configured. Please add NVIDIA_API_KEY in config.py or environment variables.")
+        return
+
+    # Top Controls Bar: Index Selector & Auto-Trade Toggle
+    col_idx, col_toggle, col_model = st.columns([2, 3, 3])
+    with col_idx:
+        selected_idx = st.selectbox("Select Index", list(INDEX_CONFIG.keys()), key="ai_copilot_idx")
+    with col_toggle:
+        if "ai_auto_trade" not in st.session_state:
+            st.session_state["ai_auto_trade"] = AI_AUTO_TRADE_DEFAULT
+        auto_trade = st.toggle("⚡ Auto-Trade on High Conviction (>=75%)", value=st.session_state["ai_auto_trade"], key="toggle_ai_autotrade")
+        st.session_state["ai_auto_trade"] = auto_trade
+    with col_model:
+        st.markdown(f'<div style="padding-top:10px;"><span class="badge badge-ce">● NEMOTRON 550B ACTIVE</span> <span style="font-size:11px;color:#94a3b8;margin-left:8px;">{NVIDIA_MODEL}</span></div>', unsafe_allow_html=True)
+
+    # Fetch fresh or cached data for selected index
+    cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
+    d = None
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                d = json.load(f)
+        except Exception:
+            pass
+    if d is None:
+        with st.spinner(f"Fetching market data for {selected_idx}..."):
+            d = fetcher.fetch_option_chain(selected_idx)
+
+    if not d or "records" not in d or not d["records"].get("data"):
+        st.warning(f"Could not load option chain data for {selected_idx}. Market may be closed or offline.")
+        return
+
+    records = d["records"]["data"]
+    spot = d["records"].get("underlyingValue") or 0.0
+    cfg = INDEX_CONFIG[selected_idx]
+    step, rng = cfg["step"], cfg["rng"]
+    atm = round(spot / step) * step if step else 0
+
+    rows = []
+    for item in records:
+        s = item.get("strikePrice", 0)
+        if abs(s - atm) <= rng:
+            ce = item.get("CE") or {}
+            pe = item.get("PE") or {}
+            rows.append({
+                "Strike": s,
+                "CE LTP": ce.get("lastPrice", 0),
+                "CE OI": ce.get("openInterest", 0),
+                "PE LTP": pe.get("lastPrice", 0),
+                "PE OI": pe.get("openInterest", 0),
+            })
+    df = pd.DataFrame(rows).sort_values("Strike").reset_index(drop=True)
+
+    prev_df = st.session_state.get(sk(selected_idx, "prev_df"))
+    oi_baseline = st.session_state.get(sk(selected_idx, "oi_baseline"))
+    pcr_hist = st.session_state.get(sk(selected_idx, "pcr_history"), [])
+    spot_hist = st.session_state.get(sk(selected_idx, "spot_history"), [])
+
+    md = signal_engine.compute_market_data(
+        df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline
+    )
+
+    now_ist = datetime.datetime.now(IST)
+    in_window = MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME
+    signal, conf, filter_reason = signal_engine.generate_signal(md, in_window)
+    final_signal, final_conf, updated_buf = signal_engine.confirm_signal(
+        signal, conf, st.session_state.get(sk(selected_idx, "signal_buffer"), [])
+    )
+    conf_score = signal_engine.calculate_confidence(
+        md["pcr"], md["spot_vs_vwap"], md["oi_momentum_bullish"],
+        md["oi_momentum_bearish"], md["pcr_momentum"], final_signal,
+        spot, md["support"], md["resistance"], "NONE"
+    )
+
+    # 1. Telemetry Strip
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1.metric("Spot", f"₹{spot:,.1f}")
+    col2.metric("ATM Strike", str(md["atm_actual"]))
+    col3.metric("PCR", f"{md['pcr']:.2f}", delta=md["pcr_momentum"])
+    col4.metric("VWAP Proxy", f"₹{md['vwap_proxy']:,.1f}", delta=md["spot_vs_vwap"])
+    col5.metric("CE Δ vs PE Δ", f"{md['total_ce_delta']:,} / {md['total_pe_delta']:,}")
+    col6.metric("Rule Signal", final_signal, delta=f"{conf_score}/100")
+
+    st.markdown("<hr style='margin:12px 0;border-color:rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
+
+    # 2. Trigger AI Analysis
+    col_act, col_info = st.columns([2, 5])
+    with col_act:
+        run_ai = st.button("🧠 RUN AI SIGNAL ANALYSIS", key=f"btn_run_ai_{selected_idx}", use_container_width=True)
+    with col_info:
+        active_analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
+        if active_analysis and "timestamp" in active_analysis:
+            st.caption(f"Last AI analysis generated at: {active_analysis['timestamp']}")
+        else:
+            st.caption("Click to trigger Nemotron 550B reasoning on live option chain structure.")
+
+    tlog_key = sk(selected_idx, "trade_log")
+    if tlog_key not in st.session_state:
+        st.session_state[tlog_key] = []
+    tlog = st.session_state[tlog_key]
+    open_trades_count = len([t for t in tlog if t.get("Status") == "OPEN"])
+
+    if run_ai:
+        with st.spinner(f"NVIDIA Nemotron 550B is analyzing {selected_idx} market mechanics..."):
+            analysis = copilot.analyze_market_and_signals(
+                selected_idx, md, final_signal, conf_score, active_trades_count=open_trades_count
+            )
+            st.session_state[sk(selected_idx, "ai_analysis")] = analysis
+            st.rerun()
+
+    analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
+    if not analysis:
+        st.info("No analysis generated yet for this session. Click 'RUN AI SIGNAL ANALYSIS' above to begin.")
+        return
+
+    # 3. Render AI Verdict Card
+    bias = analysis.get("market_bias", "UNKNOWN")
+    rec = analysis.get("recommendation", "AVOID_WAIT")
+    conviction = analysis.get("conviction_score", 0)
+    summary = analysis.get("reasoning_summary", "")
+    key_factors = analysis.get("key_factors", [])
+    risk_warn = analysis.get("risk_warning", "")
+    thinking = analysis.get("reasoning_content", "")
+
+    bias_color = "#10b981" if "BULL" in bias else ("#ef4444" if "BEAR" in bias else "#f59e0b")
+    rec_color = "#10b981" if "BUY_CE" in rec else ("#ef4444" if "BUY_PE" in rec else "#64748b")
+
+    st.markdown(f"""
+    <div class="card" style="padding:18px;margin-top:10px;border-left:4px solid {rec_color};">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div>
+          <span style="font-size:11px;color:#94a3b8;letter-spacing:0.05em;text-transform:uppercase;">AI Conviction Verdict</span>
+          <div style="font-size:20px;font-weight:800;color:{rec_color};margin-top:2px;">{rec.replace('_', ' ')}</div>
+        </div>
+        <div style="text-align:right;">
+          <span style="font-size:11px;color:#94a3b8;">MARKET BIAS</span>
+          <div style="font-size:16px;font-weight:700;color:{bias_color};">{bias}</div>
+        </div>
+        <div style="text-align:right;">
+          <span style="font-size:11px;color:#94a3b8;">CONVICTION SCORE</span>
+          <div style="font-size:20px;font-weight:800;color:#38bdf8;">{conviction}/100</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;font-size:14px;line-height:1.5;color:#e2e8f0;background:rgba(255,255,255,0.03);padding:12px 14px;border-radius:6px;">
+        <b>Executive Summary:</b> {summary}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_factors, col_action = st.columns([3, 2])
+    with col_factors:
+        st.markdown("<div class='card' style='padding:16px;margin-top:12px;'>", unsafe_allow_html=True)
+        st.markdown("<div class='label'>KEY DRIVING FACTORS</div>", unsafe_allow_html=True)
+        if key_factors:
+            for kf in key_factors:
+                st.markdown(f"<div style='font-size:13px;color:#cbd5e1;margin-bottom:6px;'>• {kf}</div>", unsafe_allow_html=True)
+        if risk_warn:
+            st.markdown(f"<div style='font-size:12px;color:#f87171;margin-top:10px;'>⚠️ <b>Risk:</b> {risk_warn}</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if thinking:
+            with st.expander("🔍 Inspect Deep Reasoning (Nemotron Thinking Trace)"):
+                st.markdown(f"<div style='font-size:12px;font-family:monospace;white-space:pre-wrap;color:#94a3b8;'>{thinking}</div>", unsafe_allow_html=True)
+
+    with col_action:
+        # 4. Interactive Trade Execution
+        st.markdown("<div class='card' style='padding:16px;margin-top:12px;'>", unsafe_allow_html=True)
+        st.markdown("<div class='label'>AI TRADE EXECUTION</div>", unsafe_allow_html=True)
+
+        atm_row = md.get("atm_row", {})
+        ce_price = float(atm_row.get("CE LTP", 0)) if hasattr(atm_row, "get") else 0.0
+        pe_price = float(atm_row.get("PE LTP", 0)) if hasattr(atm_row, "get") else 0.0
+        lot = cfg["lot"]
+
+        if "BUY_CE" in rec:
+            exec_signal = "BUY CE"
+            ep = ce_price
+        elif "BUY_PE" in rec:
+            exec_signal = "BUY PE"
+            ep = pe_price
+        else:
+            exec_signal = "BUY CE" if final_signal == "BUY CE" else ("BUY PE" if final_signal == "BUY PE" else None)
+            ep = ce_price if exec_signal == "BUY CE" else pe_price
+
+        if exec_signal and ep > 0:
+            qty, sl_p, tgt_p, ml, tp = risk_mgr.calc_trade_with_atr(ep, lot, md["spot_history"])
+            st.markdown(f"""
+            <div style="font-size:13px;color:#cbd5e1;line-height:1.7;">
+              <b>Signal:</b> <span class="{'c-ce' if 'CE' in exec_signal else 'c-pe'}">{exec_signal}</span><br>
+              <b>Strike:</b> {md['atm_actual']} | <b>Premium:</b> ₹{ep:.2f}<br>
+              <b>SL:</b> ₹{sl_p:.2f} | <b>Target:</b> ₹{tgt_p:.2f}<br>
+              <b>Qty:</b> {qty} | <b>Max Loss:</b> ₹{ml:,} | <b>Target P&L:</b> ₹{tp:,}
+            </div>
+            """, unsafe_allow_html=True)
+
+            btn_label = f"⚡ TAKE AI TRADE ({exec_signal})"
+            if st.button(btn_label, key=f"btn_take_trade_{selected_idx}", use_container_width=True):
+                ok, trade_entry, msg = copilot.take_trade(
+                    selected_idx, exec_signal, md, trade_mgr, risk_mgr, journal, tlog,
+                    ai_conviction=conviction, ai_reasoning=summary, force=True
+                )
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        else:
+            st.info("AI recommends holding or waiting. No trade suggested right now.")
+            # Manual trade override buttons
+            c_ce, c_pe = st.columns(2)
+            with c_ce:
+                if st.button("BUY ATM CE", key=f"btn_force_ce_{selected_idx}", use_container_width=True):
+                    ok, trade_entry, msg = copilot.take_trade(
+                        selected_idx, "BUY CE", md, trade_mgr, risk_mgr, journal, tlog,
+                        ai_conviction=conviction, ai_reasoning="Manual 1-Click Execution", force=True
+                    )
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with c_pe:
+                if st.button("BUY ATM PE", key=f"btn_force_pe_{selected_idx}", use_container_width=True):
+                    ok, trade_entry, msg = copilot.take_trade(
+                        selected_idx, "BUY PE", md, trade_mgr, risk_mgr, journal, tlog,
+                        ai_conviction=conviction, ai_reasoning="Manual 1-Click Execution", force=True
+                    )
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+

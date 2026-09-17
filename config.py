@@ -113,3 +113,18 @@ CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 FRAGMENT_REFRESH_SECONDS = 1   # @st.fragment(run_every=N)
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)
+
+# ── NVIDIA AI COPILOT ──
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets") and "NVIDIA_API_KEY" in _st.secrets:
+        NVIDIA_API_KEY = _st.secrets["NVIDIA_API_KEY"]
+except Exception:
+    pass
+
+NVIDIA_BASE_URL         = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL            = "nvidia/nemotron-3-ultra-550b-a55b"
+AI_AUTO_TRADE_DEFAULT   = False
+AI_MIN_CONVICTION       = 75   # Minimum conviction score (0-100) to recommend/execute trade
+

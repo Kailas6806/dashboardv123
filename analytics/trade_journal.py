@@ -50,6 +50,12 @@ class TradeJournal:
         self.journal_path: str = journal_path or JOURNAL_FILE
         self.trades: List[Dict[str, Any]] = []
         self._load_failed = False
+        self.db = None
+        try:
+            from analytics.db import TradeDB
+            self.db = TradeDB()
+        except Exception as e:
+            logger.warning("TradeDB init in TradeJournal: %s", e)
         self._load()
         if not self._load_failed and (journal_path is None or journal_path == JOURNAL_FILE):
             self._import_from_csv()
@@ -159,6 +165,11 @@ class TradeJournal:
 
             self.trades.append(entry)
             self._save()
+            if self.db:
+                try:
+                    self.db.upsert_trade(entry, signal_metadata)
+                except Exception as e:
+                    logger.warning("TradeDB upsert error: %s", e)
             logger.info("Recorded trade %s", trade_id)
             return trade_id
         finally:
@@ -189,6 +200,11 @@ class TradeJournal:
                             entry[key] = value
                         entry["updated_at"] = datetime.now(tz=IST).isoformat()
                         self._save()
+                        if self.db:
+                            try:
+                                self.db.update_trade_exit(trade_id, exit_data, trade_dict)
+                            except Exception as e:
+                                logger.warning("TradeDB update exit error: %s", e)
                         logger.info("Updated trade %s with exit data", trade_id)
                         return True
 
@@ -219,8 +235,21 @@ class TradeJournal:
                         entry[key] = value
                     entry["updated_at"] = datetime.now(tz=IST).isoformat()
                     self._save()
+                    if self.db:
+                        try:
+                            self.db.update_trade_exit(entry.get("trade_id", ""), exit_data, trade_dict)
+                        except Exception as e:
+                            logger.warning("TradeDB fallback update exit error: %s", e)
                     logger.info("Updated trade by fields (Index=%s, EntryTime=%s) with exit data", idx, etime)
                     return True
+
+            if self.db and (trade_id or trade_dict):
+                try:
+                    ok = self.db.update_trade_exit(trade_id, exit_data, trade_dict)
+                    if ok:
+                        return True
+                except Exception as e:
+                    logger.warning("TradeDB direct update exit error: %s", e)
 
             logger.warning("Trade %s not found for update", trade_id)
             return False
@@ -228,8 +257,15 @@ class TradeJournal:
             self._lock.release()
 
     def get_all_trades(self) -> List[Dict[str, Any]]:
-        """Return a copy of every trade in the journal."""
+        """Return a copy of every trade in the journal (preferring SQLite DB)."""
         with self._lock:
+            if self.db:
+                try:
+                    db_trades = self.db.get_all_trades()
+                    if db_trades:
+                        return db_trades
+                except Exception as e:
+                    logger.warning("TradeDB get_all_trades error: %s", e)
             self._load()
             return list(self.trades)
 
