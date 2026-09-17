@@ -1,6 +1,6 @@
 """
 V12 PRO MAX — Risk Manager
-Position sizing, fixed stop-loss (₹1000), cooldown, and daily loss limits.
+Position sizing, fixed stop-loss (₹2,000), cooldown, and daily loss limits.
 IMPORTANT: qty is ALWAYS = lot (1 lot only, no dynamic scaling).
 """
 import datetime
@@ -46,7 +46,7 @@ class RiskManager:
     """Manages risk calculations for trade entry, fixed SL, and cooldowns.
 
     Design principle: qty is ALWAYS = lot (1 lot only). No dynamic
-    position sizing. SL is fixed at ₹1000 (MAX_LOSS). No trailing stop.
+    position sizing. SL is fixed at ₹2,000 (MAX_LOSS). No trailing stop.
     """
 
     # ──────────────────────────────────────────────

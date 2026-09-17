@@ -290,7 +290,7 @@ Respond strictly in valid JSON with this exact schema:
             today_str = now.strftime("%Y-%m-%d")
             closed_today = 0
             if journal:
-                closed_today = len(journal.get_trades_by_date(today_str))
+                closed_today = len(journal.get_trades_for_date(today_str))
             open_count = len([t for t in tlog if t.get("Status") == "OPEN"])
             if (closed_today + open_count) >= MAX_DAILY_TRADES:
                 return False, None, f"Blocked: Daily max trades limit ({MAX_DAILY_TRADES}) reached"
