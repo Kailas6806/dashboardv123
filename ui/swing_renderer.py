@@ -173,29 +173,36 @@ def render_swing_tab(copilot, notifier):
                 st.markdown("---")
                 if st.button("📲 Generate & Send A+/A Picks via Telegram Copilot"):
                     with st.spinner("Copilot is drafting the message..."):
-                        aplus_data = aplus_picks.to_dict('records')
-                        draft = copilot.draft_swing_message(aplus_data)
-                        if draft:
-                            # Send the main text message first
-                            notifier.send(draft)
-                            
-                            # Generate and send chart for each stock
-                            from core.swing_manager import get_data, add_indicators
-                            for _, p in aplus_picks.iterrows():
-                                try:
-                                    df_chart = get_data(p['Symbol'], days=300)
-                                    df_chart = add_indicators(df_chart).tail(90)
-                                    fig = create_swing_chart(p['Symbol'], p, df_chart)
-                                    # Convert to image bytes
-                                    img_bytes = fig.to_image(format="png", engine="kaleido", width=1000, height=800)
-                                    notifier.send_photo(img_bytes, caption=f"📊 {p['Symbol']} Chart")
-                                except Exception as e:
-                                    st.error(f"Failed to generate chart for {p['Symbol']}: {e}")
-                            
-                            st.success("✅ Telegram message and charts sent successfully!")
-                            st.markdown("### Preview of sent message:")
-                            st.info(draft)
-                        else:
-                            st.error("Failed to generate message.")
+                        # Generate and send chart and message for each stock
+                        from core.swing_manager import get_data, add_indicators
+                        
+                        success_count = 0
+                        for _, p in aplus_picks.iterrows():
+                            try:
+                                # Generate single-stock message
+                                single_data = [p.to_dict()]
+                                draft = copilot.draft_swing_message(single_data)
+                                
+                                # Generate chart
+                                df_chart = get_data(p['Symbol'], days=300)
+                                df_chart = add_indicators(df_chart).tail(90)
+                                fig = create_swing_chart(p['Symbol'], p, df_chart)
+                                
+                                # Convert to image bytes
+                                img_bytes = fig.to_image(format="png", engine="kaleido", width=1000, height=800)
+                                
+                                # Send photo with the AI message as the caption
+                                notifier.send_photo(img_bytes, caption=draft)
+                                success_count += 1
+                                
+                                # Show preview in UI
+                                st.markdown(f"**Preview sent for {p['Symbol']}:**")
+                                st.info(draft)
+                                
+                            except Exception as e:
+                                st.error(f"Failed to generate and send alert for {p['Symbol']}: {e}")
+                                
+                        if success_count > 0:
+                            st.success(f"✅ {success_count} Telegram alerts and charts sent successfully!")
         else:
             st.info("No stocks matched the Top Pick criteria (Score >= 8) today.")

@@ -255,10 +255,10 @@ Respond strictly in valid JSON with this exact schema:
             
         prompt = (
             "You are an expert swing trading assistant. I have scanned the market and found "
-            "these top A+ and A rated stocks. Draft a short, energetic, and professional Telegram alert "
-            "message for my subscribers to share these picks.\n\n"
+            "the following top-rated stock setup(s). Draft a short, energetic, and professional Telegram alert "
+            "message to share with my subscribers as a photo caption.\n\n"
             "Include the Symbol, Grade, Entry Price, Stop Loss, Target 1, Target 2, and a brief note on why based on the signals.\n"
-            "Use emojis appropriately. Keep it concise.\n\n"
+            "Use emojis appropriately. Keep it very concise since it will be an image caption.\n\n"
             f"Data: {json.dumps(picks_data, indent=2)}"
         )
         
