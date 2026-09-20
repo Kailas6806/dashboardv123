@@ -189,7 +189,16 @@ def render_swing_tab(copilot, notifier):
                                 fig = create_swing_chart(p['Symbol'], p, df_chart)
                                 
                                 # Convert to image bytes
-                                img_bytes = fig.to_image(format="png", width=1000, height=800)
+                                try:
+                                    img_bytes = fig.to_image(format="png", width=1000, height=800)
+                                except Exception as img_e:
+                                    if "Google Chrome" in str(img_e) or "plotly_get_chrome" in str(img_e):
+                                        import subprocess
+                                        st.warning("First-time setup: Downloading Chromium for chart generation... Please wait a minute and do not refresh.")
+                                        subprocess.run(["plotly_get_chrome"], check=True)
+                                        img_bytes = fig.to_image(format="png", width=1000, height=800)
+                                    else:
+                                        raise img_e
                                 
                                 # Send photo with the AI message as the caption
                                 notifier.send_photo(img_bytes, caption=draft)
