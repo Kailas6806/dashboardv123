@@ -248,6 +248,14 @@ class TelegramNotifier:
                 if resp.status_code == 200:
                     log.debug("Telegram message sent (attempt %d)", attempt)
                     return
+                elif resp.status_code == 429:
+                    try:
+                        retry_after = resp.json().get("parameters", {}).get("retry_after", 2)
+                    except Exception:
+                        retry_after = 2
+                    log.warning("Telegram 429 Rate Limited. Sleeping for %s seconds.", retry_after)
+                    time.sleep(retry_after)
+                    continue
                 log.warning(
                     "Telegram API error %s on attempt %d: %s",
                     resp.status_code,
@@ -289,6 +297,14 @@ class TelegramNotifier:
                 if resp.status_code == 200:
                     log.debug("Telegram photo sent (attempt %d)", attempt)
                     return
+                elif resp.status_code == 429:
+                    try:
+                        retry_after = resp.json().get("parameters", {}).get("retry_after", 2)
+                    except Exception:
+                        retry_after = 2
+                    log.warning("Telegram 429 Rate Limited. Sleeping for %s seconds.", retry_after)
+                    time.sleep(retry_after)
+                    continue
                 log.warning("Telegram API error %s on attempt %d: %s", resp.status_code, attempt, resp.text[:200])
             except requests.RequestException as exc:
                 log.warning("Telegram request failed (attempt %d): %s", attempt, exc)
