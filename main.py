@@ -84,7 +84,7 @@ for idx in INDEX_CONFIG:
 
 # ── COMPUTE TICKER & MARKET STATUS ──
 now_ist = datetime.datetime.now(IST)
-market_open = MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME
+market_open = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
 datetime_str = now_ist.strftime("%d %b %Y | %I:%M %p")
 
 ticker_items = []
@@ -118,8 +118,8 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_history, tab_analytics, tab_settings = st.tabs([
-    open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
+tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_history, tab_analytics, tab_settings = st.tabs([
+    open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
 ])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
@@ -144,6 +144,9 @@ def show_analytics():
 
 with tab_open:
     show_open_trades()
+with tab_swing:
+    from ui.swing_renderer import render_swing_tab
+    render_swing_tab()
 with tab_nifty:
     show_nifty()
 with tab_banknifty:

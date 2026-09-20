@@ -14,7 +14,7 @@ MAX_LOSS               = 2000      # Max loss per trade / per index (₹2,000 ma
 MAX_INDEX_DAILY_LOSS   = 2000      # Max cumulative daily loss per index (₹2,000 per index)
 MAX_DAILY_LOSS         = 6000      # Max cumulative daily loss across portfolio (3 indices x ₹2,000 = ₹6,000)
 DAILY_TGT              = 4000      # Target profit per trade (₹4,000 max profit exit)
-MAX_DAILY_TRADES       = 3         # Strict limit: max 3 trades per day (3 x ₹2,000 = ₹6,000 total loss)
+MAX_DAILY_TRADES       = 10        # Strict limit: max 10 trades per day
 PROFIT_LOCK_START      = 2000      # When trade reaches +₹2,000, lock SL at +₹2,000
 PROFIT_LOCK_STEP       = 1000      # Increase SL lock by ₹1,000 for each ₹1,000 gain (e.g. 2k -> 3k)
 MAX_PROFIT_EXIT        = 4000      # When trade reaches +₹4,000, exit immediately to take profit

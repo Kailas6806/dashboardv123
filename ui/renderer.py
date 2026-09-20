@@ -78,7 +78,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     import os
     now_ist = datetime.datetime.now(IST)
     now_time = now_ist.time()
-    in_window = MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME
+    in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
     cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
 
     data = None
@@ -156,7 +156,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     # ── FILTERS ──
     now_ist = datetime.datetime.now(IST)
     now_time = now_ist.time()
-    in_window = MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME
+    in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
 
     # ── GENERATE SIGNAL (VERBATIM core logic) ──
     signal, confidence, filter_reason = signal_engine.generate_signal(md, in_window)
@@ -637,7 +637,7 @@ def render_open_trades_tab(trade_mgr, fetcher):
             import json
             now = datetime.datetime.now(IST)
             now_time = now.time()
-            in_window = MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME
+            in_window = (now.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
             cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
 
             d = None
@@ -1285,7 +1285,9 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     with col_toggle:
         if "ai_auto_trade" not in st.session_state:
             st.session_state["ai_auto_trade"] = AI_AUTO_TRADE_DEFAULT
-        auto_trade = st.toggle("⚡ Auto-Trade on High Conviction (>=75%)", value=st.session_state["ai_auto_trade"], key="toggle_ai_autotrade")
+        if "toggle_ai_autotrade" not in st.session_state:
+            st.session_state["toggle_ai_autotrade"] = st.session_state["ai_auto_trade"]
+        auto_trade = st.toggle("⚡ Auto-Trade on High Conviction (>=75%)", key="toggle_ai_autotrade")
         st.session_state["ai_auto_trade"] = auto_trade
     with col_model:
         st.markdown(f'<div style="padding-top:10px;"><span class="badge badge-ce">● NEMOTRON 550B ACTIVE</span> <span style="font-size:11px;color:#94a3b8;margin-left:8px;">{NVIDIA_MODEL}</span></div>', unsafe_allow_html=True)
@@ -1338,7 +1340,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     )
 
     now_ist = datetime.datetime.now(IST)
-    in_window = MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME
+    in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
     signal, conf, filter_reason = signal_engine.generate_signal(md, in_window)
     final_signal, final_conf, updated_buf = signal_engine.confirm_signal(
         signal, conf, st.session_state.get(sk(selected_idx, "signal_buffer"), [])
