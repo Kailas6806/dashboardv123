@@ -127,10 +127,12 @@ def master_swing_scanner(symbols):
                 elif bb_pos > 0.8: score+=1; signals.append("BB Upper")
             
             # Risk Reward
-            stop   = latest['CLOSE'] - (2 * latest['ATR'])
-            target = latest['CLOSE'] + (4 * latest['ATR'])
+            stop     = latest['CLOSE'] - (2 * latest['ATR'])
+            target_1 = latest['CLOSE'] + (2 * latest['ATR'])  # 1:1 RR
+            target_2 = latest['CLOSE'] + (4 * latest['ATR'])  # 1:2 RR
+            
             risk   = latest['CLOSE'] - stop
-            reward = target - latest['CLOSE']
+            reward = target_2 - latest['CLOSE']
             rr     = reward / risk if risk > 0 else 0
             
             # Grade
@@ -148,7 +150,9 @@ def master_swing_scanner(symbols):
                 'RSI'       : round(latest['RSI'], 1),
                 'Vol_Ratio' : round(latest['Vol_Rat'], 2),
                 'Stop_Loss' : round(stop, 2),
-                'Target'    : round(target, 2),
+                'Target_1'  : round(target_1, 2),
+                'Target_2'  : round(target_2, 2),
+                'Target'    : round(target_2, 2),
                 'R:R'       : round(rr, 2),
                 'Signals'   : ' | '.join(signals[:4])
             })
@@ -163,6 +167,8 @@ def master_swing_scanner(symbols):
                 'RSI'       : 0,
                 'Vol_Ratio' : 0,
                 'Stop_Loss' : 0,
+                'Target_1'  : 0,
+                'Target_2'  : 0,
                 'Target'    : 0,
                 'R:R'       : 0,
                 'Signals'   : str(e)[:30]

@@ -7,3 +7,4 @@ jugaad-data
 lxml
 brotli
 openai>=1.0.0
+kaleido

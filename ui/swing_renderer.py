@@ -3,6 +3,67 @@ import pandas as pd
 from core.swing_manager import master_swing_scanner, calculate_risk_management
 from config import CAPITAL
 
+def create_swing_chart(symbol, row, df_chart):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                        row_heights=[0.7, 0.3], vertical_spacing=0.03)
+    
+    # Candlestick
+    fig.add_trace(go.Candlestick(
+        x=df_chart['DATE'], open=df_chart['OPEN'], high=df_chart['HIGH'],
+        low=df_chart['LOW'], close=df_chart['CLOSE'], name="Candlestick",
+        increasing_line_color='#22c55e', decreasing_line_color='#ef4444'
+    ), row=1, col=1)
+    
+    # EMA 21 (Supertrend proxy)
+    fig.add_trace(go.Scatter(
+        x=df_chart['DATE'], y=df_chart['EMA_21'], 
+        line=dict(color='#22c55e', width=1.5), name="EMA 21"
+    ), row=1, col=1)
+    
+    # Target and Stop Loss lines
+    fig.add_hline(y=row['Target_1'], line_dash="dash", line_color="#22c55e", 
+                  annotation_text=f"Target 1: ₹{row['Target_1']}", annotation_position="top right", row=1, col=1)
+    fig.add_hline(y=row['Target_2'], line_dash="dot", line_color="#22c55e", 
+                  annotation_text=f"Target 2: ₹{row['Target_2']}", annotation_position="top right", row=1, col=1)
+    fig.add_hline(y=row['Stop_Loss'], line_dash="dash", line_color="#ef4444", 
+                  annotation_text=f"Stop Loss: ₹{row['Stop_Loss']}", annotation_position="bottom right", row=1, col=1)
+    
+    # Volume
+    colors = ['#06b6d4' if c >= o else '#525252' for c, o in zip(df_chart['CLOSE'], df_chart['OPEN'])]
+    fig.add_trace(go.Bar(
+        x=df_chart['DATE'], y=df_chart['VOLUME'], marker_color=colors, name="Volume"
+    ), row=2, col=1)
+    
+    # High Volume Marker
+    high_vol_mask = df_chart['Vol_Rat'] > 1.5
+    if high_vol_mask.any():
+        high_vol_df = df_chart[high_vol_mask]
+        fig.add_trace(go.Scatter(
+            x=high_vol_df['DATE'], y=high_vol_df['VOLUME'], mode='markers',
+            marker=dict(symbol='x', size=8, color='#d946ef', line=dict(width=2, color='#d946ef')),
+            name="High Volume Marker"
+        ), row=2, col=1)
+        
+    title_text = f"🎯 {symbol} | Swing Trade Analysis | Close: ₹{row['Close']} | RSI: {row['RSI']} | ATR: ₹{round(df_chart.iloc[-1]['ATR'], 2)}"
+    
+    fig.update_layout(
+        title=title_text,
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=60, b=20),
+        plot_bgcolor="#111111",
+        paper_bgcolor="#111111"
+    )
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="Volume", row=2, col=1)
+    
+    return fig
+
 def render_swing_tab(copilot, notifier):
     st.markdown('<div class="card-inset"><h2 style="color:#38bdf8;">📈 SWING TRADING SCANNER (CASH MARKET)</h2></div>', unsafe_allow_html=True)
     
@@ -68,8 +129,8 @@ def render_swing_tab(copilot, notifier):
                     with col_info:
                         st.markdown(f"**Entry Price:** ₹{row['Close']}")
                         st.markdown(f"**Stop Loss:** ₹{row['Stop_Loss']}")
-                        st.markdown(f"**Target:** ₹{row['Target']}")
-                        st.markdown(f"**R:R Ratio:** {row['R:R']}x")
+                        st.markdown(f"**TGT 1:** ₹{row['Target_1']} | **TGT 2:** ₹{row['Target_2']}")
+                        st.markdown(f"**R:R Ratio:** {row['R:R']}x (based on TGT 2)")
                         st.markdown(f"**Signals:** {row['Signals']}")
                     
                     with col_risk:
@@ -97,26 +158,10 @@ def render_swing_tab(copilot, notifier):
                     st.markdown("---")
                     if st.button(f"📊 View Chart for {row['Symbol']}", key=f"chart_btn_{row['Symbol']}"):
                         try:
-                            import plotly.graph_objects as go
                             from core.swing_manager import get_data
                             # Use the cached 300 days but display the last 90 days
                             df_chart = get_data(row['Symbol'], days=300).tail(90)
-                            fig = go.Figure(data=[go.Candlestick(
-                                x=df_chart['DATE'],
-                                open=df_chart['OPEN'],
-                                high=df_chart['HIGH'],
-                                low=df_chart['LOW'],
-                                close=df_chart['CLOSE'],
-                                name="Candlestick"
-                            )])
-                            fig.update_layout(
-                                title=f"{row['Symbol']} Daily Chart (Last 90 Days)",
-                                yaxis_title="Price (₹)",
-                                xaxis_title="Date",
-                                template="plotly_dark",
-                                xaxis_rangeslider_visible=False,
-                                margin=dict(l=20, r=20, t=40, b=20)
-                            )
+                            fig = create_swing_chart(row['Symbol'], row, df_chart)
                             st.plotly_chart(fig, use_container_width=True)
                         except Exception as e:
                             st.error(f"Failed to load chart: {e}")
@@ -130,8 +175,22 @@ def render_swing_tab(copilot, notifier):
                         aplus_data = aplus_picks.to_dict('records')
                         draft = copilot.draft_swing_message(aplus_data)
                         if draft:
+                            # Send the main text message first
                             notifier.send(draft)
-                            st.success("✅ Telegram message sent successfully!")
+                            
+                            # Generate and send chart for each stock
+                            from core.swing_manager import get_data
+                            for _, p in aplus_picks.iterrows():
+                                try:
+                                    df_chart = get_data(p['Symbol'], days=300).tail(90)
+                                    fig = create_swing_chart(p['Symbol'], p, df_chart)
+                                    # Convert to image bytes
+                                    img_bytes = fig.to_image(format="png", engine="kaleido", width=1000, height=800)
+                                    notifier.send_photo(img_bytes, caption=f"📊 {p['Symbol']} Chart")
+                                except Exception as e:
+                                    st.error(f"Failed to generate chart for {p['Symbol']}: {e}")
+                            
+                            st.success("✅ Telegram message and charts sent successfully!")
                             st.markdown("### Preview of sent message:")
                             st.info(draft)
                         else:

@@ -202,10 +202,15 @@ class TelegramNotifier:
     def _send_worker(self) -> None:
         """Background thread: pull messages from queue and send them."""
         while True:
-            msg, parse_mode = self._queue.get()
+            item = self._queue.get()
             try:
                 self._wait_for_rate_limit()
-                self._do_send(msg, parse_mode)
+                if len(item) == 2:
+                    msg, parse_mode = item
+                    self._do_send(msg, parse_mode)
+                elif len(item) == 3:
+                    caption, parse_mode, photo_bytes = item
+                    self._do_send_photo(caption, parse_mode, photo_bytes)
             except Exception as e:
                 log.error("Background send failed: %s", e)
             finally:
@@ -258,3 +263,38 @@ class TelegramNotifier:
                 time.sleep(backoff)
 
         log.error("Telegram send failed after %d attempts — message dropped", TELEGRAM_MAX_RETRIES)
+
+    def send_photo(self, photo_bytes: bytes, caption: str = "", parse_mode: str = "Markdown") -> None:
+        """Enqueue a photo for background delivery."""
+        if not self._enabled:
+            return
+        self._ensure_worker_alive()
+        self._queue.put((caption, parse_mode, photo_bytes))
+
+    def _do_send_photo(self, caption: str, parse_mode: str, photo_bytes: bytes) -> None:
+        """POST photo to Telegram Bot API with retry."""
+        url = f"https://api.telegram.org/bot{self._token}/sendPhoto"
+        data = {
+            "chat_id": self._chat_id,
+            "caption": caption,
+            "parse_mode": parse_mode,
+        }
+        files = {
+            "photo": ("chart.png", photo_bytes, "image/png")
+        }
+
+        for attempt in range(1, TELEGRAM_MAX_RETRIES + 1):
+            try:
+                resp = requests.post(url, data=data, files=files, timeout=30)
+                if resp.status_code == 200:
+                    log.debug("Telegram photo sent (attempt %d)", attempt)
+                    return
+                log.warning("Telegram API error %s on attempt %d: %s", resp.status_code, attempt, resp.text[:200])
+            except requests.RequestException as exc:
+                log.warning("Telegram request failed (attempt %d): %s", attempt, exc)
+
+            if attempt < TELEGRAM_MAX_RETRIES:
+                backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                time.sleep(backoff)
+
+        log.error("Telegram photo send failed after %d attempts", TELEGRAM_MAX_RETRIES)
