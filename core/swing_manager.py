@@ -33,54 +33,57 @@ def get_data(symbol: str, days: int = 300) -> pd.DataFrame:
     except Exception as e:
         raise Exception(f"Failed to fetch data for {symbol}: {e}")
 
+def add_indicators(df):
+    """Calculate and append technical indicators to the dataframe."""
+    df = df.copy()
+    # EMA
+    df['EMA_9']  = df['CLOSE'].ewm(span=9, adjust=False).mean()
+    df['EMA_21'] = df['CLOSE'].ewm(span=21, adjust=False).mean()
+    df['EMA_50'] = df['CLOSE'].ewm(span=50, adjust=False).mean()
+    df['EMA_200']= df['CLOSE'].ewm(span=200, adjust=False).mean()
+    
+    # RSI
+    delta = df['CLOSE'].diff()
+    gain  = delta.where(delta > 0, 0).rolling(14).mean()
+    loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df['RSI'] = 100 - (100 / (1 + rs))
+    df['RSI'] = df['RSI'].fillna(50)
+    
+    # MACD
+    df['MACD']        = df['CLOSE'].ewm(span=12, adjust=False).mean() - df['CLOSE'].ewm(span=26, adjust=False).mean()
+    df['MACD_Sig']    = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist']   = df['MACD'] - df['MACD_Sig']
+    
+    # Bollinger
+    df['BB_Mid']   = df['CLOSE'].rolling(20).mean()
+    df['BB_Std']   = df['CLOSE'].rolling(20).std()
+    df['BB_Upper'] = df['BB_Mid'] + 2 * df['BB_Std']
+    df['BB_Lower'] = df['BB_Mid'] - 2 * df['BB_Std']
+    
+    # Volume
+    df['Vol_MA']  = df['VOLUME'].rolling(20).mean()
+    df['Vol_Rat'] = df['VOLUME'] / df['Vol_MA'].replace(0, np.nan)
+    df['Vol_Rat'] = df['Vol_Rat'].fillna(0)
+    
+    # ATR
+    df['TR']  = np.maximum(df['HIGH']-df['LOW'],
+                np.maximum(abs(df['HIGH']-df['CLOSE'].shift(1)),
+                           abs(df['LOW']-df['CLOSE'].shift(1))))
+    df['ATR'] = df['TR'].rolling(14).mean()
+    
+    # 52 Week High/Low (assuming ~252 trading days)
+    df['52W_High'] = df['HIGH'].rolling(252, min_periods=100).max()
+    df['52W_Low']  = df['LOW'].rolling(252, min_periods=100).min()
+    return df
+
 def master_swing_scanner(symbols):
     all_results = []
     
     for symbol in symbols:
         try:
             df = get_data(symbol, days=300)
-            
-            # --- All Indicators ---
-            # EMA
-            df['EMA_9']  = df['CLOSE'].ewm(span=9, adjust=False).mean()
-            df['EMA_21'] = df['CLOSE'].ewm(span=21, adjust=False).mean()
-            df['EMA_50'] = df['CLOSE'].ewm(span=50, adjust=False).mean()
-            df['EMA_200']= df['CLOSE'].ewm(span=200, adjust=False).mean()
-            
-            # RSI
-            delta = df['CLOSE'].diff()
-            gain  = delta.where(delta > 0, 0).rolling(14).mean()
-            loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            # To avoid division by zero
-            rs = gain / loss.replace(0, np.nan)
-            df['RSI'] = 100 - (100 / (1 + rs))
-            df['RSI'] = df['RSI'].fillna(50)
-            
-            # MACD
-            df['MACD']        = df['CLOSE'].ewm(span=12, adjust=False).mean() - df['CLOSE'].ewm(span=26, adjust=False).mean()
-            df['MACD_Sig']    = df['MACD'].ewm(span=9, adjust=False).mean()
-            df['MACD_Hist']   = df['MACD'] - df['MACD_Sig']
-            
-            # Bollinger
-            df['BB_Mid']   = df['CLOSE'].rolling(20).mean()
-            df['BB_Std']   = df['CLOSE'].rolling(20).std()
-            df['BB_Upper'] = df['BB_Mid'] + 2 * df['BB_Std']
-            df['BB_Lower'] = df['BB_Mid'] - 2 * df['BB_Std']
-            
-            # Volume
-            df['Vol_MA']  = df['VOLUME'].rolling(20).mean()
-            df['Vol_Rat'] = df['VOLUME'] / df['Vol_MA'].replace(0, np.nan)
-            df['Vol_Rat'] = df['Vol_Rat'].fillna(0)
-            
-            # ATR
-            df['TR']  = np.maximum(df['HIGH']-df['LOW'],
-                        np.maximum(abs(df['HIGH']-df['CLOSE'].shift(1)),
-                                   abs(df['LOW']-df['CLOSE'].shift(1))))
-            df['ATR'] = df['TR'].rolling(14).mean()
-            
-            # 52 Week High/Low (assuming ~252 trading days)
-            df['52W_High'] = df['HIGH'].rolling(252, min_periods=100).max()
-            df['52W_Low']  = df['LOW'].rolling(252, min_periods=100).min()
+            df = add_indicators(df)
             
             latest = df.iloc[-1]
             

@@ -158,9 +158,10 @@ def render_swing_tab(copilot, notifier):
                     st.markdown("---")
                     if st.button(f"📊 View Chart for {row['Symbol']}", key=f"chart_btn_{row['Symbol']}"):
                         try:
-                            from core.swing_manager import get_data
+                            from core.swing_manager import get_data, add_indicators
                             # Use the cached 300 days but display the last 90 days
-                            df_chart = get_data(row['Symbol'], days=300).tail(90)
+                            df_chart = get_data(row['Symbol'], days=300)
+                            df_chart = add_indicators(df_chart).tail(90)
                             fig = create_swing_chart(row['Symbol'], row, df_chart)
                             st.plotly_chart(fig, use_container_width=True)
                         except Exception as e:
@@ -179,10 +180,11 @@ def render_swing_tab(copilot, notifier):
                             notifier.send(draft)
                             
                             # Generate and send chart for each stock
-                            from core.swing_manager import get_data
+                            from core.swing_manager import get_data, add_indicators
                             for _, p in aplus_picks.iterrows():
                                 try:
-                                    df_chart = get_data(p['Symbol'], days=300).tail(90)
+                                    df_chart = get_data(p['Symbol'], days=300)
+                                    df_chart = add_indicators(df_chart).tail(90)
                                     fig = create_swing_chart(p['Symbol'], p, df_chart)
                                     # Convert to image bytes
                                     img_bytes = fig.to_image(format="png", engine="kaleido", width=1000, height=800)
