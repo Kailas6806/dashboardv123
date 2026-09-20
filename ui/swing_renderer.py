@@ -94,11 +94,38 @@ def render_swing_tab(copilot, notifier):
                         else:
                             st.error("Invalid Stop Loss or Target for R:R calculation")
                             
-            # Telegram Bot Integration for A+ Stocks
-            aplus_picks = results[results['Score'] >= 10]
+                    st.markdown("---")
+                    if st.button(f"📊 View Chart for {row['Symbol']}", key=f"chart_btn_{row['Symbol']}"):
+                        try:
+                            import plotly.graph_objects as go
+                            from core.swing_manager import get_data
+                            # Use the cached 300 days but display the last 90 days
+                            df_chart = get_data(row['Symbol'], days=300).tail(90)
+                            fig = go.Figure(data=[go.Candlestick(
+                                x=df_chart['DATE'],
+                                open=df_chart['OPEN'],
+                                high=df_chart['HIGH'],
+                                low=df_chart['LOW'],
+                                close=df_chart['CLOSE'],
+                                name="Candlestick"
+                            )])
+                            fig.update_layout(
+                                title=f"{row['Symbol']} Daily Chart (Last 90 Days)",
+                                yaxis_title="Price (₹)",
+                                xaxis_title="Date",
+                                template="plotly_dark",
+                                xaxis_rangeslider_visible=False,
+                                margin=dict(l=20, r=20, t=40, b=20)
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Failed to load chart: {e}")
+                            
+            # Telegram Bot Integration for A+ and A Stocks
+            aplus_picks = results[results['Score'] >= 8]
             if not aplus_picks.empty:
                 st.markdown("---")
-                if st.button("📲 Generate & Send A+ Picks via Telegram Copilot"):
+                if st.button("📲 Generate & Send A+/A Picks via Telegram Copilot"):
                     with st.spinner("Copilot is drafting the message..."):
                         aplus_data = aplus_picks.to_dict('records')
                         draft = copilot.draft_swing_message(aplus_data)

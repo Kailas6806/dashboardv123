@@ -246,18 +246,18 @@ Respond strictly in valid JSON with this exact schema:
         """Use the Copilot to draft a Telegram message for swing trade picks."""
         if not self.is_configured() or not picks_data:
             # Fallback text if Copilot is disabled
-            lines = ["🎯 **Top A+ Swing Picks**\n"]
+            lines = ["🎯 **Top A+ and A Swing Picks**\n"]
             for p in picks_data:
-                lines.append(f"📌 {p['Symbol']} at ₹{p['Close']}")
+                lines.append(f"📌 {p['Symbol']} at ₹{p['Close']} (Grade: {p['Grade']})")
                 lines.append(f"🔴 SL: ₹{p['Stop_Loss']} | 🎯 TGT: ₹{p['Target']}")
                 lines.append(f"⚡ Signals: {p['Signals']}\n")
             return "\n".join(lines)
             
         prompt = (
             "You are an expert swing trading assistant. I have scanned the market and found "
-            "these top A+ rated stocks. Draft a short, energetic, and professional Telegram alert "
+            "these top A+ and A rated stocks. Draft a short, energetic, and professional Telegram alert "
             "message for my subscribers to share these picks.\n\n"
-            "Include the Symbol, Entry Price, Stop Loss, Target, and a brief note on why based on the signals.\n"
+            "Include the Symbol, Grade, Entry Price, Stop Loss, Target, and a brief note on why based on the signals.\n"
             "Use emojis appropriately. Keep it concise.\n\n"
             f"Data: {json.dumps(picks_data, indent=2)}"
         )
@@ -275,9 +275,9 @@ Respond strictly in valid JSON with this exact schema:
             return resp.choices[0].message.content.strip()
         except Exception as e:
             log.error("Failed to draft swing message: %s", e)
-            lines = ["🎯 **Top A+ Swing Picks**\n"]
+            lines = ["🎯 **Top A+ and A Swing Picks**\n"]
             for p in picks_data:
-                lines.append(f"📌 {p['Symbol']} at ₹{p['Close']}")
+                lines.append(f"📌 {p['Symbol']} at ₹{p['Close']} (Grade: {p['Grade']})")
                 lines.append(f"🔴 SL: ₹{p['Stop_Loss']} | 🎯 TGT: ₹{p['Target']}")
                 lines.append(f"⚡ Signals: {p['Signals']}\n")
             return "\n".join(lines)

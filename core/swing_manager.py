@@ -10,7 +10,9 @@ def _patched_makedirs(name, mode=0o777, exist_ok=True):
 os.makedirs = _patched_makedirs
 
 from jugaad_data.nse import stock_df
+import streamlit as st
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_data(symbol: str, days: int = 300) -> pd.DataFrame:
     """Fetch historical stock data using jugaad-data."""
     end_date = datetime.date.today()
