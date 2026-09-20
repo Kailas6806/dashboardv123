@@ -146,7 +146,7 @@ with tab_open:
     show_open_trades()
 with tab_swing:
     from ui.swing_renderer import render_swing_tab
-    render_swing_tab()
+    render_swing_tab(copilot, notifier)
 with tab_nifty:
     show_nifty()
 with tab_banknifty:

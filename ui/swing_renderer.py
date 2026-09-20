@@ -3,7 +3,7 @@ import pandas as pd
 from core.swing_manager import master_swing_scanner, calculate_risk_management
 from config import CAPITAL
 
-def render_swing_tab():
+def render_swing_tab(copilot, notifier):
     st.markdown('<div class="card-inset"><h2 style="color:#38bdf8;">📈 SWING TRADING SCANNER (CASH MARKET)</h2></div>', unsafe_allow_html=True)
     
     # Default Watchlist
@@ -93,5 +93,21 @@ def render_swing_tab():
                             st.markdown(f"**Status:** {risk_info['Status']}")
                         else:
                             st.error("Invalid Stop Loss or Target for R:R calculation")
+                            
+            # Telegram Bot Integration for A+ Stocks
+            aplus_picks = results[results['Score'] >= 10]
+            if not aplus_picks.empty:
+                st.markdown("---")
+                if st.button("📲 Generate & Send A+ Picks via Telegram Copilot"):
+                    with st.spinner("Copilot is drafting the message..."):
+                        aplus_data = aplus_picks.to_dict('records')
+                        draft = copilot.draft_swing_message(aplus_data)
+                        if draft:
+                            notifier.send(draft)
+                            st.success("✅ Telegram message sent successfully!")
+                            st.markdown("### Preview of sent message:")
+                            st.info(draft)
+                        else:
+                            st.error("Failed to generate message.")
         else:
             st.info("No stocks matched the Top Pick criteria (Score >= 8) today.")
