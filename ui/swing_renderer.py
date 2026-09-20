@@ -208,6 +208,13 @@ def render_swing_tab(copilot, notifier):
                                 st.markdown(f"**Preview sent for {p['Symbol']}:**")
                                 st.info(draft)
                                 
+                                # Force garbage collection to prevent Streamlit Cloud OOM
+                                import gc
+                                del fig
+                                del img_bytes
+                                del df_chart
+                                gc.collect()
+                                
                             except Exception as e:
                                 st.error(f"Failed to generate and send alert for {p['Symbol']}: {e}")
                                 

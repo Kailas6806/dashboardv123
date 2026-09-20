@@ -135,6 +135,6 @@ except Exception:
 
 NVIDIA_BASE_URL         = "https://integrate.api.nvidia.com/v1"
 NVIDIA_MODEL            = "nvidia/nemotron-3-ultra-550b-a55b"
-AI_AUTO_TRADE_DEFAULT   = False
+AI_AUTO_TRADE_DEFAULT   = True
 AI_MIN_CONVICTION       = 75   # Minimum conviction score (0-100) to recommend/execute trade
 

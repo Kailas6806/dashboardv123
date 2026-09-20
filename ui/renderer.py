@@ -390,14 +390,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):
 
-            # ── AI PRE-TRADE VALIDATION (if auto-trade mode is ON) ──
-            ai_auto_on = st.session_state.get("ai_auto_trade", False)
+            # ── AI PRE-TRADE VALIDATION ──
+            ai_auto_on = st.session_state.get("ai_auto_trade", AI_AUTO_TRADE_DEFAULT)
             ai_conviction_ok = True       # default: allow trade
             ai_pre_score = conf_score     # fallback to rule-engine score
             ai_pre_summary = "Rule engine signal"
-            if copilot and copilot.is_configured() and ai_auto_on:
+            
+            if copilot and copilot.is_configured():
                 from config import AI_MIN_CONVICTION
-                with st.spinner(f"🧠 AI validating {idx} {final_signal} signal before entry..."):
+                with st.spinner(f"🧠 AI analyzing {idx} {final_signal} signal..."):
                     ai_pre = copilot.analyze_market_and_signals(
                         idx, md, final_signal, conf_score,
                         active_trades_count=len([t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"])
@@ -406,17 +407,20 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     ai_pre_score = ai_pre.get("conviction_score", 0)
                     ai_pre_rec   = ai_pre.get("recommendation", "AVOID_WAIT")
                     ai_pre_summary = ai_pre.get("reasoning_summary", "")
-                    # Block only if conviction is LOW or AI says avoid
-                    if ai_pre_score < AI_MIN_CONVICTION or "BUY" not in ai_pre_rec:
-                        ai_conviction_ok = False
-                        st.warning(
-                            f"🤖 AI blocked {idx} trade — conviction {ai_pre_score}/100 "
-                            f"(need ≥{AI_MIN_CONVICTION}) | AI says: `{ai_pre_rec.replace('_',' ')}`"
-                        )
+                    
+                    if ai_auto_on:
+                        # Block only if conviction is LOW or AI says avoid AND auto-trade is ON
+                        if ai_pre_score < AI_MIN_CONVICTION or "BUY" not in ai_pre_rec:
+                            ai_conviction_ok = False
+                            st.warning(
+                                f"🤖 AI blocked {idx} trade — conviction {ai_pre_score}/100 "
+                                f"(need ≥{AI_MIN_CONVICTION}) | AI says: `{ai_pre_rec.replace('_',' ')}`"
+                            )
+                        else:
+                            st.success(f"🤖 AI approved {idx} {final_signal} — conviction **{ai_pre_score}/100** ✅")
                     else:
-                        st.success(
-                            f"🤖 AI approved {idx} {final_signal} — conviction **{ai_pre_score}/100** ✅"
-                        )
+                        # Auto-trade is OFF, just log the AI confidence but don't block
+                        st.info(f"🤖 AI Analysis Complete — conviction **{ai_pre_score}/100**. (Auto-trade is OFF, proceeding via rules)")
 
             if not ai_conviction_ok:
                 # AI blocked — don't enter, but mark signal as seen so it doesn't loop
