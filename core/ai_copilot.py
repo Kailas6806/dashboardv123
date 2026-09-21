@@ -23,6 +23,8 @@ from config import (
     MIN_ENTRY_PRICE,
     NO_NEW_TRADE_TIME,
     MAX_DAILY_TRADES,
+    AI_MIN_CONVICTION,
+
     INDEX_CONFIG,
     is_expiry_day,
 )
@@ -427,7 +429,7 @@ Respond strictly in valid JSON with this exact schema:
                     qty=qty,
                     ml=ml,
                     tp=tp,
-                    conf="HIGH" if ai_conviction >= 75 else "MEDIUM",
+                    conf="HIGH" if ai_conviction >= AI_MIN_CONVICTION else "MEDIUM",
                     score=ai_conviction,
                     time_str=now_str,
                 )

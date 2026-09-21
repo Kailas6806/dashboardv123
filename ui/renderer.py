@@ -13,7 +13,7 @@ from config import (
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
     MAX_LOSS, MAX_DAILY_LOSS, MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
     BASE_DIR, LOG_DIR, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-    AI_AUTO_TRADE_DEFAULT,
+    AI_AUTO_TRADE_DEFAULT, AI_MIN_CONVICTION,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
@@ -1293,7 +1293,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             st.session_state["ai_auto_trade"] = AI_AUTO_TRADE_DEFAULT
         if "toggle_ai_autotrade" not in st.session_state:
             st.session_state["toggle_ai_autotrade"] = st.session_state["ai_auto_trade"]
-        auto_trade = st.toggle("⚡ Auto-Trade on High Conviction (>=75%)", key="toggle_ai_autotrade")
+        auto_trade = st.toggle(f"⚡ Auto-Trade on High Conviction (>={AI_MIN_CONVICTION}%)", key="toggle_ai_autotrade")
         st.session_state["ai_auto_trade"] = auto_trade
     with col_model:
         st.markdown(f'<div style="padding-top:10px;"><span class="badge badge-ce">● NEMOTRON 550B ACTIVE</span> <span style="font-size:11px;color:#94a3b8;margin-left:8px;">{NVIDIA_MODEL}</span></div>', unsafe_allow_html=True)
