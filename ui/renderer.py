@@ -275,7 +275,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     rec = ai_res.get("recommendation", "AVOID_WAIT").replace("_", " ")
                     conv = ai_res.get("conviction_score", 0)
                     summary = ai_res.get("reasoning_summary", "")
-                    st.caption(f"🤖 **AI Verdict:** `{rec}` (Conviction: **{conv}/100**) — {summary[:120]}...")
+                    with st.expander(f"🤖 **AI Verdict:** `{rec}` (Conviction: **{conv}/100**)"):
+                        st.write(summary)
                 else:
                     st.caption("🤖 NVIDIA Nemotron 550B ready to validate option chain signals.")
 
