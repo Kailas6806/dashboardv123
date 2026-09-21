@@ -399,7 +399,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             ai_pre_summary = "Rule engine signal"
             
             if copilot and copilot.is_configured():
-                from config import AI_MIN_CONVICTION
+
                 with st.spinner(f"🧠 AI analyzing {idx} {final_signal} signal..."):
                     ai_pre = copilot.analyze_market_and_signals(
                         idx, md, final_signal, conf_score,
@@ -1396,7 +1396,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             if auto_trade:
                 auto_rec = analysis.get("recommendation", "AVOID_WAIT")
                 auto_conv = analysis.get("conviction_score", 0)
-                from config import AI_MIN_CONVICTION
+
                 if auto_conv >= AI_MIN_CONVICTION and "BUY" in auto_rec:
                     exec_sig = "BUY CE" if "CE" in auto_rec else "BUY PE"
                     # Block if there is already an open trade on this index
