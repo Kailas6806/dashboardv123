@@ -13,6 +13,7 @@ from config import (
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
     MAX_LOSS, MAX_DAILY_LOSS, MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
     BASE_DIR, LOG_DIR, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+    AI_AUTO_TRADE_DEFAULT,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
