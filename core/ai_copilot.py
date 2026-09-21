@@ -71,7 +71,7 @@ class AICopilot:
             self._client = OpenAI(
                 base_url=self.base_url,
                 api_key=self.api_key,
-                timeout=30.0,
+                timeout=120.0,
             )
             log.info("AICopilot initialized with model %s", self.model)
         except Exception as e:
