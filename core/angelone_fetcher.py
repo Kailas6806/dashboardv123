@@ -77,9 +77,17 @@ class AngelOneDataFetcher:
         return 0.0
 
     def fetch_option_chain(self, idx_name: str) -> Optional[Dict[str, Any]]:
+        import pytz
+        IST = pytz.timezone('Asia/Kolkata')
+        now = datetime.datetime.now(IST)
+        is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30) or now.hour < 9 or (now.hour == 9 and now.minute < 15)
+
         cached = self._cache.get(idx_name)
         if cached:
             return cached
+            
+        if is_market_closed and hasattr(self, "_perm_cache") and idx_name in self._perm_cache:
+            return self._perm_cache[idx_name]
 
         if not self.session or not self.scrip_master:
             return None # Fail gracefully to trigger mock or error
