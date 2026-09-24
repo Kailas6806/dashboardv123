@@ -2,19 +2,6 @@ import os
 import shutil
 if not os.path.exists("config.py") and os.path.exists("config.example.py"):
     shutil.copy("config.example.py", "config.py")
-
-"""
-V12 PRO MAX — TRADER DASHBOARD
-================================
-Slim orchestrator. All logic lives in modular packages:
-  - config.py         → all tunable parameters
-  - core/             → signal engine, risk manager, data fetcher, trade manager
-  - analytics/        → trade journal, analytics dashboard
-  - notifications/    → async Telegram alerts
-  - ui/               → styles, components, renderer
-  - utils/            → cache, logger
-"""
-import streamlit as st
 import pandas as pd
 import datetime
 import os
