@@ -2,6 +2,7 @@ import os
 import shutil
 if not os.path.exists("config.py") and os.path.exists("config.example.py"):
     shutil.copy("config.example.py", "config.py")
+import streamlit as st
 import pandas as pd
 import datetime
 import os
