@@ -1,3 +1,8 @@
+import os
+import shutil
+if not os.path.exists("config.py") and os.path.exists("config.example.py"):
+    shutil.copy("config.example.py", "config.py")
+
 """
 V12 PRO MAX — TRADER DASHBOARD
 ================================
