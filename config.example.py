@@ -155,20 +155,28 @@ TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
 # Fallback to Streamlit Secrets
 try:
     import streamlit as _st
-    if hasattr(_st, "secrets"):
-        if "ANGEL_API_KEY" in _st.secrets:
-            ANGEL_API_KEY = str(_st.secrets["ANGEL_API_KEY"])
-        if "ANGEL_CLIENT_ID" in _st.secrets:
-            ANGEL_CLIENT_ID = str(_st.secrets["ANGEL_CLIENT_ID"])
-        if "ANGEL_PASSWORD" in _st.secrets:
-            ANGEL_PASSWORD = str(_st.secrets["ANGEL_PASSWORD"])
-        if "ANGEL_TOTP_SECRET" in _st.secrets:
-            ANGEL_TOTP_SECRET = str(_st.secrets["ANGEL_TOTP_SECRET"])
-        if "NVIDIA_API_KEY" in _st.secrets:
-            NVIDIA_API_KEY = str(_st.secrets["NVIDIA_API_KEY"])
-        if "TELEGRAM_TOKEN" in _st.secrets:
-            TELEGRAM_TOKEN = str(_st.secrets["TELEGRAM_TOKEN"])
-        if "TELEGRAM_CHAT_ID" in _st.secrets:
-            TELEGRAM_CHAT_ID = str(_st.secrets["TELEGRAM_CHAT_ID"])
-except ImportError:
+    _secrets = None
+    try:
+        # Accessing st.secrets raises an exception if secrets.toml doesn't exist
+        _ = _st.secrets.keys()
+        _secrets = _st.secrets
+    except Exception:
+        pass
+        
+    if _secrets is not None:
+        if "ANGEL_API_KEY" in _secrets:
+            ANGEL_API_KEY = str(_secrets["ANGEL_API_KEY"])
+        if "ANGEL_CLIENT_ID" in _secrets:
+            ANGEL_CLIENT_ID = str(_secrets["ANGEL_CLIENT_ID"])
+        if "ANGEL_PASSWORD" in _secrets:
+            ANGEL_PASSWORD = str(_secrets["ANGEL_PASSWORD"])
+        if "ANGEL_TOTP_SECRET" in _secrets:
+            ANGEL_TOTP_SECRET = str(_secrets["ANGEL_TOTP_SECRET"])
+        if "NVIDIA_API_KEY" in _secrets:
+            NVIDIA_API_KEY = str(_secrets["NVIDIA_API_KEY"])
+        if "TELEGRAM_TOKEN" in _secrets:
+            TELEGRAM_TOKEN = str(_secrets["TELEGRAM_TOKEN"])
+        if "TELEGRAM_CHAT_ID" in _secrets:
+            TELEGRAM_CHAT_ID = str(_secrets["TELEGRAM_CHAT_ID"])
+except Exception:
     pass
