@@ -35,7 +35,7 @@ from ui.components import (
 )
 from core.signal_engine import SignalEngine
 from core.risk_manager import RiskManager
-from core.data_fetcher import get_fetcher
+from core.angelone_fetcher import get_fetcher
 from core.trade_manager import TradeManager
 from core.ai_copilot import AICopilot
 from analytics.trade_journal import TradeJournal
@@ -118,8 +118,8 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_history, tab_analytics, tab_settings = st.tabs([
-    open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
+tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_settings = st.tabs([
+    open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "🤖 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
 ])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
@@ -155,6 +155,11 @@ with tab_finnifty:
     show_finnifty()
 with tab_ai:
     render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+
+with tab_autonomous:
+    from ui.renderer import render_autonomous_tab
+    render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+
 with tab_history:
     render_trade_history_tab(journal)
 with tab_analytics:

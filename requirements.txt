@@ -8,3 +8,7 @@ lxml
 brotli
 openai>=1.0.0
 kaleido
+smartapi-python
+pyotp
+logzero
+websocket-client

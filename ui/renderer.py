@@ -1565,3 +1565,86 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+
+
+
+def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot):
+    st.markdown("<h3 style='color:#38bdf8;'>🤖 Autonomous AI Signal Generator</h3>", unsafe_allow_html=True)
+    st.write("Feed live Open Interest data to the AI and let it generate a completely independent trade signal.")
+    
+    selected_idx = st.selectbox("Select Index for Autonomous Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="auto_idx")
+    
+    if st.button(f"Generate Autonomous Signal for {selected_idx}", type="primary", use_container_width=True):
+        with st.spinner(f"AI is deeply analyzing {selected_idx} data..."):
+            # Fetch fresh data
+            data = fetcher.fetch_option_chain(selected_idx)
+            if not data:
+                st.error("Failed to fetch live data from Angel One.")
+                return
+                
+            import pandas as pd
+            spot = data['records']['underlyingValue']
+            rows = []
+            for item in data['records']['data']:
+                ce = item.get('CE', {})
+                pe = item.get('PE', {})
+                rows.append({
+                    'Strike': item['strikePrice'],
+                    'CE LTP': ce.get('lastPrice', 0),
+                    'CE OI': ce.get('openInterest', 0),
+                    'PE LTP': pe.get('lastPrice', 0),
+                    'PE OI': pe.get('openInterest', 0),
+                })
+            df = pd.DataFrame(rows)
+            
+            # Use signal engine to compute market data
+            md = signal_engine.compute_market_data(
+                df, spot, 50, selected_idx, 
+                st.session_state.get(sk(selected_idx, "spot_history"), []), 
+                st.session_state.get(sk(selected_idx, "pcr_history"), []), 
+                st.session_state.get(sk(selected_idx, "prev_df"), None),
+                st.session_state.get(sk(selected_idx, "oi_baseline"), None)
+            )
+            
+            # Send to AI
+            result = copilot.generate_autonomous_signal(selected_idx, md)
+            st.session_state["autonomous_result"] = result
+            st.session_state["autonomous_md"] = md
+            st.session_state["autonomous_idx"] = selected_idx
+            
+    res = st.session_state.get("autonomous_result")
+    if res:
+        idx = st.session_state["autonomous_idx"]
+        md = st.session_state["autonomous_md"]
+        signal = res.get("autonomous_signal", "WAIT")
+        bias = res.get("market_bias", "UNKNOWN")
+        conv = res.get("conviction", 0)
+        logic = res.get("logic", "")
+        
+        sig_color = "#10b981" if "BUY CE" in signal else ("#ef4444" if "BUY PE" in signal else "#64748b")
+        
+        st.markdown(f"""
+        <div style="background:#1e293b; padding:20px; border-radius:10px; border-left:5px solid {sig_color}; margin-top:15px;">
+            <h4 style="margin:0; color:#94a3b8;">{idx} AUTONOMOUS DECISION</h4>
+            <h1 style="color:{sig_color}; margin:10px 0;">{signal}</h1>
+            <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                <div><b>Bias:</b> {bias}</div>
+                <div><b>Conviction:</b> {conv}/100</div>
+            </div>
+            <div style="background:#0f172a; padding:15px; border-radius:5px; color:#cbd5e1;">
+                <b>AI Logic:</b><br>{logic}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if signal in ["BUY CE", "BUY PE"]:
+            if st.button(f"⚡ EXECUTE {signal} NOW", key="auto_exec", type="primary"):
+                ok, _, msg = copilot.take_trade(
+                    idx, signal, md, trade_mgr, risk_mgr, journal, 
+                    st.session_state.get(sk(idx, "trade_log"), []),
+                    ai_conviction=conv, ai_reasoning=logic, force=True
+                )
+                if ok:
+                    st.success(f"Trade Executed: {msg}")
+                else:
+                    st.error(f"Failed to execute: {msg}")

@@ -70,7 +70,7 @@ MIN_ENTRY_PRICE         = 5.0    # reject options cheaper than ₹5 (illiquid/wo
 
 # ── RISK MANAGEMENT ──
 ATR_PERIOD               = 14    # periods for ATR calculation
-ATR_SL_MULTIPLIER        = 1.5   # SL = entry ∓ (multiplier × ATR)
+ATR_SL_MULTIPLIER        = 2.5   # SL = entry ∓ (multiplier × ATR)
 
 MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
 
@@ -134,7 +134,20 @@ except Exception:
     pass
 
 NVIDIA_BASE_URL         = "https://integrate.api.nvidia.com/v1"
-NVIDIA_MODEL            = "nvidia/nemotron-3-ultra-550b-a55b"
+NVIDIA_MODEL            = "meta/llama-3.2-11b-vision-instruct"
 AI_AUTO_TRADE_DEFAULT   = True
 AI_MIN_CONVICTION       = 60   # Minimum conviction score (0-100) to recommend/execute trade
 
+
+# ANGEL ONE CREDENTIALS
+ANGEL_API_KEY = "YOUR_ANGEL_API_KEY"
+ANGEL_CLIENT_ID = "YOUR_ANGEL_CLIENT_ID"
+ANGEL_PASSWORD = "YOUR_ANGEL_PIN"
+ANGEL_TOTP_SECRET = "YOUR_ANGEL_TOTP_SECRET"
+
+# NVIDIA AI COPILOT
+NVIDIA_API_KEY = "YOUR_NVIDIA_API_KEY"
+
+# TELEGRAM CREDENTIALS OVERRIDE
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"

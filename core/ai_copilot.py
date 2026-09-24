@@ -71,7 +71,7 @@ class AICopilot:
             self._client = OpenAI(
                 base_url=self.base_url,
                 api_key=self.api_key,
-                timeout=120.0,
+                timeout=15.0,
             )
             log.info("AICopilot initialized with model %s", self.model)
         except Exception as e:
@@ -243,6 +243,67 @@ Respond strictly in valid JSON with this exact schema:
                 except Exception:
                     pass
         return None
+
+
+    def generate_autonomous_signal(self, idx: str, md: Dict[str, Any]) -> Dict[str, Any]:
+        spot = md.get("spot", 0)
+        atm = md.get("atm_actual", 0)
+        pcr = md.get("pcr", 1.0)
+        pcr_mom = md.get("pcr_momentum", "FLAT")
+        vwap = md.get("vwap_proxy", spot)
+        spot_vs_vwap = md.get("spot_vs_vwap", "AT VWAP")
+        ce_delta = md.get("total_ce_delta", 0)
+        pe_delta = md.get("total_pe_delta", 0)
+        support = md.get("support", 0)
+        resistance = md.get("resistance", 0)
+        
+        prompt = f"""
+You are an autonomous quantitative Indian index options trader. I am giving you raw live market data for {idx}. 
+You must independently decide the best immediate trade (BUY CE, BUY PE, or WAIT).
+
+### LIVE DATA:
+- Spot: {spot:.2f}
+- ATM Strike: {atm}
+- PCR: {pcr:.2f} (Trend: {pcr_mom})
+- VWAP Proxy: {vwap:.2f} (Spot is {spot_vs_vwap} VWAP)
+- CE OI Delta (Call Writing): {ce_delta:+,}
+- PE OI Delta (Put Writing): {pe_delta:+,}
+- Support: {support} | Resistance: {resistance}
+
+Based purely on this data, output your trading decision in strict JSON:
+{{
+  "market_bias": "BULLISH" | "BEARISH" | "SIDEWAYS/NEUTRAL",
+  "autonomous_signal": "BUY CE" | "BUY PE" | "WAIT",
+  "conviction": <0-100 integer>,
+  "logic": "<Concise 2 sentence reason>"
+}}
+"""
+        try:
+            import requests
+            url = f"{NVIDIA_BASE_URL}/chat/completions"
+            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": "You are an elite autonomous trading AI. Output strict JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 200
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                import json
+                content = resp.json()["choices"][0]["message"]["content"]
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].strip()
+                return json.loads(content)
+            else:
+                return {"autonomous_signal": "WAIT", "conviction": 0, "logic": f"API Error {resp.status_code}"}
+        except Exception as e:
+            return {"autonomous_signal": "WAIT", "conviction": 0, "logic": str(e)}
 
     def draft_swing_message(self, picks_data: list) -> str:
         """Use the Copilot to draft a Telegram message for swing trade picks."""
