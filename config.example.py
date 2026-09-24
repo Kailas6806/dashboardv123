@@ -151,3 +151,24 @@ NVIDIA_API_KEY = "YOUR_NVIDIA_API_KEY"
 # TELEGRAM CREDENTIALS OVERRIDE
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+
+# Fallback to Streamlit Secrets
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets"):
+        if "ANGEL_API_KEY" in _st.secrets:
+            ANGEL_API_KEY = str(_st.secrets["ANGEL_API_KEY"])
+        if "ANGEL_CLIENT_ID" in _st.secrets:
+            ANGEL_CLIENT_ID = str(_st.secrets["ANGEL_CLIENT_ID"])
+        if "ANGEL_PASSWORD" in _st.secrets:
+            ANGEL_PASSWORD = str(_st.secrets["ANGEL_PASSWORD"])
+        if "ANGEL_TOTP_SECRET" in _st.secrets:
+            ANGEL_TOTP_SECRET = str(_st.secrets["ANGEL_TOTP_SECRET"])
+        if "NVIDIA_API_KEY" in _st.secrets:
+            NVIDIA_API_KEY = str(_st.secrets["NVIDIA_API_KEY"])
+        if "TELEGRAM_TOKEN" in _st.secrets:
+            TELEGRAM_TOKEN = str(_st.secrets["TELEGRAM_TOKEN"])
+        if "TELEGRAM_CHAT_ID" in _st.secrets:
+            TELEGRAM_CHAT_ID = str(_st.secrets["TELEGRAM_CHAT_ID"])
+except ImportError:
+    pass
