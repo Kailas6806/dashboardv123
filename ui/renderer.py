@@ -1674,11 +1674,7 @@ def render_chat_tab(copilot):
                 st.markdown(prompt)
             with st.chat_message("assistant"):
                 with st.spinner("V12 PRO MAX is analyzing..."):
-                    # Switch to a faster model specifically for chat to prevent timeouts
-                    original_model = copilot.model
-                    copilot.model = "meta/llama-3.2-3b-instruct" # Much faster and more stable NIM model
                     response = copilot.chat_with_agent(st.session_state.chat_messages)
-                    copilot.model = original_model
                 st.markdown(response)
                 
         st.session_state.chat_messages.append({"role": "assistant", "content": response})
