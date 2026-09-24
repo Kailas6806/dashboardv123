@@ -1658,23 +1658,28 @@ def render_chat_tab(copilot):
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
-    # Display chat messages from history on app rerun
-    for message in st.session_state.chat_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # Scrollable container for chat history
+    chat_container = st.container(height=500)
+    
+    with chat_container:
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-    # React to user input
     if prompt := st.chat_input("Ask V12 PRO MAX about a stock or market..."):
-        # Display user message in chat message container
-        st.chat_message("user").markdown(prompt)
-        # Add user message to chat history
         st.session_state.chat_messages.append({"role": "user", "content": prompt})
-
-        with st.spinner("AI is thinking..."):
-            response = copilot.chat_with_agent(st.session_state.chat_messages)
-            
-        # Display assistant response in chat message container
-        with st.chat_message("assistant"):
-            st.markdown(response)
-        # Add assistant response to chat history
+        
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("V12 PRO MAX is analyzing..."):
+                    # Switch to a faster model specifically for chat to prevent timeouts
+                    original_model = copilot.model
+                    copilot.model = "meta/llama-3.1-8b-instruct" # Much faster and more stable NIM model
+                    response = copilot.chat_with_agent(st.session_state.chat_messages)
+                    copilot.model = original_model
+                st.markdown(response)
+                
         st.session_state.chat_messages.append({"role": "assistant", "content": response})
+        st.rerun()
