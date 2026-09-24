@@ -1676,7 +1676,7 @@ def render_chat_tab(copilot):
                 with st.spinner("V12 PRO MAX is analyzing..."):
                     # Switch to a faster model specifically for chat to prevent timeouts
                     original_model = copilot.model
-                    copilot.model = "meta/llama-3.1-8b-instruct" # Much faster and more stable NIM model
+                    copilot.model = "meta/llama-3.2-3b-instruct" # Much faster and more stable NIM model
                     response = copilot.chat_with_agent(st.session_state.chat_messages)
                     copilot.model = original_model
                 st.markdown(response)
