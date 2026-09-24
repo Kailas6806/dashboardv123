@@ -305,6 +305,27 @@ Based purely on this data, output your trading decision in strict JSON:
         except Exception as e:
             return {"autonomous_signal": "WAIT", "conviction": 0, "logic": str(e)}
 
+    def chat_with_agent(self, messages: list) -> str:
+        if not self.is_configured():
+            return "NVIDIA API key not configured."
+        try:
+            import requests
+            url = f"{NVIDIA_BASE_URL}/chat/completions"
+            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
+                "temperature": 0.5,
+                "max_tokens": 1024
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"]
+            else:
+                return f"API Error: {resp.status_code} - {resp.text}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
     def draft_swing_message(self, picks_data: list) -> str:
         """Use the Copilot to draft a Telegram message for swing trade picks."""
         if not self.is_configured() or not picks_data:

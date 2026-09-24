@@ -1648,3 +1648,33 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                     st.success(f"Trade Executed: {msg}")
                 else:
                     st.error(f"Failed to execute: {msg}")
+
+
+
+def render_chat_tab(copilot):
+    st.markdown("<h3 style='color:#38bdf8;'>💬 AI Trading Assistant</h3>", unsafe_allow_html=True)
+    st.write("Discuss stocks, market trends, and get live analysis from V12 PRO MAX.")
+    
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    # Display chat messages from history on app rerun
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # React to user input
+    if prompt := st.chat_input("Ask V12 PRO MAX about a stock or market..."):
+        # Display user message in chat message container
+        st.chat_message("user").markdown(prompt)
+        # Add user message to chat history
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+
+        with st.spinner("AI is thinking..."):
+            response = copilot.chat_with_agent(st.session_state.chat_messages)
+            
+        # Display assistant response in chat message container
+        with st.chat_message("assistant"):
+            st.markdown(response)
+        # Add assistant response to chat history
+        st.session_state.chat_messages.append({"role": "assistant", "content": response})
