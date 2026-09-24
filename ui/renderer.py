@@ -1616,10 +1616,10 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
     if res:
         idx = st.session_state["autonomous_idx"]
         md = st.session_state["autonomous_md"]
-        signal = res.get("autonomous_signal", "WAIT")
-        bias = res.get("market_bias", "UNKNOWN")
+        signal = res.get("signal", "WAIT")
+        bias = res.get("trend_bias", "UNKNOWN")
         conv = res.get("conviction", 0)
-        logic = res.get("logic", "")
+        logic = res.get("reasoning", "")
         
         sig_color = "#10b981" if "BUY CE" in signal else ("#ef4444" if "BUY PE" in signal else "#64748b")
         

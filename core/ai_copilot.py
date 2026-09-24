@@ -256,28 +256,42 @@ Respond strictly in valid JSON with this exact schema:
         pe_delta = md.get("total_pe_delta", 0)
         support = md.get("support", 0)
         resistance = md.get("resistance", 0)
-        
-        prompt = f"""
-You are an autonomous quantitative Indian index options trader. I am giving you raw live market data for {idx}. 
-You must independently decide the best immediate trade (BUY CE, BUY PE, or WAIT).
 
-### LIVE DATA:
-- Spot: {spot:.2f}
-- ATM Strike: {atm}
-- PCR: {pcr:.2f} (Trend: {pcr_mom})
-- VWAP Proxy: {vwap:.2f} (Spot is {spot_vs_vwap} VWAP)
-- CE OI Delta (Call Writing): {ce_delta:+,}
-- PE OI Delta (Put Writing): {pe_delta:+,}
+        prompt = f'''You are a quantitative options trader analyzing {idx}.
+
+LIVE DATA:
+- Spot: {spot:.2f} | ATM Strike: {atm}
+- VWAP: {vwap:.2f} (Spot is {spot_vs_vwap})
 - Support: {support} | Resistance: {resistance}
+- PCR: {pcr:.2f} (Trend: {pcr_mom})
+- Call OI Delta: {ce_delta:+,} | Put OI Delta: {pe_delta:+,}
 
-Based purely on this data, output your trading decision in strict JSON:
+DECISION RULES (in order):
+1. Trend Context: Is spot above or below VWAP?
+2. Structure: Is spot near support (bullish) or resistance (bearish)?
+3. Positioning: Is PCR rising (bullish OI bias) or falling (bearish)?
+4. Confirmation: Are Call/Put OI deltas aligned with PCR trend?
+
+CONVICTION SCORING:
+- Spot above VWAP + PCR rising = +30 points (bullish bias)
+- Spot below VWAP + PCR falling = +30 points (bearish bias)
+- Spot holds support + Call OI increasing = +20 points (bullish)
+- Spot breaks resistance + Put OI increasing = +20 points (bearish)
+- Conflicting signals = -10 points each
+
+OUTPUT (strict JSON):
 {{
-  "market_bias": "BULLISH" | "BEARISH" | "SIDEWAYS/NEUTRAL",
-  "autonomous_signal": "BUY CE" | "BUY PE" | "WAIT",
-  "conviction": <0-100 integer>,
-  "logic": "<Concise 2 sentence reason>"
+  "trend_bias": "BULLISH" | "BEARISH" | "NEUTRAL",
+  "signal": "BUY CE" | "BUY PE" | "WAIT",
+  "conviction": <0-100>,
+  "reasoning": "Score breakdown + final decision"
 }}
-"""
+
+DECISION RULE:
+- Score >= 60: BUY CE (bullish) or BUY PE (bearish)
+- Score 30-59: WAIT (mixed signals)
+- Score < 30: WAIT (no clear edge)'''
+
         try:
             import requests
             url = f"{NVIDIA_BASE_URL}/chat/completions"
@@ -288,8 +302,8 @@ Based purely on this data, output your trading decision in strict JSON:
                     {"role": "system", "content": "You are an elite autonomous trading AI. Output strict JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.3,
-                "max_tokens": 200
+                "temperature": 0.2,
+                "max_tokens": 300
             }
             resp = requests.post(url, headers=headers, json=payload, timeout=60.0)
             if resp.status_code == 200:
@@ -301,9 +315,9 @@ Based purely on this data, output your trading decision in strict JSON:
                     content = content.split("```")[1].strip()
                 return json.loads(content)
             else:
-                return {"autonomous_signal": "WAIT", "conviction": 0, "logic": f"API Error {resp.status_code}"}
+                return {"signal": "WAIT", "conviction": 0, "reasoning": f"API Error {resp.status_code}"}
         except Exception as e:
-            return {"autonomous_signal": "WAIT", "conviction": 0, "logic": str(e)}
+            return {"signal": "WAIT", "conviction": 0, "reasoning": str(e)}
 
     def chat_with_agent(self, messages: list) -> str:
         if not self.is_configured():
