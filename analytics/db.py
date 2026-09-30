@@ -12,7 +12,7 @@ import threading
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from config import BASE_DIR, LOG_DIR, JOURNAL_FILE, IST, SUPABASE_URI
+from config import BASE_DIR, LOG_DIR, JOURNAL_FILE, IST
 
 try:
     from utils.logger import get_logger
@@ -28,7 +28,18 @@ except ImportError:
 
 log = get_logger("trade_db")
 
+
+# SUPABASE CONNECTION URI
+SUPABASE_URI = ""
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets") and "SUPABASE_URI" in _st.secrets:
+        SUPABASE_URI = str(_st.secrets["SUPABASE_URI"])
+except Exception:
+    pass
+
 class TradeDB:
+
     """Thread-safe PostgreSQL database manager for trade history and journal entries."""
 
     def __init__(self, db_path: Optional[str] = None) -> None:
