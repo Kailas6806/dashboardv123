@@ -1,6 +1,9 @@
 import streamlit as st
 import datetime
-from config import ML_ENABLED, ML_MIN_PROBABILITY, ML_FAIL_SAFE_BLOCK
+import config
+ML_ENABLED = getattr(config, "ML_ENABLED", False)
+ML_MIN_PROBABILITY = getattr(config, "ML_MIN_PROBABILITY", 0.70)
+ML_FAIL_SAFE_BLOCK = getattr(config, "ML_FAIL_SAFE_BLOCK", True)
 from analytics.ml_db import get_training_data
 import os
 import joblib
