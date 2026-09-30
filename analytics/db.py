@@ -1,16 +1,18 @@
 """
-V12 PRO MAX — SQLite Trade Database
-Provides ACID-compliant, durable storage for all trades (Rule-based, AI, and Manual).
+V12 PRO MAX — PostgreSQL Trade Database (Supabase)
+Provides ACID-compliant, durable cloud storage for all trades (Rule-based, AI, and Manual).
 Works seamlessly with trade_journal.json and CSV logs for triple-tier redundancy.
 """
 import os
 import json
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import datetime
 import threading
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from config import BASE_DIR, LOG_DIR, JOURNAL_FILE, IST
+from config import BASE_DIR, LOG_DIR, JOURNAL_FILE, IST, SUPABASE_URI
 
 try:
     from utils.logger import get_logger
@@ -26,20 +28,15 @@ except ImportError:
 
 log = get_logger("trade_db")
 
-DB_PATH = os.path.join(BASE_DIR, "trades.db")
-
-
 class TradeDB:
-    """Thread-safe SQLite database manager for trade history and journal entries."""
+    """Thread-safe PostgreSQL database manager for trade history and journal entries."""
 
     def __init__(self, db_path: Optional[str] = None) -> None:
-        self.db_path = db_path or DB_PATH
         self._lock = threading.RLock()
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+    def _get_connection(self):
+        conn = psycopg2.connect(SUPABASE_URI)
         return conn
 
     def _init_db(self) -> None:
@@ -82,7 +79,7 @@ class TradeDB:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
                 conn.commit()
-                log.info("TradeDB initialized at %s", self.db_path)
+                log.info("TradeDB initialized at Supabase Postgres")
             finally:
                 conn.close()
 
@@ -91,7 +88,10 @@ class TradeDB:
         if val is None or val == "" or str(val).strip() == "":
             return default
         try:
-            return float(val)
+            f_val = float(val)
+            if math.isnan(f_val):
+                return default
+            return f_val
         except (ValueError, TypeError):
             return default
 
@@ -100,7 +100,10 @@ class TradeDB:
         if val is None or val == "" or str(val).strip() == "":
             return default
         try:
-            return int(float(val))
+            f_val = float(val)
+            if math.isnan(f_val):
+                return default
+            return int(f_val)
         except (ValueError, TypeError):
             return default
 
@@ -111,6 +114,11 @@ class TradeDB:
     ) -> str:
         """Insert or update a trade record atomically."""
         with self._lock:
+            # Clean Pandas NaNs before processing
+            for k, v in trade.items():
+                if isinstance(v, float) and math.isnan(v):
+                    trade[k] = None
+
             now_ist = datetime.datetime.now(IST)
             idx = str(trade.get("Index") or trade.get("instrument") or "INDEX").upper()
             entry_time = str(trade.get("Entry Time") or trade.get("entry_time") or now_ist.strftime("%I:%M:%S %p"))
@@ -140,8 +148,13 @@ class TradeDB:
             ml = self._safe_float(trade.get("Max Loss ₹") or trade.get("max_loss"))
             tp = self._safe_float(trade.get("Target P&L ₹") or trade.get("target_pnl"))
             pnl = self._safe_float(trade.get("Actual P&L ₹") or trade.get("actual_pnl"))
-            status = str(trade.get("Status") or trade.get("status") or "OPEN").upper()
-            result = str(trade.get("Result") or trade.get("result") or ("⏳ OPEN" if status == "OPEN" else "CLOSED"))
+            
+            # Safe status extraction (protect against nan)
+            raw_status = trade.get("Status") or trade.get("status")
+            status = str(raw_status).upper() if raw_status else "OPEN"
+            
+            raw_result = trade.get("Result") or trade.get("result")
+            result = str(raw_result) if raw_result else ("⏳ OPEN" if status == "OPEN" else "CLOSED")
 
             conf = self._safe_int(trade.get("Confidence Score") or trade.get("confidence_score"))
             ai_gen = 1 if bool(trade.get("_ai_generated") or trade.get("ai_generated")) else 0
@@ -162,16 +175,16 @@ class TradeDB:
                         confidence_score, ai_generated, ai_conviction, ai_reasoning,
                         metadata_json, created_at, updated_at
                     ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT(trade_id) DO UPDATE SET
-                        exit_time = COALESCE(excluded.exit_time, trades.exit_time),
-                        live_price = excluded.live_price,
-                        exit_price = COALESCE(excluded.exit_price, trades.exit_price),
-                        actual_pnl = COALESCE(excluded.actual_pnl, trades.actual_pnl),
-                        status = excluded.status,
-                        result = excluded.result,
-                        updated_at = excluded.updated_at
+                        exit_time = COALESCE(EXCLUDED.exit_time, trades.exit_time),
+                        live_price = EXCLUDED.live_price,
+                        exit_price = COALESCE(EXCLUDED.exit_price, trades.exit_price),
+                        actual_pnl = COALESCE(EXCLUDED.actual_pnl, trades.actual_pnl),
+                        status = EXCLUDED.status,
+                        result = EXCLUDED.result,
+                        updated_at = EXCLUDED.updated_at
                 """, (
                     trade_id, raw_date, entry_time, trade.get("Exit Time") or trade.get("exit_time"),
                     idx, signal, spot, strike, ep, lp, xp, sl, tgt, qty, ml, tp, pnl,
@@ -191,6 +204,11 @@ class TradeDB:
     ) -> bool:
         """Update an existing trade with exit information."""
         with self._lock:
+            # Clean Pandas NaNs
+            for k, v in exit_data.items():
+                if isinstance(v, float) and math.isnan(v):
+                    exit_data[k] = None
+
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
@@ -198,20 +216,23 @@ class TradeDB:
                 exit_time = exit_data.get("Exit Time") or exit_data.get("exit_time")
                 exit_price = self._safe_float(exit_data.get("Exit Price") or exit_data.get("exit_price"))
                 actual_pnl = self._safe_float(exit_data.get("Actual P&L ₹") or exit_data.get("actual_pnl"))
-                status = str(exit_data.get("Status") or exit_data.get("status") or "CLOSED").upper()
-                result = str(exit_data.get("Result") or exit_data.get("result") or "CLOSED")
+                
+                raw_status = exit_data.get("Status") or exit_data.get("status")
+                status = str(raw_status).upper() if raw_status else "CLOSED"
+                raw_result = exit_data.get("Result") or exit_data.get("result")
+                result = str(raw_result) if raw_result else "CLOSED"
 
                 if trade_id:
                     cursor.execute("""
                         UPDATE trades SET
-                            exit_time = COALESCE(?, exit_time),
-                            exit_price = COALESCE(?, exit_price),
-                            live_price = COALESCE(?, live_price),
-                            actual_pnl = COALESCE(?, actual_pnl),
-                            status = ?,
-                            result = ?,
-                            updated_at = ?
-                        WHERE trade_id = ?
+                            exit_time = COALESCE(%s, exit_time),
+                            exit_price = COALESCE(%s, exit_price),
+                            live_price = COALESCE(%s, live_price),
+                            actual_pnl = COALESCE(%s, actual_pnl),
+                            status = %s,
+                            result = %s,
+                            updated_at = %s
+                        WHERE trade_id = %s
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, trade_id))
                     if cursor.rowcount > 0:
                         conn.commit()
@@ -225,14 +246,14 @@ class TradeDB:
                     sig = trade_dict.get("Signal")
                     cursor.execute("""
                         UPDATE trades SET
-                            exit_time = COALESCE(?, exit_time),
-                            exit_price = COALESCE(?, exit_price),
-                            live_price = COALESCE(?, live_price),
-                            actual_pnl = COALESCE(?, actual_pnl),
-                            status = ?,
-                            result = ?,
-                            updated_at = ?
-                        WHERE instrument = ? AND strike = ? AND entry_time = ? AND signal = ?
+                            exit_time = COALESCE(%s, exit_time),
+                            exit_price = COALESCE(%s, exit_price),
+                            live_price = COALESCE(%s, live_price),
+                            actual_pnl = COALESCE(%s, actual_pnl),
+                            status = %s,
+                            result = %s,
+                            updated_at = %s
+                        WHERE instrument = %s AND strike = %s AND entry_time = %s AND signal = %s
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, idx, strike, etime, sig))
                     if cursor.rowcount > 0:
                         conn.commit()
@@ -251,17 +272,17 @@ class TradeDB:
         with self._lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
                 query = "SELECT * FROM trades WHERE 1=1"
                 params = []
                 if status:
-                    query += " AND status = ?"
+                    query += " AND status = %s"
                     params.append(status.upper())
                 if instrument and instrument != "ALL":
-                    query += " AND instrument = ?"
+                    query += " AND instrument = %s"
                     params.append(instrument.upper())
                 query += " ORDER BY trade_date DESC, entry_time DESC, created_at DESC"
-                cursor.execute(query, params)
+                cursor.execute(query, tuple(params))
                 rows = cursor.fetchall()
                 results = []
                 for row in rows:
@@ -300,7 +321,7 @@ class TradeDB:
                 conn.close()
 
     def sync_from_json_and_csv(self) -> int:
-        """Proactively import all trades from trade_journal.json and all CSV logs into SQLite."""
+        """Proactively import all trades from trade_journal.json and all CSV logs into Supabase."""
         imported = 0
         # 1. Sync from trade_journal.json
         if os.path.exists(JOURNAL_FILE):
@@ -341,5 +362,5 @@ class TradeDB:
         except Exception as e:
             log.warning("Sync from CSV failed: %s", e)
 
-        log.info("Synced %d total trade entries into TradeDB", imported)
+        log.info("Synced %d total trade entries into Supabase", imported)
         return imported
