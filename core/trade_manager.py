@@ -303,12 +303,9 @@ class TradeManager:
                         if lock_key not in self._notified_locks:
                             self._notified_locks.add(lock_key)
                             pending_notifications.append(
-                                f"🔥 *TRAILING STOP LOSS ACTIVATED — {idx} {signal}*
-"
-                                f"🎯 Market reached 1:{r_achieved} Reward!
-"
-                                f"🔒 Stop Loss moved to `{new_sl}`
-"
+                                f"🔥 *TRAILING STOP LOSS ACTIVATED — {idx} {signal}*\n"
+                                f"🎯 Market reached 1:{r_achieved} Reward!\n"
+                                f"🔒 Stop Loss moved to `{new_sl}`\n"
                                 f"💰 Guaranteed Profit: `₹{locked_pnl:,.0f}`"
                             )
                             log.info("TRAILING SL: %s %s locked %sR (%.2f)", idx, signal, lock_r, new_sl)
@@ -329,10 +326,8 @@ class TradeManager:
                     events.append({"type": "AUTO_SQ", "trade": trade, "pnl": pnl})
                     if should_notify:
                         pending_notifications.append(
-                            f"🛑 *AUTO SQUARE-OFF — {idx} {signal}*
-"
-                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`
-"
+                            f"🛑 *AUTO SQUARE-OFF — {idx} {signal}*\n"
+                            f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
                             f"💸 Final P&L: `₹{pnl:,.0f}` | Time: `{now_str}`"
                         )
                     log.info("AUTO-SQ: %s %s Strike=%s Exit=%.2f PnL=%.2f", idx, signal, trade.get("Strike"), lp, pnl)
