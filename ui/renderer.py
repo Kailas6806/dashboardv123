@@ -810,16 +810,9 @@ def render_trade_history_tab(journal):
     db = TradeDB()
 
     # 1. Action Bar: Sync & Status
-    col_sync, col_status = st.columns([2, 5])
-    with col_sync:
-        if st.button("🔄 SYNC ALL TRADES TO SQLITE", key="btn_sync_db", use_container_width=True):
-            imported = db.sync_from_json_and_csv()
-            st.success(f"Synced {imported} trades into SQLite database!")
-            st.rerun()
-    with col_status:
-        st.caption("All trades are permanently stored in SQLite database (`trades.db`) and mirrored to JSON/CSV.")
+    st.caption("☁️ All trades are permanently stored and securely synced to Supabase Cloud Database.")
 
-    # 2. Gather trades: Query SQLite directly
+    # 2. Gather trades: Query Supabase directly
     all_trades = db.get_all_trades()
     if not all_trades and journal:
         all_trades = journal.get_all_trades()
