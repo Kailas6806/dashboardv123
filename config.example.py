@@ -182,3 +182,9 @@ try:
             SUPABASE_URI = str(_secrets["SUPABASE_URI"])
 except Exception:
     pass
+
+# ML / XGBOOST CONFIG
+ML_ENABLED = True
+ML_MIN_PROBABILITY = 0.70
+ML_FAIL_SAFE_BLOCK = True
+ML_MODELS_DIR = 'models'
