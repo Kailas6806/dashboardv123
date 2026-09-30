@@ -30,7 +30,23 @@ log = get_logger("trade_db")
 
 
 # SUPABASE CONNECTION URI
-SUPABASE_URI = "postgresql://postgres.zhccuhvpxkwubrabqpzi:xFEvCDnKJocvOMbD@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
+SUPABASE_URI = ""
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets") and "SUPABASE_URI" in _st.secrets:
+        SUPABASE_URI = str(_st.secrets["SUPABASE_URI"]).strip()
+except Exception:
+    pass
+
+import os
+if not SUPABASE_URI:
+    SUPABASE_URI = os.environ.get("SUPABASE_URI", "").strip()
+
+if not SUPABASE_URI or "pooler.supabase.com" not in SUPABASE_URI:
+    raise ValueError(
+        "CRITICAL ERROR: Valid SUPABASE_URI (IPv4 pooler) not found in Streamlit Secrets! "
+        "Please check your Streamlit Cloud Settings -> Secrets and ensure SUPABASE_URI is on a single line."
+    )
 
 class TradeDB:
 
