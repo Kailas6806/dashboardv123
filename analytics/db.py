@@ -30,13 +30,7 @@ log = get_logger("trade_db")
 
 
 # SUPABASE CONNECTION URI
-SUPABASE_URI = ""
-try:
-    import streamlit as _st
-    if hasattr(_st, "secrets") and "SUPABASE_URI" in _st.secrets:
-        SUPABASE_URI = str(_st.secrets["SUPABASE_URI"])
-except Exception:
-    pass
+SUPABASE_URI = "postgresql://postgres.zhccuhvpxkwubrabqpzi:xFEvCDnKJocvOMbD@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
 
 class TradeDB:
 
