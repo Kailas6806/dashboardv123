@@ -111,7 +111,7 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_health, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "🏥 System", "SETTINGS"])
+tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_health, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "🏥 SYSTEM", "SETTINGS"])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
