@@ -111,7 +111,7 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "SETTINGS"])
+tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_health, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "🏥 System", "SETTINGS"])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
@@ -159,6 +159,10 @@ with tab_history:
     render_trade_history_tab(journal)
 with tab_analytics:
     show_analytics()
+with tab_health:
+    from ui.health_renderer import render_health_dashboard
+    render_health_dashboard(fetcher, trade_mgr, copilot)
+
 with tab_settings:
     render_settings_tab(trade_mgr, journal)
 
