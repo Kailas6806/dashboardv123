@@ -178,5 +178,7 @@ try:
             TELEGRAM_TOKEN = str(_secrets["TELEGRAM_TOKEN"])
         if "TELEGRAM_CHAT_ID" in _secrets:
             TELEGRAM_CHAT_ID = str(_secrets["TELEGRAM_CHAT_ID"])
+        if "SUPABASE_URI" in _secrets:
+            SUPABASE_URI = str(_secrets["SUPABASE_URI"])
 except Exception:
     pass
