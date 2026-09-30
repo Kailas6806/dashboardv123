@@ -111,7 +111,7 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_settings = st.tabs([open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "SETTINGS"])
+tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "SETTINGS"])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
@@ -135,9 +135,7 @@ def show_analytics():
 
 with tab_open:
     show_open_trades()
-with tab_swing:
-    from ui.swing_renderer import render_swing_tab
-    render_swing_tab(copilot, notifier)
+
 with tab_nifty:
     show_nifty()
 with tab_banknifty:
