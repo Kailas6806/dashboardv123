@@ -440,7 +440,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                         st.success(f"🤖 **XGBoost Approved:** {xgb_msg}")
                 except Exception as e:
                     import config
-                      ML_FAIL_SAFE_BLOCK = getattr(config, "ML_FAIL_SAFE_BLOCK", True)
+                    ML_FAIL_SAFE_BLOCK = getattr(config, "ML_FAIL_SAFE_BLOCK", True)
                     st.error(f"XGBoost Error: {e}")
                     if ML_FAIL_SAFE_BLOCK:
                         xgb_ok = False
