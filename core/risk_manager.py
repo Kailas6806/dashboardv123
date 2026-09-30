@@ -79,8 +79,8 @@ class RiskManager:
         eff_max_loss = max_loss_override if max_loss_override is not None else MAX_LOSS
         # Floor SL points so that (sl_u * qty) strictly NEVER exceeds MAX_LOSS (₹2,000)
         sl_u = math.floor((eff_max_loss / qty) * 100) / 100.0
-        # Ceil target points so that target profit strictly reaches at least DAILY_TGT (₹4,000)
-        tgt_u = math.ceil((DAILY_TGT / qty) * 100) / 100.0
+        # Dynamic 1:2 Risk/Reward Target
+        tgt_u = round(sl_u * 2, 2)
         sl_p = max(0.05, round(ep - sl_u, 2))
         tgt_p = round(ep + tgt_u, 2)
         max_loss = min(round(sl_u * qty, 2), float(eff_max_loss))
@@ -116,9 +116,8 @@ class RiskManager:
             max_sl_pts = math.floor((eff_max_loss / qty) * 100) / 100.0
             atr_sl_points = min(round(atr * ATR_SL_MULTIPLIER, 2), max_sl_pts)
 
-            # Target must achieve at least DAILY_TGT (₹4,000), or 2x ATR SL points if larger
-            min_tgt_pts = math.ceil((DAILY_TGT / qty) * 100) / 100.0
-            tgt_pts = max(min_tgt_pts, round(atr_sl_points * 2, 2))
+            # Strict 1:2 Risk/Reward Target based on the actual SL points taken
+            tgt_pts = round(atr_sl_points * 2, 2)
 
             sl_p = max(0.05, round(ep - atr_sl_points, 2))
             tgt_p = round(ep + tgt_pts, 2)
