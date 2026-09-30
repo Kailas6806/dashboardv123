@@ -1644,31 +1644,4 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
 
 
 
-def render_chat_tab(copilot):
-    st.markdown("<h3 style='color:#38bdf8;'>💬 AI Trading Assistant</h3>", unsafe_allow_html=True)
-    st.write("Discuss stocks, market trends, and get live analysis from V12 PRO MAX.")
-    
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = []
 
-    # Scrollable container for chat history
-    chat_container = st.container(height=500)
-    
-    with chat_container:
-        for message in st.session_state.chat_messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-    if prompt := st.chat_input("Ask V12 PRO MAX about a stock or market..."):
-        st.session_state.chat_messages.append({"role": "user", "content": prompt})
-        
-        with chat_container:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                with st.spinner("V12 PRO MAX is analyzing..."):
-                    response = copilot.chat_with_agent(st.session_state.chat_messages)
-                st.markdown(response)
-                
-        st.session_state.chat_messages.append({"role": "assistant", "content": response})
-        st.rerun()

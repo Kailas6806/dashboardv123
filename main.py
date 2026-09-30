@@ -111,9 +111,7 @@ open_count = sum(
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_autonomous, tab_chat, tab_history, tab_analytics, tab_settings = st.tabs([
-    open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "🤖 AUTONOMOUS AI", "💬 AI CHAT", "TRADE HISTORY", "ANALYTICS", "SETTINGS"
-])
+tab_open, tab_swing, tab_nifty, tab_banknifty, tab_finnifty, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_settings = st.tabs([open_tab_label, "📈 SWING TRADING", "NIFTY", "BANKNIFTY", "FINNIFTY", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "SETTINGS"])
 
 # ── FRAGMENTS (silent background refresh every 3s) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
@@ -153,9 +151,7 @@ with tab_autonomous:
     from ui.renderer import render_autonomous_tab
     render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
-with tab_chat:
-    from ui.renderer import render_chat_tab
-    render_chat_tab(copilot)
+
 
 with tab_history:
     render_trade_history_tab(journal)
