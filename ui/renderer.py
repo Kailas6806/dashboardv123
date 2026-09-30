@@ -425,26 +425,26 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                         st.info(f"🤖 AI Analysis Complete — conviction **{ai_pre_score}/100**. (Auto-trade is OFF, proceeding via rules)")
 
 
-              # ??? XGBOOST ML VALIDATION ???
-              xgb_ok = True
-              xgb_prob = 0.0
-              xgb_msg = ""
-              
-              if ai_conviction_ok and trade_allowed and daily_allowed and can_enter:
-                  try:
-                      from ml.predict import evaluate_ml_signal
-                      xgb_prob, xgb_ok, xgb_msg = evaluate_ml_signal(idx, final_signal, md, conf_score)
-                      if not xgb_ok:
-                          st.warning(f"🤖 **XGBoost Filter:** {xgb_msg}")
-                      else:
-                          st.success(f"🤖 **XGBoost Approved:** {xgb_msg}")
-                  except Exception as e:
-                      from config import ML_FAIL_SAFE_BLOCK
-                      st.error(f"XGBoost Error: {e}")
-                      if ML_FAIL_SAFE_BLOCK:
-                          xgb_ok = False
-                          
-              can_enter = can_enter and xgb_ok
+            # ??? XGBOOST ML VALIDATION ???
+            xgb_ok = True
+            xgb_prob = 0.0
+            xgb_msg = ""
+            
+            if ai_conviction_ok and trade_allowed and daily_allowed and can_enter:
+                try:
+                    from ml.predict import evaluate_ml_signal
+                    xgb_prob, xgb_ok, xgb_msg = evaluate_ml_signal(idx, final_signal, md, conf_score)
+                    if not xgb_ok:
+                        st.warning(f"🤖 **XGBoost Filter:** {xgb_msg}")
+                    else:
+                        st.success(f"🤖 **XGBoost Approved:** {xgb_msg}")
+                except Exception as e:
+                    from config import ML_FAIL_SAFE_BLOCK
+                    st.error(f"XGBoost Error: {e}")
+                    if ML_FAIL_SAFE_BLOCK:
+                        xgb_ok = False
+                        
+            can_enter = can_enter and xgb_ok
             if not ai_conviction_ok or not xgb_ok:
                 # AI blocked — don't enter, but mark signal as seen so it doesn't loop
                 st.session_state[sk(idx, "last_signal")] = final_signal
