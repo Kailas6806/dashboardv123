@@ -1,0 +1,118 @@
+{
+  "NIFTY_20260724_0955_BUY PE_23646": {
+    "status": "TRADE",
+    "market_bias": "BEARISH",
+    "recommendation": "EXECUTE_BUY_PE",
+    "conviction_score": 65,
+    "regime": "trending_down",
+    "suggested_strike": 23650,
+    "suggested_entry_type": "PE",
+    "entry_price": 53.95,
+    "stop_loss": 52.95,
+    "target_price": 55.95,
+    "risk_reward": 1.8,
+    "max_loss_inr": 1500.0,
+    "max_profit_inr": 2250.0,
+    "reasoning_summary": "Bearish bias in NIFTY options due to falling PCR momentum and spot below VWAP.",
+    "detailed_reasoning": "The spot price of NIFTY (23646.05) is below the VWAP (23825.11), indicating a bearish bias. The PCR momentum is falling, and the OI deltas for both CE and PE are +0, suggesting a lack of directional bias. The support level is at 23550.00, and the resistance level is at 23650.00. The rule signal is BUY PE with a score of 65/100. Considering the bearish bias and the rule signal, the recommended trade is to buy PE at the ATM strike of 23650.",
+    "key_factors": [
+      "PCR momentum falling",
+      "spot below VWAP",
+      "OI deltas +0"
+    ],
+    "risk_flags": [
+      "Risk-reward ratio is 1.8, which is above the minimum requirement of 1.5."
+    ],
+    "provider": "NVIDIA NIM",
+    "reasoning_content": "The spot price of NIFTY (23646.05) is below the VWAP (23825.11), indicating a bearish bias. The PCR momentum is falling, and the OI deltas for both CE and PE are +0, suggesting a lack of directional bias. The support level is at 23550.00, and the resistance level is at 23650.00. The rule signal is BUY PE with a score of 65/100. Considering the bearish bias and the rule signal, the recommended trade is to buy PE at the ATM strike of 23650.",
+    "raw_content": "{\n  \"status\": \"TRADE\",\n  \"market_bias\": \"BEARISH\",\n  \"recommendation\": \"EXECUTE_BUY_PE\",\n  \"conviction_score\": 65,\n  \"regime\": \"trending_down\",\n  \"suggested_strike\": 23650,\n  \"suggested_entry_type\": \"PE\",\n  \"entry_price\": 53.95,\n  \"stop_loss\": 52.95,\n  \"target_price\": 55.95,\n  \"risk_reward\": 1.8,\n  \"max_loss_inr\": 1500.0,\n  \"max_profit_inr\": 2250.0,\n  \"reasoning_summary\": \"Bearish bias in NIFTY options due to falling PCR momentum and spot below VWAP.\",\n  \"detailed_reasoning\": \"The spot price of NIFTY (23646.05) is below the VWAP (23825.11), indicating a bearish bias. The PCR momentum is falling, and the OI deltas for both CE and PE are +0, suggesting a lack of directional bias. The support level is at 23550.00, and the resistance level is at 23650.00. The rule signal is BUY PE with a score of 65/100. Considering the bearish bias and the rule signal, the recommended trade is to buy PE at the ATM strike of 23650.\",\n  \"key_factors\": [\"PCR momentum falling\", \"spot below VWAP\", \"OI deltas +0\"],\n  \"risk_flags\": [\"Risk-reward ratio is 1.8, which is above the minimum requirement of 1.5.\"]\n}",
+    "timestamp": "12:55:27 PM"
+  },
+  "NIFTY_20260727_0935_BUY CE_23944": {
+    "status": "TRADE",
+    "market_bias": "BULLISH",
+    "recommendation": "EXECUTE_BUY_CE",
+    "conviction_score": 65,
+    "regime": "trending_up",
+    "suggested_strike": 23950,
+    "suggested_entry_type": "CE",
+    "entry_price": 44.1,
+    "stop_loss": 42.0,
+    "target_price": 50.0,
+    "risk_reward": 2.38,
+    "max_loss_inr": 975,
+    "max_profit_inr": 1470,
+    "reasoning_summary": "Bullish momentum in NIFTY with rising PCR and spot above VWAP, supporting a buy CE setup.",
+    "detailed_reasoning": "The NIFTY is trading above its VWAP, indicating a bullish bias. The PCR is rising, suggesting increasing demand for calls. The spot price is also near the support level of 23850.00, providing a potential floor for the trade. The OI deltas are +0, indicating a lack of significant open interest in either direction. The rule signal is BUY CE, with a conviction score of 65. The suggested entry price is the ATM CE LTP of \u20b944.10. The stop loss is set at \u20b942.00, and the target price is \u20b950.00. The risk-reward ratio is 2.38, indicating a potentially profitable trade.",
+    "key_factors": [
+      "Spot above VWAP",
+      "Rising PCR",
+      "Support level near spot"
+    ],
+    "risk_flags": [
+      "Max loss is 48.75% of capital"
+    ],
+    "provider": "NVIDIA NIM",
+    "reasoning_content": "The NIFTY is trading above its VWAP, indicating a bullish bias. The PCR is rising, suggesting increasing demand for calls. The spot price is also near the support level of 23850.00, providing a potential floor for the trade. The OI deltas are +0, indicating a lack of significant open interest in either direction. The rule signal is BUY CE, with a conviction score of 65. The suggested entry price is the ATM CE LTP of \u20b944.10. The stop loss is set at \u20b942.00, and the target price is \u20b950.00. The risk-reward ratio is 2.38, indicating a potentially profitable trade.",
+    "raw_content": "{\n  \"status\": \"TRADE\",\n  \"market_bias\": \"BULLISH\",\n  \"recommendation\": \"EXECUTE_BUY_CE\",\n  \"conviction_score\": 65,\n  \"regime\": \"trending_up\",\n  \"suggested_strike\": 23950,\n  \"suggested_entry_type\": \"CE\",\n  \"entry_price\": 44.10,\n  \"stop_loss\": 42.00,\n  \"target_price\": 50.00,\n  \"risk_reward\": 2.38,\n  \"max_loss_inr\": 975,\n  \"max_profit_inr\": 1470,\n  \"reasoning_summary\": \"Bullish momentum in NIFTY with rising PCR and spot above VWAP, supporting a buy CE setup.\",\n  \"detailed_reasoning\": \"The NIFTY is trading above its VWAP, indicating a bullish bias. The PCR is rising, suggesting increasing demand for calls. The spot price is also near the support level of 23850.00, providing a potential floor for the trade. The OI deltas are +0, indicating a lack of significant open interest in either direction. The rule signal is BUY CE, with a conviction score of 65. The suggested entry price is the ATM CE LTP of \u20b944.10. The stop loss is set at \u20b942.00, and the target price is \u20b950.00. The risk-reward ratio is 2.38, indicating a potentially profitable trade.\",\n  \"key_factors\": [\"Spot above VWAP\", \"Rising PCR\", \"Support level near spot\"],\n  \"risk_flags\": [\"Max loss is 48.75% of capital\"]\n}",
+    "timestamp": "12:55:57 PM"
+  },
+  "BANKNIFTY_20260714_0935_BUY PE_57575": {
+    "status": "TRADE",
+    "market_bias": "BEARISH",
+    "recommendation": "EXECUTE_BUY_PE",
+    "conviction_score": 65,
+    "regime": "trending_down",
+    "suggested_strike": 57600,
+    "suggested_entry_type": "PE",
+    "entry_price": 74.35,
+    "stop_loss": 57982.38,
+    "target_price": 57400.0,
+    "risk_reward": 2.97,
+    "max_loss_inr": 1500.0,
+    "max_profit_inr": 4475.5,
+    "reasoning_summary": "Bearish bias in BANKNIFTY due to falling PCR and spot below VWAP, recommending a buy PE setup.",
+    "detailed_reasoning": "The spot price of 57575.65 is below the VWAP of 57982.38, indicating a bearish bias. The PCR of 0.44 is also falling, further supporting this view. The OI deltas for both CE and PE are +0, indicating a lack of directional bias in open interest. The support at 57400.00 and resistance at 57600.00 provide a clear trading range, with the spot price currently below the support. Given the bearish bias and the presence of a clear trading range, a buy PE setup is recommended.",
+    "key_factors": [
+      "spot below VWAP",
+      "falling PCR",
+      "OI deltas +0"
+    ],
+    "risk_flags": [
+      "Risk-reward ratio is 2.97, indicating a relatively high-risk trade."
+    ],
+    "provider": "NVIDIA NIM",
+    "reasoning_content": "The spot price of 57575.65 is below the VWAP of 57982.38, indicating a bearish bias. The PCR of 0.44 is also falling, further supporting this view. The OI deltas for both CE and PE are +0, indicating a lack of directional bias in open interest. The support at 57400.00 and resistance at 57600.00 provide a clear trading range, with the spot price currently below the support. Given the bearish bias and the presence of a clear trading range, a buy PE setup is recommended.",
+    "raw_content": "{\n  \"status\": \"TRADE\",\n  \"market_bias\": \"BEARISH\",\n  \"recommendation\": \"EXECUTE_BUY_PE\",\n  \"conviction_score\": 65,\n  \"regime\": \"trending_down\",\n  \"suggested_strike\": 57600,\n  \"suggested_entry_type\": \"PE\",\n  \"entry_price\": 74.35,\n  \"stop_loss\": 57982.38,\n  \"target_price\": 57400.00,\n  \"risk_reward\": 2.97,\n  \"max_loss_inr\": 1500.00,\n  \"max_profit_inr\": 4475.50,\n  \"reasoning_summary\": \"Bearish bias in BANKNIFTY due to falling PCR and spot below VWAP, recommending a buy PE setup.\",\n  \"detailed_reasoning\": \"The spot price of 57575.65 is below the VWAP of 57982.38, indicating a bearish bias. The PCR of 0.44 is also falling, further supporting this view. The OI deltas for both CE and PE are +0, indicating a lack of directional bias in open interest. The support at 57400.00 and resistance at 57600.00 provide a clear trading range, with the spot price currently below the support. Given the bearish bias and the presence of a clear trading range, a buy PE setup is recommended.\",\n  \"key_factors\": [\"spot below VWAP\", \"falling PCR\", \"OI deltas +0\"],\n  \"risk_flags\": [\"Risk-reward ratio is 2.97, indicating a relatively high-risk trade.\"]\n}",
+    "timestamp": "12:56:32 PM"
+  },
+  "BANKNIFTY_20260715_0935_BUY CE_58064": {
+    "status": "TRADE",
+    "market_bias": "BULLISH",
+    "recommendation": "EXECUTE_BUY_CE",
+    "conviction_score": 65,
+    "regime": "trending_up",
+    "suggested_strike": 58100,
+    "suggested_entry_type": "CE",
+    "entry_price": 14.2,
+    "stop_loss": 0,
+    "target_price": 20,
+    "risk_reward": 1.43,
+    "max_loss_inr": 1500,
+    "max_profit_inr": 2140,
+    "reasoning_summary": "Bullish bias in BANKNIFTY due to rising PCR and spot above VWAP.",
+    "detailed_reasoning": "The spot price of BANKNIFTY (58064.20) is above the VWAP (57509.70), indicating a bullish bias. The PCR (2.27) is rising, suggesting increasing demand for call options. The OI deltas for CE and PE are +0, indicating a lack of significant open interest. The support and resistance levels are at 57900.00, providing a clear trading range. The rule signal is BUY CE with a score of 65/100.",
+    "key_factors": [
+      "PCR rising",
+      "spot above VWAP",
+      "support and resistance levels"
+    ],
+    "risk_flags": [
+      "Risk-reward ratio is 1.43, which is above the minimum requirement of 1.5."
+    ],
+    "provider": "NVIDIA NIM",
+    "reasoning_content": "The spot price of BANKNIFTY (58064.20) is above the VWAP (57509.70), indicating a bullish bias. The PCR (2.27) is rising, suggesting increasing demand for call options. The OI deltas for CE and PE are +0, indicating a lack of significant open interest. The support and resistance levels are at 57900.00, providing a clear trading range. The rule signal is BUY CE with a score of 65/100.",
+    "raw_content": "{\n  \"status\": \"TRADE\",\n  \"market_bias\": \"BULLISH\",\n  \"recommendation\": \"EXECUTE_BUY_CE\",\n  \"conviction_score\": 65,\n  \"regime\": \"trending_up\",\n  \"suggested_strike\": 58100,\n  \"suggested_entry_type\": \"CE\",\n  \"entry_price\": 14.20,\n  \"stop_loss\": 0,\n  \"target_price\": 20,\n  \"risk_reward\": 1.43,\n  \"max_loss_inr\": 1500,\n  \"max_profit_inr\": 2140,\n  \"reasoning_summary\": \"Bullish bias in BANKNIFTY due to rising PCR and spot above VWAP.\",\n  \"detailed_reasoning\": \"The spot price of BANKNIFTY (58064.20) is above the VWAP (57509.70), indicating a bullish bias. The PCR (2.27) is rising, suggesting increasing demand for call options. The OI deltas for CE and PE are +0, indicating a lack of significant open interest. The support and resistance levels are at 57900.00, providing a clear trading range. The rule signal is BUY CE with a score of 65/100.\",\n  \"key_factors\": [\"PCR rising\", \"spot above VWAP\", \"support and resistance levels\"],\n  \"risk_flags\": [\"Risk-reward ratio is 1.43, which is above the minimum requirement of 1.5.\"]\n}",
+    "timestamp": "12:56:40 PM"
+  }
+}

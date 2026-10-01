@@ -490,7 +490,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             if ai_conviction_ok and trade_allowed and daily_allowed and can_enter:
                 try:
                     from ml.predict import evaluate_ml_signal
-                    xgb_prob, xgb_ok, xgb_msg = evaluate_ml_signal(idx, final_signal, md, conf_score)
+                    ai_analysis_val = st.session_state.get(sk(idx, "ai_analysis"))
+                    xgb_prob, xgb_ok, xgb_msg = evaluate_ml_signal(idx, final_signal, md, conf_score, ai_analysis=ai_analysis_val)
                     if not xgb_ok:
                         st.warning(f"🤖 **XGBoost Filter:** {xgb_msg}")
                     else:

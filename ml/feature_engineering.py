@@ -7,9 +7,9 @@ def calculate_ema(prices, period):
         return prices[-1] if prices else 0
     return pd.Series(prices).ewm(span=period, adjust=False).mean().iloc[-1]
 
-def extract_features(idx: str, spot_history: list, chain_records: list, now: datetime.datetime, strategy_score: float) -> dict:
+def extract_features(idx: str, spot_history: list, chain_records: list, now: datetime.datetime, strategy_score: float, ai_analysis: dict = None) -> dict:
     """
-    Extracts features for XGBoost prediction based on current market state.
+    Extracts features for XGBoost prediction based on current market state and AI Copilot verdict.
     """
     features = {}
     
@@ -70,5 +70,48 @@ def extract_features(idx: str, spot_history: list, chain_records: list, now: dat
     
     # 4. STRATEGY FEATURES
     features['strategy_score'] = strategy_score
+    
+    # 5. AI COPILOT QUANT FEATURES
+    ai_conv = 50.0
+    ai_bias_val = 0.0
+    ai_regime_val = 0.0
+    ai_agrees_val = 0.0
+    
+    if ai_analysis and isinstance(ai_analysis, dict):
+        try:
+            ai_conv = float(ai_analysis.get("conviction_score", 50.0) or 50.0)
+        except Exception:
+            ai_conv = 50.0
+            
+        bias_str = str(ai_analysis.get("market_bias", "")).upper()
+        if "BULL" in bias_str:
+            ai_bias_val = 1.0
+        elif "BEAR" in bias_str:
+            ai_bias_val = -1.0
+        else:
+            ai_bias_val = 0.0
+            
+        regime_str = str(ai_analysis.get("regime", "")).lower()
+        if "up" in regime_str:
+            ai_regime_val = 1.0
+        elif "down" in regime_str:
+            ai_regime_val = -1.0
+        elif "vol" in regime_str:
+            ai_regime_val = 2.0
+        else:
+            ai_regime_val = 0.0
+            
+        rec_str = str(ai_analysis.get("recommendation", "")).upper()
+        if "BUY_CE" in rec_str:
+            ai_agrees_val = 1.0
+        elif "BUY_PE" in rec_str:
+            ai_agrees_val = -1.0
+        else:
+            ai_agrees_val = 0.0
+            
+    features['ai_conviction'] = ai_conv
+    features['ai_bias'] = ai_bias_val
+    features['ai_regime'] = ai_regime_val
+    features['ai_agrees'] = ai_agrees_val
     
     return features

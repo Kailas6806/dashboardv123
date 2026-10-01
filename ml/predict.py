@@ -4,9 +4,9 @@ from ml.feature_engineering import extract_features
 from ml.model_manager import predict_probability
 from analytics.ml_db import log_prediction
 
-def evaluate_ml_signal(idx: str, signal: str, md: dict, strategy_score: float) -> tuple:
+def evaluate_ml_signal(idx: str, signal: str, md: dict, strategy_score: float, ai_analysis: dict = None) -> tuple:
     """
-    Evaluates the signal through XGBoost.
+    Evaluates the signal through XGBoost using technical and AI Copilot quant features.
     Returns: (probability, is_allowed, message)
     """
     if not ML_ENABLED:
@@ -20,7 +20,8 @@ def evaluate_ml_signal(idx: str, signal: str, md: dict, strategy_score: float) -
         spot_history=md.get("spot_history", []),
         chain_records=md.get("chain_records", []),
         now=now,
-        strategy_score=strategy_score
+        strategy_score=strategy_score,
+        ai_analysis=ai_analysis
     )
     
     if not features:
