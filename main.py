@@ -8,6 +8,20 @@ import datetime
 import os
 
 # ── CONFIGURATION ──
+import config
+for _k, _default in [
+    ("GEMINI_API_KEY", ""),
+    ("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+    ("NVIDIA_API_KEY", ""),
+    ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+    ("NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct"),
+]:
+    if not hasattr(config, _k):
+        _val = _default
+        if hasattr(st, "secrets") and _k in st.secrets:
+            _val = str(st.secrets[_k]).strip()
+        setattr(config, _k, _val)
+
 from config import (
     INDEX_CONFIG, IST,
     FRAGMENT_REFRESH_SECONDS, DAILY_REPORT_CHECK_SECS,

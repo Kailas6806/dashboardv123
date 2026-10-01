@@ -19,20 +19,30 @@ import os
 import urllib.request
 import urllib.error
 
-from config import (
-    NVIDIA_API_KEY,
-    NVIDIA_BASE_URL,
-    NVIDIA_MODEL,
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
-    IST,
-    MIN_ENTRY_PRICE,
-    NO_NEW_TRADE_TIME,
-    MAX_DAILY_TRADES,
-    AI_MIN_CONVICTION,
-    INDEX_CONFIG,
-    is_expiry_day,
-)
+import config
+
+NVIDIA_API_KEY = getattr(config, "NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = getattr(config, "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_MODEL = getattr(config, "NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
+GEMINI_API_KEY = getattr(config, "GEMINI_API_KEY", "")
+GEMINI_MODEL = getattr(config, "GEMINI_MODEL", "gemini-3.5-flash-lite")
+IST = getattr(config, "IST", datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+MIN_ENTRY_PRICE = getattr(config, "MIN_ENTRY_PRICE", 5.0)
+NO_NEW_TRADE_TIME = getattr(config, "NO_NEW_TRADE_TIME", datetime.time(15, 15))
+MAX_DAILY_TRADES = getattr(config, "MAX_DAILY_TRADES", 10)
+AI_MIN_CONVICTION = getattr(config, "AI_MIN_CONVICTION", 60)
+INDEX_CONFIG = getattr(config, "INDEX_CONFIG", {})
+is_expiry_day = getattr(config, "is_expiry_day", lambda idx, dt=None: False)
+
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets"):
+        if not GEMINI_API_KEY and "GEMINI_API_KEY" in _st.secrets:
+            GEMINI_API_KEY = str(_st.secrets["GEMINI_API_KEY"]).strip()
+        if not NVIDIA_API_KEY and "NVIDIA_API_KEY" in _st.secrets:
+            NVIDIA_API_KEY = str(_st.secrets["NVIDIA_API_KEY"]).strip()
+except Exception:
+    pass
 
 try:
     from utils.logger import get_logger
