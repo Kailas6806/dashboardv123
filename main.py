@@ -1,7 +1,12 @@
 import os
 import shutil
-if not os.path.exists("config.py") and os.path.exists("config.example.py"):
-    shutil.copy("config.example.py", "config.py")
+# Ensure config.py on Streamlit Cloud container always syncs newest risk rules from config.example.py
+if os.path.exists("config.example.py"):
+    try:
+        if not os.path.exists("config.py") or "/mount/src" in os.path.abspath("."):
+            shutil.copy("config.example.py", "config.py")
+    except Exception:
+        pass
 import streamlit as st
 import pandas as pd
 import datetime
@@ -10,17 +15,36 @@ import os
 # ── CONFIGURATION ──
 import config
 for _k, _default in [
+    ("MAX_LOSS", 1500),
+    ("MAX_INDEX_DAILY_LOSS", 1500),
+    ("MAX_DAILY_LOSS", 4500),
+    ("DAILY_TGT", 3000),
+    ("PROFIT_LOCK_START", 1500),
     ("GEMINI_API_KEY", ""),
     ("GEMINI_MODEL", "gemini-3.5-flash-lite"),
     ("NVIDIA_API_KEY", ""),
     ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
     ("NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct"),
 ]:
-    if not hasattr(config, _k):
-        _val = _default
-        if hasattr(st, "secrets") and _k in st.secrets:
-            _val = str(st.secrets[_k]).strip()
-        setattr(config, _k, _val)
+    _val = getattr(config, _k, _default)
+    # Upgrade any legacy 2000 / 6000 defaults to new 1500 / 4500 rules
+    if _k == "MAX_LOSS" and _val == 2000:
+        _val = 1500
+    elif _k == "MAX_INDEX_DAILY_LOSS" and _val == 2000:
+        _val = 1500
+    elif _k == "MAX_DAILY_LOSS" and _val == 6000:
+        _val = 4500
+    elif _k == "DAILY_TGT" and _val == 4000:
+        _val = 3000
+
+    if hasattr(st, "secrets") and _k in st.secrets:
+        _val = str(st.secrets[_k]).strip()
+        if _k in ("MAX_LOSS", "MAX_INDEX_DAILY_LOSS", "MAX_DAILY_LOSS", "DAILY_TGT", "PROFIT_LOCK_START"):
+            try:
+                _val = int(_val)
+            except Exception:
+                pass
+    setattr(config, _k, _val)
 
 from config import (
     INDEX_CONFIG, IST,

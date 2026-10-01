@@ -256,8 +256,9 @@ OUTPUT SCHEMA (strict JSON):
   "risk_reward": <float>,
   "max_loss_inr": <float>,
   "max_profit_inr": <float>,
-  "reasoning_summary": "<concise rationale under 20 words>",
-  "key_factors": ["<short factor 1>", "<short factor 2>"],
+  "reasoning_summary": "<concise 1-sentence headline>",
+  "detailed_reasoning": "<in-depth quantitative rationale analyzing spot vs VWAP, PCR momentum, OI deltas, and support/resistance structure>",
+  "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"],
   "risk_flags": ["<risk note>"]
 }}"""
 
@@ -274,7 +275,7 @@ OUTPUT SCHEMA (strict JSON):
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=280,
+                    max_tokens=350,
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
 
@@ -296,7 +297,7 @@ OUTPUT SCHEMA (strict JSON):
                     }
 
                 parsed["provider"] = "NVIDIA NIM"
-                parsed["reasoning_content"] = reasoning or parsed.get("reasoning_summary", "")
+                parsed["reasoning_content"] = parsed.get("detailed_reasoning") or reasoning or parsed.get("reasoning_summary", "")
                 parsed["raw_content"] = content
                 parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
                 if hasattr(self, "_analysis_cache"):
@@ -314,13 +315,13 @@ OUTPUT SCHEMA (strict JSON):
                     prompt,
                     system_instruction=sys_prompt,
                     json_mode=True,
-                    max_tokens=280,
+                    max_tokens=350,
                 )
                 if gemini_text:
                     parsed = self._extract_json(gemini_text)
                     if parsed:
                         parsed["provider"] = "Google Gemini (Fallback)"
-                        parsed["reasoning_content"] = parsed.get("reasoning_summary", "")
+                        parsed["reasoning_content"] = parsed.get("detailed_reasoning") or parsed.get("reasoning_summary", "")
                         parsed["raw_content"] = gemini_text
                         parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
                         if hasattr(self, "_analysis_cache"):

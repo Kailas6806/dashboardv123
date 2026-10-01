@@ -1248,6 +1248,7 @@ def render_settings_tab(trade_mgr, journal):
     - Telegram connection status
     """
     import os
+    import config
     from config import (
         CAPITAL, MAX_LOSS, MAX_DAILY_LOSS, DAILY_TGT,
         COOLDOWN_SECONDS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
@@ -1321,14 +1322,19 @@ def render_settings_tab(trade_mgr, journal):
         st.markdown('</div>', unsafe_allow_html=True)
 
     # 2. Risk & Core Parameters HUD
+    cur_capital = getattr(config, "CAPITAL", 20000)
+    cur_daily_tgt = getattr(config, "DAILY_TGT", 3000)
+    cur_max_loss = getattr(config, "MAX_LOSS", 1500)
+    cur_max_daily_loss = getattr(config, "MAX_DAILY_LOSS", 4500)
+
     st.markdown(f"""
     <div class="card" style="padding:16px 18px;margin-bottom:16px;">
       <div class="label">CORE ENGINE RISK & EXECUTION PARAMETERS</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-top:10px;">
-        <div class="card-inset"><div class="label">CAPITAL</div><div class="kpi num">₹{CAPITAL:,}</div></div>
-        <div class="card-inset"><div class="label">DAILY TARGET</div><div class="kpi num c-ce">₹{DAILY_TGT:,}</div></div>
-        <div class="card-inset"><div class="label">MAX LOSS / INDEX</div><div class="kpi num c-pe">₹{MAX_LOSS:,}</div></div>
-        <div class="card-inset"><div class="label">PORTFOLIO MAX LOSS</div><div class="kpi num c-pe">₹{MAX_DAILY_LOSS:,}</div></div>
+        <div class="card-inset"><div class="label">CAPITAL</div><div class="kpi num">₹{cur_capital:,}</div></div>
+        <div class="card-inset"><div class="label">DAILY TARGET</div><div class="kpi num c-ce">₹{cur_daily_tgt:,}</div></div>
+        <div class="card-inset"><div class="label">MAX LOSS / INDEX</div><div class="kpi num c-pe">₹{cur_max_loss:,}</div></div>
+        <div class="card-inset"><div class="label">PORTFOLIO MAX LOSS</div><div class="kpi num c-pe">₹{cur_max_daily_loss:,}</div></div>
         <div class="card-inset"><div class="label">SL COOLDOWN</div><div class="kpi num">{COOLDOWN_SECONDS}s</div></div>
         <div class="card-inset"><div class="label">MARKET HOURS</div><div class="kpi-sm num" style="color:#ffffff;">{MARKET_OPEN_TIME} – {MARKET_CLOSE_TIME}</div></div>
         <div class="card-inset"><div class="label">AUTO SQUARE-OFF</div><div class="kpi-sm num c-amber">{AUTO_SQUARE_OFF_TIME}</div></div>
