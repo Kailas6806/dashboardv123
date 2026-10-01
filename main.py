@@ -16,8 +16,8 @@ import os
 import config
 for _k, _default in [
     ("MAX_LOSS", 1500),
-    ("MAX_INDEX_DAILY_LOSS", 1500),
-    ("MAX_DAILY_LOSS", 4500),
+    ("MAX_INDEX_DAILY_LOSS", 4500),
+    ("MAX_DAILY_LOSS", 9000),
     ("DAILY_TGT", 3000),
     ("PROFIT_LOCK_START", 1500),
     ("GEMINI_API_KEY", ""),
@@ -27,13 +27,13 @@ for _k, _default in [
     ("NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct"),
 ]:
     _val = getattr(config, _k, _default)
-    # Upgrade any legacy 2000 / 6000 defaults to new 1500 / 4500 rules
+    # Upgrade any legacy defaults for index/portfolio to new 4500 / 9000 rules
     if _k == "MAX_LOSS" and _val == 2000:
         _val = 1500
-    elif _k == "MAX_INDEX_DAILY_LOSS" and _val == 2000:
-        _val = 1500
-    elif _k == "MAX_DAILY_LOSS" and _val == 6000:
+    elif _k == "MAX_INDEX_DAILY_LOSS" and (_val == 1500 or _val == 2000):
         _val = 4500
+    elif _k == "MAX_DAILY_LOSS" and (_val == 4500 or _val == 6000):
+        _val = 9000
     elif _k == "DAILY_TGT" and _val == 4000:
         _val = 3000
 

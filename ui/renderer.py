@@ -1326,7 +1326,8 @@ def render_settings_tab(trade_mgr, journal):
     cur_capital = getattr(config, "CAPITAL", 20000)
     cur_daily_tgt = getattr(config, "DAILY_TGT", 3000)
     cur_max_loss = getattr(config, "MAX_LOSS", 1500)
-    cur_max_daily_loss = getattr(config, "MAX_DAILY_LOSS", 4500)
+    cur_max_index_daily_loss = getattr(config, "MAX_INDEX_DAILY_LOSS", 4500)
+    cur_max_daily_loss = getattr(config, "MAX_DAILY_LOSS", 9000)
 
     st.markdown(f"""
     <div class="card" style="padding:16px 18px;margin-bottom:16px;">
@@ -1334,7 +1335,8 @@ def render_settings_tab(trade_mgr, journal):
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-top:10px;">
         <div class="card-inset"><div class="label">CAPITAL</div><div class="kpi num">₹{cur_capital:,}</div></div>
         <div class="card-inset"><div class="label">DAILY TARGET</div><div class="kpi num c-ce">₹{cur_daily_tgt:,}</div></div>
-        <div class="card-inset"><div class="label">MAX LOSS / INDEX</div><div class="kpi num c-pe">₹{cur_max_loss:,}</div></div>
+        <div class="card-inset"><div class="label">MAX LOSS / TRADE</div><div class="kpi num c-pe">₹{cur_max_loss:,}</div></div>
+        <div class="card-inset"><div class="label">MAX LOSS / INDEX</div><div class="kpi num c-pe">₹{cur_max_index_daily_loss:,}</div></div>
         <div class="card-inset"><div class="label">PORTFOLIO MAX LOSS</div><div class="kpi num c-pe">₹{cur_max_daily_loss:,}</div></div>
         <div class="card-inset"><div class="label">SL COOLDOWN</div><div class="kpi num">{COOLDOWN_SECONDS}s</div></div>
         <div class="card-inset"><div class="label">MARKET HOURS</div><div class="kpi-sm num" style="color:#ffffff;">{MARKET_OPEN_TIME} – {MARKET_CLOSE_TIME}</div></div>

@@ -1,6 +1,6 @@
 """
 V12 PRO MAX — Risk Manager
-Position sizing, fixed stop-loss (₹2,000), cooldown, and daily loss limits.
+Position sizing, fixed stop-loss (₹1,500), cooldown, and daily loss limits.
 IMPORTANT: qty is ALWAYS = lot (1 lot only, no dynamic scaling).
 """
 import datetime
@@ -46,7 +46,7 @@ class RiskManager:
     """Manages risk calculations for trade entry, fixed SL, and cooldowns.
 
     Design principle: qty is ALWAYS = lot (1 lot only). No dynamic
-    position sizing. SL is fixed at ₹2,000 (MAX_LOSS). No trailing stop.
+    position sizing. SL is fixed at ₹1,500 (MAX_LOSS). No trailing stop.
     """
 
     # ──────────────────────────────────────────────
@@ -216,7 +216,7 @@ class RiskManager:
                     except (ValueError, TypeError):
                         pass  # can't parse time, skip cooldown check
 
-        # ── Per-Index daily loss limit (₹2,000 max per index) ──
+        # ── Per-Index daily loss limit (₹4,500 max per index) ──
         closed_idx = [t for t in trade_log if t.get("Status") == "CLOSED"]
         idx_pnl = sum(float(t.get("Actual P&L ₹") or 0) for t in closed_idx if t.get("Actual P&L ₹") is not None)
         if idx_pnl <= -MAX_INDEX_DAILY_LOSS:
@@ -240,9 +240,9 @@ class RiskManager:
         self, trade_log: List[Dict[str, Any]]
     ) -> Tuple[bool, str]:
         """Check daily limits across all indices:
-        1. Max trades per day total (MAX_DAILY_TRADES = 6).
+        1. Max trades per day total (MAX_DAILY_TRADES = 10).
         2. Consecutive loss limit.
-        3. Max daily portfolio loss limit (₹6,000).
+        3. Max daily portfolio loss limit (₹9,000).
 
         Parameters
         ----------

@@ -166,11 +166,56 @@ def fetch_historical_candles_archive(idx: str, days: int = 60) -> List[Dict[str,
 
 def get_historical_candles(idx: str, days: int = 60) -> List[Dict[str, Any]]:
     """
-    Fetches historical candles: tries Angel One first, falls back to archive feed.
+    Fetches historical candles: checks local data/historical cache first,
+    then tries Angel One, and falls back to archive feed.
     """
+    # 1. Check local CSV cache
+    local_csv = os.path.join(ROOT_DIR, "data", "historical", f"{idx}_5m.csv")
+    if os.path.exists(local_csv):
+        try:
+            df = pd.read_csv(local_csv)
+            candles = []
+            for _, row in df.iterrows():
+                dt_raw = row["datetime"]
+                if isinstance(dt_raw, str):
+                    dt = datetime.datetime.strptime(dt_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                else:
+                    dt = dt_raw
+                candles.append({
+                    "dt": dt,
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row.get("volume", 0.0))
+                })
+            logger.info(f"Loaded {len(candles)} candles for {idx} from local storage ({local_csv})")
+            return candles
+        except Exception as e:
+            logger.warning(f"Error reading local CSV {local_csv}: {e}. Falling back to live fetch.")
+
+    # 2. Try Angel One, then fallback to archive
     candles = fetch_historical_candles_angel(idx, days)
     if not candles:
         candles = fetch_historical_candles_archive(idx, days)
+        
+    # Save to local storage for future instant runs
+    if candles:
+        try:
+            os.makedirs(os.path.join(ROOT_DIR, "data", "historical"), exist_ok=True)
+            export_rows = [{
+                "datetime": c["dt"].strftime("%Y-%m-%d %H:%M:%S"),
+                "open": c["open"],
+                "high": c["high"],
+                "low": c["low"],
+                "close": c["close"],
+                "volume": c["volume"]
+            } for c in candles]
+            pd.DataFrame(export_rows).to_csv(local_csv, index=False)
+            logger.info(f"Cached {len(candles)} candles locally to {local_csv}")
+        except Exception as e:
+            logger.warning(f"Failed to cache candles locally: {e}")
+            
     return candles
 
 
@@ -223,24 +268,23 @@ def replay_rule_engine(
         ema20 = pd.Series(spot_history).ewm(span=20, adjust=False).mean().iloc[-1]
         ema50 = pd.Series(spot_history).ewm(span=50, adjust=False).mean().iloc[-1] if len(spot_history) >= 20 else ema20
         
-        # Realistic PCR and OI simulation based on price action and trend
+        # Realistic continuous PCR and strike OI simulation
         diff_pct = (spot - ema20) / ema20 * 100
-        pcr = round(1.0 + (diff_pct * 0.4), 2)
-        pcr = max(0.6, min(1.6, pcr))
-        pcr_history.append(pcr)
+        diff_50_pct = (spot - ema50) / ema50 * 100 if len(spot_history) >= 20 else 0
+        base_pcr = max(0.55, min(1.75, round(1.0 + (diff_pct * 0.35) + (diff_50_pct * 0.15), 2)))
+        pcr_history.append(base_pcr)
         if len(pcr_history) > 10:
             pcr_history.pop(0)
             
-        is_bullish = pcr > 1.15
-        is_bearish = pcr < 0.85
-        
         atm = round(spot / step) * step
         strikes = [atm - step * 2, atm - step, atm, atm + step, atm + step * 2]
         rows = []
         chain_records = []
         for s in strikes:
-            ce_oi = 80000 if (is_bearish and s >= atm) else (30000 if is_bullish else 50000)
-            pe_oi = 80000 if (is_bullish and s <= atm) else (30000 if is_bearish else 50000)
+            pe_dist_sq = (s - (atm - step)) ** 2
+            ce_dist_sq = (s - (atm + step)) ** 2
+            pe_oi = int(max(10000, 50000 * base_pcr * np.exp(-pe_dist_sq / (2 * (1.5 * step) ** 2))))
+            ce_oi = int(max(10000, 50000 / base_pcr * np.exp(-ce_dist_sq / (2 * (1.5 * step) ** 2))))
             ce_ltp = max(5.0, spot - s + 50) if spot > s else max(5.0, 50 - (s - spot))
             pe_ltp = max(5.0, s - spot + 50) if s > spot else max(5.0, 50 - (spot - s))
             
@@ -273,7 +317,7 @@ def replay_rule_engine(
         
         # Trigger trade entry when signal confirms and cooldown passed (>= 4 bars = 20 mins)
         if final_sig in ("BUY CE", "BUY PE") and (i - last_trade_bar >= 4) and in_window:
-            conf_score = 80 if final_conf == "HIGH" else 65
+            conf_score = engine.compute_confidence_score(md, final_sig, "NONE")
             
             # --- AI COPILOT EVALUATION ---
             ai_res = None
