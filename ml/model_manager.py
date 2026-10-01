@@ -33,12 +33,14 @@ def train_model():
     
     # Simple conservative XGBoost
     model = XGBClassifier(
-        n_estimators=100,
+        n_estimators=50,      # fewer trees for speed
         max_depth=3,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=42
+        random_state=42,
+        n_jobs=1,            # single thread to avoid overhead
+        tree_method='hist'   # faster histogram algorithm
     )
     
     model.fit(X_train, y_train)
@@ -57,7 +59,7 @@ def train_model():
     if not os.path.exists(MODELS_DIR):
         os.makedirs(MODELS_DIR)
         
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(model, MODEL_PATH, compress=3)
     logger.info(f"Model trained and saved. Metrics: {metrics}")
     
     return True, metrics

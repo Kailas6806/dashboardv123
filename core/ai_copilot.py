@@ -57,6 +57,7 @@ class AICopilot:
         self.base_url = base_url or NVIDIA_BASE_URL
         self.model = model or NVIDIA_MODEL
         self._client: Optional[OpenAI] = None
+        self._analysis_cache: Dict[str, Any] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -130,6 +131,16 @@ class AICopilot:
         ce_ltp = atm_row.get("CE LTP", 0) if hasattr(atm_row, "get") else 0
         pe_ltp = atm_row.get("PE LTP", 0) if hasattr(atm_row, "get") else 0
 
+        # Check cache (30-second TTL on similar market state to prevent spamming API on fast UI refresh)
+        cache_key = f"{idx}_{round(spot, 0)}_{round(pcr, 2)}_{raw_signal}"
+        import time as _time
+        _now_ts = _time.time()
+        if hasattr(self, "_analysis_cache") and cache_key in self._analysis_cache:
+            _c_time, _c_res = self._analysis_cache[cache_key]
+            if _now_ts - _c_time < 30.0:
+                log.info("Returning cached AI Copilot analysis for %s (age: %.1fs)", idx, _now_ts - _c_time)
+                return _c_res
+
         prompt = f"""
 You are an expert quantitative Indian index options trader for the National Stock Exchange (NSE).
 Analyze the current live market setup and rule-engine signal for {idx}:
@@ -166,7 +177,7 @@ Respond strictly in valid JSON with this exact schema:
 """
 
         try:
-            # Call with reasoning enabled
+            # Fast inference: max_tokens=400, enable_thinking=False avoids 15-25s delay of reasoning tokens
             completion = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -176,9 +187,9 @@ Respond strictly in valid JSON with this exact schema:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,
-                max_tokens=2048,
-                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                temperature=0.2,
+                max_tokens=400,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
 
             msg = completion.choices[0].message
@@ -199,9 +210,11 @@ Respond strictly in valid JSON with this exact schema:
                     "risk_warning": "Verify market signals manually",
                 }
 
-            parsed["reasoning_content"] = reasoning
+            parsed["reasoning_content"] = reasoning or parsed.get("reasoning_summary", "")
             parsed["raw_content"] = content
             parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+            if hasattr(self, "_analysis_cache"):
+                self._analysis_cache[cache_key] = (_now_ts, parsed)
             return parsed
 
         except Exception as e:
@@ -293,6 +306,21 @@ DECISION RULE:
 - Score < 30: WAIT (no clear edge)'''
 
         try:
+            if self._client:
+                completion = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are an elite autonomous trading AI. Output strict JSON only."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=250,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                )
+                content = completion.choices[0].message.content or ""
+                parsed = self._extract_json(content)
+                if parsed:
+                    return parsed
             import requests
             url = f"{NVIDIA_BASE_URL}/chat/completions"
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -303,17 +331,16 @@ DECISION RULE:
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 300
+                "max_tokens": 250,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
             }
-            resp = requests.post(url, headers=headers, json=payload, timeout=60.0)
+            resp = requests.post(url, headers=headers, json=payload, timeout=25.0)
             if resp.status_code == 200:
-                import json
                 content = resp.json()["choices"][0]["message"]["content"]
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].strip()
-                return json.loads(content)
+                parsed = self._extract_json(content)
+                if parsed:
+                    return parsed
+                return {"signal": "WAIT", "conviction": 0, "reasoning": "Could not parse JSON"}
             else:
                 return {"signal": "WAIT", "conviction": 0, "reasoning": f"API Error {resp.status_code}"}
         except Exception as e:
@@ -323,16 +350,26 @@ DECISION RULE:
         if not self.is_configured():
             return "NVIDIA API key not configured."
         try:
+            if self._client:
+                completion = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
+                    temperature=0.4,
+                    max_tokens=512,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                )
+                return completion.choices[0].message.content or ""
             import requests
             url = f"{NVIDIA_BASE_URL}/chat/completions"
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
             payload = {
                 "model": self.model,
                 "messages": [{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
-                "temperature": 0.5,
-                "max_tokens": 1024
+                "temperature": 0.4,
+                "max_tokens": 512,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
             }
-            resp = requests.post(url, headers=headers, json=payload, timeout=60.0)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30.0)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:

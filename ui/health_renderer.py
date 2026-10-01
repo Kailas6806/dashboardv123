@@ -132,7 +132,7 @@ def render_health_dashboard(fetcher, trade_mgr, copilot, md_dict=None):
 
     <style>
     .health-container { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; padding: 1rem; border-radius: 12px; }
-    .grid-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+    .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem; }
     .grid-row-2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-top: 1rem; }
     .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 1rem; }
     .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
