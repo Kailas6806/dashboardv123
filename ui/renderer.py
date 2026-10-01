@@ -274,15 +274,64 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     rec = ai_res.get("recommendation", "AVOID_WAIT").replace("_", " ")
                     conv = ai_res.get("conviction_score", 0)
                     summary = ai_res.get("reasoning_summary", "")
+                    detailed = ai_res.get("detailed_reasoning") or ai_res.get("reasoning_content") or summary
                     t_stamp = ai_res.get("timestamp", datetime.datetime.now(IST).strftime("%I:%M:%S %p"))
                     bias = ai_res.get("market_bias", "NEUTRAL")
-                    
-                    if "BUY" in rec:
-                        st.success(f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}) • *{t_stamp}*\n\n{summary}")
-                    else:
-                        st.warning(f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}) • *{t_stamp}*\n\n{summary}")
+                    provider = ai_res.get("provider", "AI Copilot")
+                    regime = str(ai_res.get("regime", "")).replace("_", " ").upper()
+
+                    is_buy = "BUY" in rec
+                    banner_fn = st.success if is_buy else st.warning
+
+                    # Build Quantitative Execution Details if trade is recommended
+                    trade_details = ""
+                    strike = ai_res.get("suggested_strike")
+                    etype = ai_res.get("suggested_entry_type", "")
+                    ep = ai_res.get("entry_price")
+                    sl = ai_res.get("stop_loss")
+                    tgt = ai_res.get("target_price")
+                    rr = ai_res.get("risk_reward")
+                    ml = ai_res.get("max_loss_inr")
+                    mp = ai_res.get("max_profit_inr")
+
+                    if is_buy and strike and ep is not None:
+                        ep_f = float(ep)
+                        sl_f = float(sl) if sl is not None else 0.0
+                        tgt_f = float(tgt) if tgt is not None else 0.0
+                        rr_f = float(rr) if rr is not None else 1.5
+                        ml_f = float(ml) if ml is not None else 1500.0
+                        mp_f = float(mp) if mp is not None else 3000.0
+                        trade_details = (
+                            f"\n\n**🎯 Setup:** `{strike} {etype}` @ ₹{ep_f:.2f} | "
+                            f"**SL:** ₹{sl_f:.2f} | **TGT:** ₹{tgt_f:.2f} | "
+                            f"**R:R:** 1:{rr_f:.2f} | **Max Risk:** ₹{ml_f:,.0f} | **Target P&L:** ₹{mp_f:,.0f}"
+                        )
+
+                    # Format key factors & risk flags
+                    factors = ai_res.get("key_factors", [])
+                    factors_text = ""
+                    if factors and isinstance(factors, list):
+                        factors_clean = [str(f) for f in factors if f]
+                        if factors_clean:
+                            factors_text = "\n\n**📌 Drivers:** " + " • ".join([f"`{f}`" for f in factors_clean])
+
+                    flags = ai_res.get("risk_flags", [])
+                    flags_text = ""
+                    if flags and isinstance(flags, list):
+                        flags_clean = [str(f) for f in flags if f and "none" not in str(f).lower()]
+                        if flags_clean:
+                            flags_text = "\n\n⚠️ **Risk Note:** " + " • ".join(flags_clean)
+
+                    banner_fn(
+                        f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}"
+                        f"{f' • {regime}' if regime else ''}) • *{provider} @ {t_stamp}*\n\n"
+                        f"**🧠 Reasoning:** {detailed}"
+                        f"{trade_details}"
+                        f"{factors_text}"
+                        f"{flags_text}"
+                    )
                 else:
-                    st.caption("🤖 NVIDIA Copilot ready. Click button to validate live option chain & market bias.")
+                    st.caption("🤖 AI Copilot ready. Click button to validate live option chain & market bias.")
 
     # ── RISK MANAGEMENT CARD ──
     # Show ATR SL info if we have enough history
@@ -412,7 +461,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     st.session_state[sk(idx, "ai_analysis")] = ai_pre
                     ai_pre_score = ai_pre.get("conviction_score", 0)
                     ai_pre_rec   = ai_pre.get("recommendation", "AVOID_WAIT")
-                    ai_pre_summary = ai_pre.get("reasoning_summary", "")
+                    ai_pre_summary = ai_pre.get("detailed_reasoning") or ai_pre.get("reasoning_summary", "")
                     
                     if ai_auto_on:
                         # Block only if conviction is LOW or AI says avoid AND auto-trade is ON
@@ -420,10 +469,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                             ai_conviction_ok = False
                             st.warning(
                                 f"🤖 AI blocked {idx} trade — conviction {ai_pre_score}/100 "
-                                f"(need ≥{AI_MIN_CONVICTION}) | AI says: `{ai_pre_rec.replace('_',' ')}`"
+                                f"(need ≥{AI_MIN_CONVICTION}) | AI says: `{ai_pre_rec.replace('_',' ')}`\n\n"
+                                f"**Reason:** {ai_pre_summary}"
                             )
                         else:
-                            st.success(f"🤖 AI approved {idx} {final_signal} — conviction **{ai_pre_score}/100** ✅")
+                            st.success(
+                                f"🤖 AI approved {idx} {final_signal} — conviction **{ai_pre_score}/100** ✅\n\n"
+                                f"**Reasoning:** {ai_pre_summary}"
+                            )
                     else:
                         # Auto-trade is OFF, just log the AI confidence but don't block
                         st.info(f"🤖 AI Analysis Complete — conviction **{ai_pre_score}/100**. (Auto-trade is OFF, proceeding via rules)")
