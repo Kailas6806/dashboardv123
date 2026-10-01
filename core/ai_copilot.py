@@ -72,7 +72,7 @@ class AICopilot:
             self._client = OpenAI(
                 base_url=self.base_url,
                 api_key=self.api_key,
-                timeout=15.0,
+                timeout=35.0,
             )
             log.info("AICopilot initialized with model %s", self.model)
         except Exception as e:
@@ -141,54 +141,39 @@ class AICopilot:
                 log.info("Returning cached AI Copilot analysis for %s (age: %.1fs)", idx, _now_ts - _c_time)
                 return _c_res
 
-        prompt = f"""
-You are an expert quantitative Indian index options trader for the National Stock Exchange (NSE).
-Analyze the current live market setup and rule-engine signal for {idx}:
-
-### CURRENT MARKET METRICS:
-- Index: {idx}
-- Spot Price: {spot:.2f}
-- ATM Strike: {atm}
+        prompt = f"""Analyze {idx} options setup:
+- Spot: {spot:.2f} | ATM: {atm}
 - ATM CE LTP: ₹{ce_ltp:.2f} | ATM PE LTP: ₹{pe_ltp:.2f}
-- Put-Call Ratio (PCR): {pcr:.2f} (Momentum: {pcr_mom})
-- VWAP Proxy: {vwap:.2f} (Spot is currently {spot_vs_vwap} VWAP)
-- Total CE OI Delta: {ce_delta:+,} | Total PE OI Delta: {pe_delta:+,}
-- Key Support: {support} | Key Resistance: {resistance}
-- Market State: {"SIDEWAYS (" + sideways_str + ")" if is_sideways else "TRENDING/ACTIVE"}
-- Current Algorithmic Signal: {raw_signal} (Rule Engine Score: {conf_score}/100)
-- Active Open Trades in Portfolio: {active_trades_count}
+- PCR: {pcr:.2f} ({pcr_mom}) | VWAP: {vwap:.2f} ({spot_vs_vwap})
+- CE OI Delta: {ce_delta:+,} | PE OI Delta: {pe_delta:+,}
+- Support: {support} | Resistance: {resistance}
+- Rule Signal: {raw_signal} (Score: {conf_score}/100)
 
-### YOUR TASK:
-1. Cross-examine the options open interest dynamics, VWAP relation, and potential bull/bear trap zones.
-2. Determine whether the algorithmic signal ({raw_signal}) is a high-probability opportunity or a trap to avoid.
-3. Provide your final trade decision.
-
-Respond strictly in valid JSON with this exact schema:
+Output strict JSON:
 {{
   "market_bias": "BULLISH" | "BEARISH" | "SIDEWAYS/NEUTRAL",
   "recommendation": "EXECUTE_BUY_CE" | "EXECUTE_BUY_PE" | "AVOID_WAIT",
-  "conviction_score": <integer from 0 to 100>,
-  "suggested_strike": <int strike price or {atm}>,
+  "conviction_score": <int 0-100>,
+  "suggested_strike": {atm},
   "suggested_entry_type": "CE" | "PE" | "NONE",
-  "reasoning_summary": "<concise 2-3 sentence executive summary explaining your rationale>",
-  "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"],
-  "risk_warning": "<key risk or stop loss warning>"
-}}
-"""
+  "reasoning_summary": "<concise rationale under 25 words>",
+  "key_factors": ["<factor 1>", "<factor 2>"],
+  "risk_warning": "<risk note>"
+}}"""
 
         try:
-            # Fast inference: max_tokens=400, enable_thinking=False avoids 15-25s delay of reasoning tokens
+            # Ultra-fast inference: concise prompt, max_tokens=220
             completion = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an elite institutional options trader on NSE. Output only valid JSON.",
+                        "content": "You are a fast quantitative NSE options trading AI. Output strict JSON only.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
-                max_tokens=400,
+                temperature=0.1,
+                max_tokens=220,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
 

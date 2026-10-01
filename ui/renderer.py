@@ -260,25 +260,29 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     if copilot and copilot.is_configured():
         ai_res = st.session_state.get(sk(idx, "ai_analysis"))
         with st.container():
-            col_ai_btn, col_ai_txt = st.columns([2, 5])
+            col_ai_btn, col_ai_txt = st.columns([1.8, 5.2])
             with col_ai_btn:
                 if st.button(f"🧠 AI VALIDATE {idx}", key=f"btn_quick_ai_{idx}", use_container_width=True):
-                    with st.spinner("NVIDIA Nemotron evaluating signal..."):
+                    with st.spinner(f"Evaluating {idx} with NVIDIA AI Copilot..."):
                         ai_res = copilot.analyze_market_and_signals(
                             idx, md, final_signal, conf_score,
                             active_trades_count=len([t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"])
                         )
                         st.session_state[sk(idx, "ai_analysis")] = ai_res
-                        st.rerun()
             with col_ai_txt:
                 if ai_res:
                     rec = ai_res.get("recommendation", "AVOID_WAIT").replace("_", " ")
                     conv = ai_res.get("conviction_score", 0)
                     summary = ai_res.get("reasoning_summary", "")
-                    with st.expander(f"🤖 **AI Verdict:** `{rec}` (Conviction: **{conv}/100**)"):
-                        st.write(summary)
+                    t_stamp = ai_res.get("timestamp", datetime.datetime.now(IST).strftime("%I:%M:%S %p"))
+                    bias = ai_res.get("market_bias", "NEUTRAL")
+                    
+                    if "BUY" in rec:
+                        st.success(f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}) • *{t_stamp}*\n\n{summary}")
+                    else:
+                        st.warning(f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}) • *{t_stamp}*\n\n{summary}")
                 else:
-                    st.caption("🤖 NVIDIA Nemotron 550B ready to validate option chain signals.")
+                    st.caption("🤖 NVIDIA Copilot ready. Click button to validate live option chain & market bias.")
 
     # ── RISK MANAGEMENT CARD ──
     # Show ATR SL info if we have enough history
