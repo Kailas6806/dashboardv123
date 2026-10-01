@@ -124,18 +124,12 @@ FRAGMENT_REFRESH_SECONDS = 1   # @st.fragment(run_every=N)
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)
 
-# ── AI COPILOT CONFIG (Supports OpenAI ChatGPT and NVIDIA NIM) ──
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = "gpt-4o-mini"
-
+# ── NVIDIA AI COPILOT ──
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 try:
     import streamlit as _st
-    if hasattr(_st, "secrets"):
-        if "OPENAI_API_KEY" in _st.secrets:
-            OPENAI_API_KEY = _st.secrets["OPENAI_API_KEY"]
-        if "NVIDIA_API_KEY" in _st.secrets:
-            NVIDIA_API_KEY = _st.secrets["NVIDIA_API_KEY"]
+    if hasattr(_st, "secrets") and "NVIDIA_API_KEY" in _st.secrets:
+        NVIDIA_API_KEY = _st.secrets["NVIDIA_API_KEY"]
 except Exception:
     pass
 
@@ -143,6 +137,17 @@ NVIDIA_BASE_URL         = "https://integrate.api.nvidia.com/v1"
 NVIDIA_MODEL            = "meta/llama-3.2-11b-vision-instruct"
 AI_AUTO_TRADE_DEFAULT   = True
 AI_MIN_CONVICTION       = 60   # Minimum conviction score (0-100) to recommend/execute trade
+
+# ── GEMINI AI FALLBACK ──
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets") and "GEMINI_API_KEY" in _st.secrets:
+        GEMINI_API_KEY = _st.secrets["GEMINI_API_KEY"]
+except Exception:
+    pass
+
+GEMINI_MODEL            = "gemini-3.5-flash-lite"
 
 
 # ANGEL ONE CREDENTIALS

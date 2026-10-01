@@ -57,7 +57,12 @@ def get_last_api_status(copilot, fetcher):
                 diff_sec = int((now - t_ai).total_seconds())
                 ai_ago = f"{diff_sec}s ago" if diff_sec < 60 else f"{diff_sec // 60}m ago"
 
-    # 3. Supabase Cloud DB
+    # 3. Google Gemini AI (Fallback)
+    gemini_key = getattr(copilot, "gemini_key", "")
+    gemini_status = "READY (STANDBY)" if gemini_key else "OFFLINE"
+    gemini_color = "#10b981" if gemini_key else "#64748b"
+
+    # 4. Supabase Cloud DB
     db_status = "LOCAL SYNC"
     db_color = "#38bdf8"
     db_lat = "Instant"
@@ -79,6 +84,7 @@ def get_last_api_status(copilot, fetcher):
     return {
         "market": {"name": "Market Data API (Angel One)", "time": market_str, "ago": market_ago, "status": market_status, "color": market_color, "lat": "45 ms"},
         "ai": {"name": f"NVIDIA AI Copilot ({ai_model})", "time": ai_time_str, "ago": ai_ago, "status": ai_status, "color": ai_color, "lat": "Fast (~1s)"},
+        "gemini": {"name": "Google Gemini AI (Fallback)", "time": now.strftime("%I:%M:%S %p"), "ago": "Auto-switch on fail", "status": gemini_status, "color": gemini_color, "lat": "Ready"},
         "db": {"name": "Supabase Database (PostgreSQL)", "time": now.strftime("%I:%M:%S %p"), "ago": "Active sync", "status": db_status, "color": db_color, "lat": db_lat},
     }
 
