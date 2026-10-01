@@ -10,12 +10,12 @@ IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # ── CAPITAL & RISK ──
 CAPITAL                = 20_000
-MAX_LOSS               = 2000      # Max loss per trade / per index (₹2,000 max)
-MAX_INDEX_DAILY_LOSS   = 2000      # Max cumulative daily loss per index (₹2,000 per index)
-MAX_DAILY_LOSS         = 6000      # Max cumulative daily loss across portfolio (3 indices x ₹2,000 = ₹6,000)
-DAILY_TGT              = 4000      # Target profit per trade (₹4,000 max profit exit)
+MAX_LOSS               = 1500      # Max loss per trade / per index (₹1,500 max)
+MAX_INDEX_DAILY_LOSS   = 1500      # Max cumulative daily loss per index (₹1,500 per index)
+MAX_DAILY_LOSS         = 4500      # Max cumulative daily loss across portfolio (3 indices x ₹1,500 = ₹4,500)
+DAILY_TGT              = 3000      # Target profit per trade (₹3,000 max profit exit at 1:2 R:R)
 MAX_DAILY_TRADES       = 10        # Strict limit: max 10 trades per day
-PROFIT_LOCK_START      = 2000      # When trade reaches +₹2,000, lock SL at +₹2,000
+PROFIT_LOCK_START      = 1500      # When trade reaches +₹1,500, lock SL at +₹1,500
 PROFIT_LOCK_STEP       = 1000      # Increase SL lock by ₹1,000 for each ₹1,000 gain (e.g. 2k -> 3k)
 MAX_PROFIT_EXIT        = 4000      # When trade reaches +₹4,000, exit immediately to take profit
 PROFIT_LOCK_THRESHOLD  = 2000      # Backward-compatible alias for PROFIT_LOCK_START

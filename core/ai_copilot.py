@@ -212,24 +212,53 @@ class AICopilot:
                 log.info("Returning cached AI Copilot analysis for %s (age: %.1fs)", idx, _now_ts - _c_time)
                 return _c_res
 
-        prompt = f"""Analyze {idx} options setup:
-- Spot: {spot:.2f} | ATM: {atm}
-- ATM CE LTP: ₹{ce_ltp:.2f} | ATM PE LTP: ₹{pe_ltp:.2f}
-- PCR: {pcr:.2f} ({pcr_mom}) | VWAP: {vwap:.2f} ({spot_vs_vwap})
-- CE OI Delta: {ce_delta:+,} | PE OI Delta: {pe_delta:+,}
-- Support: {support} | Resistance: {resistance}
-- Rule Signal: {raw_signal} (Score: {conf_score}/100)
+        lot = INDEX_CONFIG.get(idx, {}).get("lot", 50)
+        time_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+        cap_val = getattr(config, "CAPITAL", 20000)
+        max_risk_val = getattr(config, "MAX_LOSS", 1500)
 
-Output strict JSON:
+        prompt = f"""ROLE: Quantitative NSE index options analysis engine. Output strictly one JSON object: no prose, no markdown, no code fences.
+
+INPUT DATA (LIVE):
+- Underlying: {idx} | Spot: {spot:.2f} | ATM Strike: {atm} | Time: {time_str}
+- ATM Options LTP: CE ₹{ce_ltp:.2f} | PE ₹{pe_ltp:.2f}
+- VWAP: {vwap:.2f} (Spot is {spot_vs_vwap})
+- Support: {support:.2f} | Resistance: {resistance:.2f}
+- PCR: {pcr:.2f} (Momentum: {pcr_mom})
+- OI Deltas: CE {ce_delta:+,} | PE {pe_delta:+,}
+- Sideways Flag: {is_sideways} ({sideways_str})
+- Rule Signal: {raw_signal} (Score: {conf_score}/100)
+- Account Parameters: Lot Size: {lot} | Capital: ₹{cap_val} | Max Risk/Trade: ₹{max_risk_val} | Active Trades: {active_trades_count}
+
+DATA RULES:
+- Use ONLY the supplied data above. Never invent prices, lot sizes, or news.
+- If data is invalid or spot <= 0, return status "INSUFFICIENT_DATA" and list missing fields.
+
+ANALYSIS RULES:
+1. Classify regime: trending_up | trending_down | range | high_vol.
+2. Liquidity & Validity: Reject options with LTP < ₹5.00 unless expiry day.
+3. Defined Risk: Every recommended setup must include entry, stop, target, max_loss (INR), max_profit (INR), and risk_reward.
+4. Setup Filter: Reject any trade where risk_reward < 1.5, conviction < 60, or max_loss > ₹{max_risk_val}.
+5. Capital Protection: If signals conflict or regime is "range", return recommendation "AVOID_WAIT" / NO_TRADE. NO_TRADE is preferred over weak setups.
+
+OUTPUT SCHEMA (strict JSON):
 {{
+  "status": "TRADE" | "NO_TRADE" | "INSUFFICIENT_DATA",
   "market_bias": "BULLISH" | "BEARISH" | "SIDEWAYS/NEUTRAL",
   "recommendation": "EXECUTE_BUY_CE" | "EXECUTE_BUY_PE" | "AVOID_WAIT",
   "conviction_score": <int 0-100>,
+  "regime": "trending_up" | "trending_down" | "range" | "high_vol",
   "suggested_strike": {atm},
   "suggested_entry_type": "CE" | "PE" | "NONE",
-  "reasoning_summary": "<concise rationale under 25 words>",
-  "key_factors": ["<factor 1>", "<factor 2>"],
-  "risk_warning": "<risk note>"
+  "entry_price": <float>,
+  "stop_loss": <float>,
+  "target_price": <float>,
+  "risk_reward": <float>,
+  "max_loss_inr": <float>,
+  "max_profit_inr": <float>,
+  "reasoning_summary": "<concise rationale under 20 words>",
+  "key_factors": ["<short factor 1>", "<short factor 2>"],
+  "risk_flags": ["<risk note>"]
 }}"""
 
         # 1. Try NVIDIA NIM (Primary)
@@ -240,12 +269,12 @@ Output strict JSON:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a fast quantitative NSE options trading AI. Output strict JSON only.",
+                            "content": "You are a quantitative NSE index options analysis engine. Output strictly one JSON object.",
                         },
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=220,
+                    max_tokens=280,
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
 
@@ -280,12 +309,12 @@ Output strict JSON:
         # 2. Try Google Gemini (Fallback)
         if self.gemini_key:
             try:
-                sys_prompt = "You are a fast quantitative NSE options trading AI. Output strict JSON only."
+                sys_prompt = "You are a quantitative NSE index options analysis engine. Output strictly one JSON object."
                 gemini_text = self._call_gemini(
                     prompt,
                     system_instruction=sys_prompt,
                     json_mode=True,
-                    max_tokens=220,
+                    max_tokens=280,
                 )
                 if gemini_text:
                     parsed = self._extract_json(gemini_text)
