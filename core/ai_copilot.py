@@ -16,6 +16,8 @@ except ImportError:
     HAS_OPENAI = False
 
 from config import (
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
     NVIDIA_API_KEY,
     NVIDIA_BASE_URL,
     NVIDIA_MODEL,
@@ -24,7 +26,6 @@ from config import (
     NO_NEW_TRADE_TIME,
     MAX_DAILY_TRADES,
     AI_MIN_CONVICTION,
-
     INDEX_CONFIG,
     is_expiry_day,
 )
@@ -45,7 +46,7 @@ log = get_logger("ai_copilot")
 
 
 class AICopilot:
-    """Intelligent trading analyst and execution manager powered by NVIDIA NIM."""
+    """Intelligent trading analyst and execution manager powered by ChatGPT or NVIDIA NIM."""
 
     def __init__(
         self,
@@ -53,20 +54,30 @@ class AICopilot:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
-        self.api_key = api_key or NVIDIA_API_KEY
-        self.base_url = base_url or NVIDIA_BASE_URL
-        self.model = model or NVIDIA_MODEL
+        # Detect ChatGPT vs NVIDIA
+        k = api_key or OPENAI_API_KEY or NVIDIA_API_KEY
+        if (api_key and api_key.startswith("sk-")) or OPENAI_API_KEY:
+            self.provider = "OpenAI ChatGPT"
+            self.api_key = api_key or OPENAI_API_KEY
+            self.base_url = base_url or "https://api.openai.com/v1"
+            self.model = model or OPENAI_MODEL
+        else:
+            self.provider = "NVIDIA NIM"
+            self.api_key = api_key or NVIDIA_API_KEY
+            self.base_url = base_url or NVIDIA_BASE_URL
+            self.model = model or NVIDIA_MODEL
+
         self._client: Optional[OpenAI] = None
         self._analysis_cache: Dict[str, Any] = {}
         self._init_client()
 
     def _init_client(self) -> None:
-        """Initialize the OpenAI client pointing to NVIDIA NIM."""
+        """Initialize the OpenAI client pointing to OpenAI or NVIDIA NIM."""
         if not HAS_OPENAI or OpenAI is None:
             log.warning("AICopilot: openai package is not installed.")
             return
         if not self.api_key:
-            log.warning("AICopilot: No NVIDIA_API_KEY found")
+            log.warning("AICopilot: No API key found for %s", self.provider)
             return
         try:
             self._client = OpenAI(
@@ -74,9 +85,9 @@ class AICopilot:
                 api_key=self.api_key,
                 timeout=35.0,
             )
-            log.info("AICopilot initialized with model %s", self.model)
+            log.info("AICopilot initialized with %s (model: %s)", self.provider, self.model)
         except Exception as e:
-            log.error("AICopilot failed to initialize client: %s", e)
+            log.error("AICopilot failed to initialize %s client: %s", self.provider, e)
             self._client = None
 
     def is_configured(self) -> bool:
@@ -162,20 +173,25 @@ Output strict JSON:
 }}"""
 
         try:
-            # Ultra-fast inference: concise prompt, max_tokens=220
-            completion = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Ultra-fast inference with ChatGPT (native JSON mode) or NVIDIA NIM
+            create_params = {
+                "model": self.model,
+                "messages": [
                     {
                         "role": "system",
                         "content": "You are a fast quantitative NSE options trading AI. Output strict JSON only.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.1,
-                max_tokens=220,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
+                "temperature": 0.1,
+                "max_tokens": 220,
+            }
+            if getattr(self, "provider", "") == "OpenAI ChatGPT":
+                create_params["response_format"] = {"type": "json_object"}
+            else:
+                create_params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+            completion = self._client.chat.completions.create(**create_params)
 
             msg = completion.choices[0].message
             content = msg.content or ""
@@ -203,6 +219,32 @@ Output strict JSON:
             return parsed
 
         except Exception as e:
+            # Automatic fallback to NVIDIA NIM if OpenAI quota is exhausted
+            if ("insufficient_quota" in str(e) or "429" in str(e)) and getattr(self, "provider", "") == "OpenAI ChatGPT" and NVIDIA_API_KEY:
+                log.warning("OpenAI quota exhausted (no credits). Falling back to NVIDIA NIM...")
+                try:
+                    fallback_client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY, timeout=35.0)
+                    fb_comp = fallback_client.chat.completions.create(
+                        model=NVIDIA_MODEL,
+                        messages=[
+                            {"role": "system", "content": "You are a fast quantitative NSE options trading AI. Output strict JSON only."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=220,
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+                    )
+                    fb_content = fb_comp.choices[0].message.content or ""
+                    parsed = self._extract_json(fb_content)
+                    if parsed:
+                        parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+                        parsed["provider"] = "NVIDIA NIM (Fallback)"
+                        if hasattr(self, "_analysis_cache"):
+                            self._analysis_cache[cache_key] = (_now_ts, parsed)
+                        return parsed
+                except Exception as fb_err:
+                    log.error("NVIDIA fallback failed: %s", fb_err)
+
             log.error("AICopilot analysis failed: %s", e)
             return {
                 "error": str(e),
@@ -292,22 +334,26 @@ DECISION RULE:
 
         try:
             if self._client:
-                completion = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
+                create_params = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": "You are an elite autonomous trading AI. Output strict JSON only."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.2,
-                    max_tokens=250,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                )
+                    "temperature": 0.2,
+                    "max_tokens": 250,
+                }
+                if getattr(self, "provider", "") == "OpenAI ChatGPT":
+                    create_params["response_format"] = {"type": "json_object"}
+                else:
+                    create_params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+                completion = self._client.chat.completions.create(**create_params)
                 content = completion.choices[0].message.content or ""
                 parsed = self._extract_json(content)
                 if parsed:
                     return parsed
             import requests
-            url = f"{NVIDIA_BASE_URL}/chat/completions"
+            url = f"{self.base_url}/chat/completions"
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
             payload = {
                 "model": self.model,
@@ -317,8 +363,9 @@ DECISION RULE:
                 ],
                 "temperature": 0.2,
                 "max_tokens": 250,
-                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
             }
+            if getattr(self, "provider", "") != "OpenAI ChatGPT":
+                payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             resp = requests.post(url, headers=headers, json=payload, timeout=25.0)
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"]["content"]
@@ -333,27 +380,30 @@ DECISION RULE:
 
     def chat_with_agent(self, messages: list) -> str:
         if not self.is_configured():
-            return "NVIDIA API key not configured."
+            return f"{self.provider} API key not configured."
         try:
             if self._client:
-                completion = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
-                    temperature=0.4,
-                    max_tokens=512,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                )
+                create_params = {
+                    "model": self.model,
+                    "messages": [{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
+                    "temperature": 0.4,
+                    "max_tokens": 512,
+                }
+                if getattr(self, "provider", "") != "OpenAI ChatGPT":
+                    create_params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+                completion = self._client.chat.completions.create(**create_params)
                 return completion.choices[0].message.content or ""
             import requests
-            url = f"{NVIDIA_BASE_URL}/chat/completions"
+            url = f"{self.base_url}/chat/completions"
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
             payload = {
                 "model": self.model,
                 "messages": [{"role": "system", "content": "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."}] + messages,
                 "temperature": 0.4,
                 "max_tokens": 512,
-                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
             }
+            if getattr(self, "provider", "") != "OpenAI ChatGPT":
+                payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             resp = requests.post(url, headers=headers, json=payload, timeout=30.0)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]

@@ -124,12 +124,18 @@ FRAGMENT_REFRESH_SECONDS = 1   # @st.fragment(run_every=N)
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)
 
-# ── NVIDIA AI COPILOT ──
+# ── AI COPILOT CONFIG (Supports OpenAI ChatGPT and NVIDIA NIM) ──
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = "gpt-4o-mini"
+
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 try:
     import streamlit as _st
-    if hasattr(_st, "secrets") and "NVIDIA_API_KEY" in _st.secrets:
-        NVIDIA_API_KEY = _st.secrets["NVIDIA_API_KEY"]
+    if hasattr(_st, "secrets"):
+        if "OPENAI_API_KEY" in _st.secrets:
+            OPENAI_API_KEY = _st.secrets["OPENAI_API_KEY"]
+        if "NVIDIA_API_KEY" in _st.secrets:
+            NVIDIA_API_KEY = _st.secrets["NVIDIA_API_KEY"]
 except Exception:
     pass
 
