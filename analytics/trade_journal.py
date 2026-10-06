@@ -57,6 +57,11 @@ class TradeJournal:
         except Exception as e:
             logger.warning("TradeDB init in TradeJournal: %s", e)
         self._load()
+        if self.db:
+            try:
+                self.sync_with_db()
+            except Exception as e:
+                logger.warning("Initial sync_with_db error in TradeJournal: %s", e)
         if not self._load_failed and (journal_path is None or journal_path == JOURNAL_FILE):
             self._import_from_csv()
             self._reconcile_stale_open_trades()
@@ -256,17 +261,48 @@ class TradeJournal:
         finally:
             self._lock.release()
 
+    def sync_with_db(self) -> int:
+        """Real-time bidirectional sync with Supabase PostgreSQL database.
+        
+        Pulls all trades from Supabase and merges them into self.trades, and
+        pushes any local trades not present in Supabase to ensure complete
+        two-way consistency across container restarts.
+        """
+        if not self.db:
+            return len(self.trades)
+
+        with self._lock:
+            try:
+                db_trades = self.db.get_all_trades()
+                if db_trades:
+                    # Merge existing trades with db trades
+                    merged = list(self.trades) + db_trades
+                    deduped = self._deduplicate(merged)
+                    self.trades = deduped
+                    
+                    # Push any local trades missing from DB
+                    existing_db_ids = {t.get("trade_id") for t in db_trades if t.get("trade_id")}
+                    for t in self.trades:
+                        tid = t.get("trade_id")
+                        if tid and tid not in existing_db_ids:
+                            try:
+                                self.db.upsert_trade(t, t.get("signal_metadata"))
+                            except Exception as ex:
+                                logger.warning("Error pushing trade %s to DB during sync: %s", tid, ex)
+
+                    self._save()
+            except Exception as e:
+                logger.warning("TradeJournal sync_with_db error: %s", e)
+
+            return len(self.trades)
+
     def get_all_trades(self) -> List[Dict[str, Any]]:
-        """Return a copy of every trade in the journal (preferring SQLite DB)."""
+        """Return a copy of every trade in the journal (syncing with Supabase DB)."""
         with self._lock:
             if self.db:
-                try:
-                    db_trades = self.db.get_all_trades()
-                    if db_trades:
-                        return db_trades
-                except Exception as e:
-                    logger.warning("TradeDB get_all_trades error: %s", e)
-            self._load()
+                self.sync_with_db()
+            else:
+                self._load()
             return list(self.trades)
 
     def get_trades_for_date(self, date_str: str) -> List[Dict[str, Any]]:
@@ -276,11 +312,14 @@ class TradeJournal:
             date_str: Date in ``YYYY-MM-DD`` format.
         """
         with self._lock:
-            self._load()
+            if self.db:
+                self.sync_with_db()
+            else:
+                self._load()
             results: List[Dict[str, Any]] = []
             for t in self.trades:
-                recorded_at = t.get("recorded_at", "")
-                if recorded_at and str(recorded_at)[:10] == date_str:
+                rec = str(t.get("recorded_at") or t.get("date") or t.get("trade_date") or "")
+                if rec and rec[:10] == date_str:
                     results.append(t)
             return results
 
@@ -295,9 +334,16 @@ class TradeJournal:
             current_streak, consecutive_losses.
         """
         with self._lock:
-            self._load()
-            cutoff = datetime.now(tz=IST) - timedelta(days=days)
-            trades = self._filter_since(cutoff)
+            if self.db:
+                self.sync_with_db()
+            else:
+                self._load()
+
+            if days >= 36500:
+                trades = list(self.trades)
+            else:
+                cutoff = datetime.now(tz=IST) - timedelta(days=days)
+                trades = self._filter_since(cutoff)
 
         analytics: Dict[str, Any] = {
             "total_trades": 0,
@@ -703,8 +749,16 @@ class TradeJournal:
         """Return trades with recorded_at >= *cutoff*."""
         results: List[Dict[str, Any]] = []
         for t in self.trades:
-            recorded_at = t.get("recorded_at", "")
+            recorded_at = t.get("recorded_at") or t.get("created_at")
             if not recorded_at:
+                t_date = t.get("date") or t.get("trade_date")
+                if t_date:
+                    try:
+                        dt = datetime.strptime(str(t_date)[:10], "%Y-%m-%d").replace(tzinfo=IST)
+                        if dt >= cutoff.replace(hour=0, minute=0, second=0):
+                            results.append(t)
+                    except Exception:
+                        pass
                 continue
             try:
                 recorded_dt = datetime.fromisoformat(str(recorded_at))

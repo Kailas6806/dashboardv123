@@ -95,7 +95,7 @@ def render_analytics_tab(journal: Any) -> None:
     # ── Header row with title + timeframe + reset button ──
     hdr_col, days_col, reset_col = st.columns([3, 1.2, 0.8])
     with hdr_col:
-        st.markdown("## 📊 Trade Analytics")
+        st.markdown("## 📊 Trade Analytics <span style='font-size:12px;color:#00E5A0;font-weight:600;margin-left:8px;vertical-align:middle;background:rgba(0,229,160,0.1);padding:3px 8px;border-radius:12px;border:1px solid rgba(0,229,160,0.25);'>☁️ Live Synced with Supabase</span>", unsafe_allow_html=True)
     with days_col:
         timeframe = st.selectbox(
             "Timeframe",
@@ -260,12 +260,19 @@ def _render_cumulative_pnl(trades: List[Dict[str, Any]]) -> None:
     running = 0.0
     labels: List[str] = []
 
-    for i, t in enumerate(trades, start=1):
+    # Ensure chronological order (oldest to newest) for cumulative calculation
+    sorted_trades = sorted(
+        trades,
+        key=lambda x: str(x.get("recorded_at") or x.get("date") or x.get("Entry Time") or "")
+    )
+
+    for i, t in enumerate(sorted_trades, start=1):
         pnl = _safe_float(t.get("Actual P&L ₹", 0))
         running += pnl
         cumulative.append(running)
         entry_time = t.get("Entry Time", "")
-        label = str(entry_time)[:16] if entry_time else f"Trade {i}"
+        date_str = str(t.get("date") or t.get("recorded_at") or "")[:10]
+        label = f"{date_str} {entry_time}"[:20] if (date_str and entry_time) else (str(entry_time)[:16] if entry_time else f"Trade {i}")
         labels.append(label)
 
     df = pd.DataFrame({"Trade": labels, "Cumulative P&L (₹)": cumulative})
