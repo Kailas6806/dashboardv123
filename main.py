@@ -1,19 +1,52 @@
 import os
-import shutil
-# Ensure config.py on Streamlit Cloud container always syncs newest risk rules from config.example.py
-if os.path.exists("config.example.py"):
-    try:
-        if not os.path.exists("config.py") or "/mount/src" in os.path.abspath("."):
-            shutil.copy("config.example.py", "config.py")
-    except Exception:
-        pass
-import streamlit as st
-import pandas as pd
+import sys
 import datetime
-import os
+import importlib
+import importlib.util
+import pandas as pd
+import streamlit as st
 
-# ── CONFIGURATION ──
-import config
+# ── ENSURE DIRECTORY ON PATH & CONFIG AVAILABLE ──
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+_cfg_path = os.path.join(BASE_DIR, "config.py")
+_cfg_example = os.path.join(BASE_DIR, "config.example.py")
+
+# Ensure config.py exists from config.example.py if missing or incomplete
+if os.path.exists(_cfg_example):
+    need_copy = not os.path.exists(_cfg_path)
+    if not need_copy:
+        try:
+            with open(_cfg_path, "r", encoding="utf-8") as _f:
+                if "INDEX_CONFIG" not in _f.read():
+                    need_copy = True
+        except Exception:
+            need_copy = True
+    if need_copy:
+        try:
+            import shutil
+            shutil.copy(_cfg_example, _cfg_path)
+        except Exception:
+            pass
+
+# ── CONFIGURATION MODULE LOADER ──
+try:
+    import config
+    if not hasattr(config, "INDEX_CONFIG"):
+        _target = _cfg_path if os.path.exists(_cfg_path) else _cfg_example
+        _spec = importlib.util.spec_from_file_location("config", _target)
+        if _spec and _spec.loader:
+            config = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(config)
+            sys.modules["config"] = config
+except Exception:
+    _spec = importlib.util.spec_from_file_location("config", _cfg_example)
+    config = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(config)
+    sys.modules["config"] = config
+
 for _k, _default in [
     ("MAX_LOSS", 1500),
     ("MAX_INDEX_DAILY_LOSS", 4500),
@@ -46,12 +79,15 @@ for _k, _default in [
                 pass
     setattr(config, _k, _val)
 
-from config import (
-    INDEX_CONFIG, IST,
-    FRAGMENT_REFRESH_SECONDS, DAILY_REPORT_CHECK_SECS,
-    DAILY_REPORT_TIME, LOG_DIR, BASE_DIR,
-    MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
-)
+# Core constants exported for main.py
+INDEX_CONFIG = getattr(config, "INDEX_CONFIG")
+IST = getattr(config, "IST")
+FRAGMENT_REFRESH_SECONDS = getattr(config, "FRAGMENT_REFRESH_SECONDS", 1)
+DAILY_REPORT_CHECK_SECS = getattr(config, "DAILY_REPORT_CHECK_SECS", 60)
+DAILY_REPORT_TIME = getattr(config, "DAILY_REPORT_TIME", datetime.time(15, 35))
+LOG_DIR = getattr(config, "LOG_DIR", os.path.join(BASE_DIR, "logs"))
+MARKET_OPEN_TIME = getattr(config, "MARKET_OPEN_TIME", datetime.time(9, 15))
+MARKET_CLOSE_TIME = getattr(config, "MARKET_CLOSE_TIME", datetime.time(15, 30))
 
 # ── MODULES ──
 from ui.styles import get_styles

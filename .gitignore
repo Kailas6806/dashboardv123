@@ -28,6 +28,3 @@ logs/
 # Local SQLite databases
 *.db
 .env
-
-# Configuration with secrets
-config.py
