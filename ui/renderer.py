@@ -212,9 +212,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     pe_price = round(float(md["atm_row"]["PE LTP"]), 2)
 
     # ── CHECK SL/TARGET ON OPEN TRADES ──
-    events = trade_mgr.update_live_prices(
-        idx, st.session_state[tlog_key], records, now_ist, fetcher=fetcher
-    )
+    try:
+        events = trade_mgr.update_live_prices(
+            idx, st.session_state[tlog_key], records, now_ist, fetcher=fetcher
+        )
+    except TypeError:
+        events = trade_mgr.update_live_prices(
+            idx, st.session_state[tlog_key], records, now_ist
+        )
     if events:
         for ev in events:
             if ev["type"] == "SL_HIT":
@@ -776,7 +781,10 @@ def render_open_trades_tab(trade_mgr, fetcher):
             if not d or "records" not in d:
                 continue
 
-            events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now, fetcher=fetcher)
+            try:
+                events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now, fetcher=fetcher)
+            except TypeError:
+                events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now)
             if events:
                 trade_mgr.save_log(idx, tlog)
                 for ev in events:

@@ -125,7 +125,7 @@ if "_risk_mgr" not in st.session_state or not hasattr(st.session_state["_risk_mg
     st.session_state["_risk_mgr"] = RiskManager()
 if "_notifier" not in st.session_state:
     st.session_state["_notifier"] = TelegramNotifier()
-if "_trade_mgr" not in st.session_state:
+if "_trade_mgr" not in st.session_state or not hasattr(st.session_state.get("_trade_mgr"), "_supports_fetcher"):
     st.session_state["_trade_mgr"] = TradeManager(
         notifier=st.session_state["_notifier"],
         risk_mgr=st.session_state["_risk_mgr"],

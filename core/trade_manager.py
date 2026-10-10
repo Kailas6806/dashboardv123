@@ -49,6 +49,8 @@ class TradeManager:
     and risk manager (RiskManager) injected at construction.
     """
 
+    _supports_fetcher = True
+
     def __init__(self, notifier: Any, risk_mgr: Any) -> None:
         """Initialize with notifier and risk manager references.
 
@@ -204,6 +206,8 @@ class TradeManager:
         chain_records: Dict[float, Dict[str, Any]],
         now: datetime.datetime,
         fetcher: Optional[Any] = None,
+        *args,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """Update live prices for all open trades and check exit conditions.
 
