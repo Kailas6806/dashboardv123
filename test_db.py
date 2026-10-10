@@ -45,12 +45,13 @@ class TestTradeDB(unittest.TestCase):
         self.assertEqual(tid, "TEST_NIFTY_001")
 
         trades = self.db.get_all_trades()
-        self.assertEqual(len(trades), 1)
-        self.assertEqual(trades[0]["Index"], "NIFTY")
-        self.assertEqual(trades[0]["Strike"], 24500.0)
-        self.assertEqual(trades[0]["Status"], "OPEN")
-        self.assertTrue(trades[0]["_ai_generated"])
-        self.assertEqual(trades[0]["_ai_conviction"], 85)
+        matching = [t for t in trades if t.get("trade_id") == "TEST_NIFTY_001"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["Index"], "NIFTY")
+        self.assertEqual(matching[0]["Strike"], 24500.0)
+        self.assertEqual(matching[0]["Status"], "OPEN")
+        self.assertTrue(matching[0]["_ai_generated"])
+        self.assertEqual(matching[0]["_ai_conviction"], 85)
 
     def test_update_trade_exit(self):
         trade_data = {
@@ -74,11 +75,15 @@ class TestTradeDB(unittest.TestCase):
         self.assertTrue(ok)
 
         trades = self.db.get_all_trades(status="CLOSED")
-        self.assertEqual(len(trades), 1)
-        self.assertEqual(trades[0]["Exit Price"], 130.0)
-        self.assertEqual(trades[0]["Actual P&L ₹"], 1950.0)
-        self.assertEqual(trades[0]["Status"], "CLOSED")
-        self.assertEqual(trades[0]["Result"], "🟢 WIN")
+        matching = [t for t in trades if t.get("trade_id") == "TEST_NIFTY_002"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["Exit Price"], 130.0)
+        self.assertEqual(matching[0]["Actual P&L ₹"], 1950.0)
+        self.assertEqual(matching[0]["Status"], "CLOSED")
+        self.assertEqual(matching[0]["Result"], "🟢 WIN")
+
+        # Revert the test P&L applied to capital
+        self.db.apply_trade_pnl_to_capital(-1950.0)
 
 
 if __name__ == "__main__":

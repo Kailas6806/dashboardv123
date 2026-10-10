@@ -40,9 +40,13 @@ class AngelOneDataFetcher:
             log.warning("Angel credentials missing. Running in DEMO mode.")
             return False
         try:
-            res = urllib.request.urlopen('http://google.com')
-            dt = email.utils.parsedate_to_datetime(res.headers['Date'])
-            drift = dt.timestamp() - pytime.time()
+            drift = 0.0
+            try:
+                res = urllib.request.urlopen('http://google.com', timeout=3.0)
+                dt = email.utils.parsedate_to_datetime(res.headers['Date'])
+                drift = dt.timestamp() - pytime.time()
+            except Exception:
+                drift = 0.0
             totp = pyotp.TOTP(self.totp_secret).at(pytime.time() + drift)
             
             data = self.smartApi.generateSession(self.client_id, self.password, totp)
@@ -60,20 +64,31 @@ class AngelOneDataFetcher:
     def _load_scrip_master(self):
         log.info("Downloading Angel One Scrip Master...")
         try:
-            res = requests.get('https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json')
+            res = requests.get('https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json', timeout=10.0)
             self.scrip_master = res.json()
             log.info(f"Loaded {len(self.scrip_master)} scrips.")
         except Exception as e:
             log.error(f"Failed to load scrip master: {e}")
 
     def get_ltp(self, exchange, tradingsymbol, token):
-        if not self.session: return 0.0
+        if not self.session:
+            if not self.login():
+                return 0.0
         try:
             res = self.smartApi.ltpData(exchange, tradingsymbol, token)
             if res and res.get('status') and res.get('data'):
                 return float(res['data']['ltp'])
+            elif res and not res.get('status'):
+                err_code = str(res.get('errorcode', ''))
+                msg = str(res.get('message', ''))
+                if 'AG8001' in err_code or 'Token' in msg or 'Invalid' in msg or 'Expired' in msg:
+                    log.warning("Angel One session expired (code=%s), renewing token...", err_code)
+                    if self.login():
+                        res = self.smartApi.ltpData(exchange, tradingsymbol, token)
+                        if res and res.get('status') and res.get('data'):
+                            return float(res['data']['ltp'])
         except Exception as e:
-            pass
+            log.warning("get_ltp exception for %s: %s", tradingsymbol, e)
         return 0.0
 
     def fetch_option_chain(self, idx_name: str) -> Optional[Dict[str, Any]]:

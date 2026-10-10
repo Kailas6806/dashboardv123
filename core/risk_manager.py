@@ -296,3 +296,59 @@ class RiskManager:
             )
 
         return True, ""
+
+    # ──────────────────────────────────────────────
+    # 6. REAL-MONEY CAPITAL & MARGIN ENGINE
+    # ──────────────────────────────────────────────
+    def calculate_portfolio_equity(
+        self,
+        base_capital: float,
+        all_trades: List[Dict[str, Any]],
+        all_time_pnl: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """Compute live real-money account balance, realized P&L, floating P&L, and available margin."""
+        realized_pnl = 0.0
+        unrealized_pnl = 0.0
+        margin_used = 0.0
+
+        for t in all_trades:
+            status = str(t.get("Status", "")).upper()
+            qty = float(t.get("Qty", 0) or 0)
+            ep = float(t.get("Entry Price", 0) or 0)
+            lp = float(t.get("Live Price", 0) or ep)
+
+            if status == "CLOSED":
+                actual_pnl = t.get("Actual P&L ₹")
+                if actual_pnl is not None:
+                    try:
+                        realized_pnl += float(actual_pnl)
+                    except (ValueError, TypeError):
+                        pass
+            elif status == "OPEN":
+                pos_margin = ep * qty
+                margin_used += pos_margin
+                unrealized_pnl += (lp - ep) * qty
+
+        effective_realized = all_time_pnl if all_time_pnl is not None else realized_pnl
+        cash_balance = round(base_capital + effective_realized, 2)
+        total_equity = round(cash_balance + unrealized_pnl, 2)
+        available_margin = round(max(0.0, cash_balance - margin_used), 2)
+
+        return {
+            "base_capital": float(base_capital),
+            "today_realized_pnl": round(realized_pnl, 2),
+            "realized_pnl": round(effective_realized, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "cash_balance": cash_balance,
+            "total_equity": total_equity,
+            "margin_used": round(margin_used, 2),
+            "available_margin": available_margin,
+        }
+
+    def can_afford_trade(self, ep: float, qty: int, available_margin: float) -> Tuple[bool, str]:
+        """Validate if trading account has enough liquid cash to buy the option contract."""
+        required = ep * qty
+        if available_margin < required:
+            return False, f"Insufficient margin: Required ₹{required:,.0f}, Available ₹{available_margin:,.0f}"
+        return True, ""
+

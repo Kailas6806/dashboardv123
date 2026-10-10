@@ -99,10 +99,152 @@ class TradeDB:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(trade_date)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS account_capital (
+                        account_id TEXT PRIMARY KEY,
+                        base_capital REAL DEFAULT 60000.0,
+                        cumulative_realized_pnl REAL DEFAULT 0.0,
+                        current_balance REAL DEFAULT 60000.0,
+                        updated_at TEXT
+                    )
+                """)
                 conn.commit()
                 log.info("TradeDB initialized at Supabase Postgres")
             finally:
                 conn.close()
+
+    def _save_local_capital_cache(self, data: Dict[str, Any]) -> None:
+        """Write backup capital cache to disk."""
+        try:
+            cache_file = os.path.join(LOG_DIR, "account_capital.json")
+            os.makedirs(LOG_DIR, exist_ok=True)
+            temp_file = cache_file + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(temp_file, cache_file)
+        except Exception as e:
+            log.warning("Failed to save local capital cache: %s", e)
+
+    def _load_local_capital_cache(self, default_base: float = 60000.0) -> Dict[str, Any]:
+        """Read backup capital cache from disk."""
+        try:
+            cache_file = os.path.join(LOG_DIR, "account_capital.json")
+            if os.path.exists(cache_file):
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            log.warning("Failed to load local capital cache: %s", e)
+        return {
+            "account_id": "DEFAULT",
+            "base_capital": default_base,
+            "cumulative_realized_pnl": 0.0,
+            "current_balance": default_base,
+            "updated_at": datetime.datetime.now(IST).isoformat(),
+        }
+
+    def get_or_init_capital(self, default_base: float = 60000.0, account_id: str = "DEFAULT") -> Dict[str, Any]:
+        """Fetch persistent wallet capital from Supabase.
+        
+        Ensures capital does not reset when Streamlit sleeps or restarts.
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                try:
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("SELECT * FROM account_capital WHERE account_id = %s", (account_id,))
+                    row = cursor.fetchone()
+                    now_str = datetime.datetime.now(IST).isoformat()
+                    
+                    if not row:
+                        cursor.execute("""
+                            INSERT INTO account_capital (account_id, base_capital, cumulative_realized_pnl, current_balance, updated_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (account_id, default_base, 0.0, default_base, now_str))
+                        conn.commit()
+                        result = {
+                            "account_id": account_id,
+                            "base_capital": float(default_base),
+                            "cumulative_realized_pnl": 0.0,
+                            "current_balance": float(default_base),
+                            "updated_at": now_str,
+                        }
+                    else:
+                        d_row = dict(row)
+                        stored_base = float(d_row.get("base_capital") or default_base)
+                        cum_pnl = float(d_row.get("cumulative_realized_pnl") or 0.0)
+                        
+                        if stored_base != default_base:
+                            new_bal = round(default_base + cum_pnl, 2)
+                            cursor.execute("""
+                                UPDATE account_capital
+                                SET base_capital = %s,
+                                    current_balance = %s,
+                                    updated_at = %s
+                                WHERE account_id = %s
+                            """, (default_base, new_bal, now_str, account_id))
+                            conn.commit()
+                            stored_base = float(default_base)
+                            cur_bal = new_bal
+                        else:
+                            cur_bal = float(d_row.get("current_balance") or round(stored_base + cum_pnl, 2))
+                            
+                        result = {
+                            "account_id": account_id,
+                            "base_capital": stored_base,
+                            "cumulative_realized_pnl": cum_pnl,
+                            "current_balance": cur_bal,
+                            "updated_at": d_row.get("updated_at") or now_str,
+                        }
+                    self._save_local_capital_cache(result)
+                    return result
+                finally:
+                    conn.close()
+            except Exception as e:
+                log.warning("Supabase get_or_init_capital failed, falling back to local cache: %s", e)
+                return self._load_local_capital_cache(default_base)
+
+    def apply_trade_pnl_to_capital(self, pnl: float, account_id: str = "DEFAULT") -> Dict[str, Any]:
+        """Apply realized trade profit or loss directly to persistent wallet capital in Supabase."""
+        with self._lock:
+            try:
+                pnl = float(pnl)
+                conn = self._get_connection()
+                try:
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    now_str = datetime.datetime.now(IST).isoformat()
+                    cursor.execute("""
+                        UPDATE account_capital
+                        SET cumulative_realized_pnl = cumulative_realized_pnl + %s,
+                            current_balance = current_balance + %s,
+                            updated_at = %s
+                        WHERE account_id = %s
+                        RETURNING *
+                    """, (pnl, pnl, now_str, account_id))
+                    row = cursor.fetchone()
+                    if row:
+                        conn.commit()
+                        result = dict(row)
+                        for k in ("base_capital", "cumulative_realized_pnl", "current_balance"):
+                            if k in result and result[k] is not None:
+                                result[k] = float(result[k])
+                        self._save_local_capital_cache(result)
+                        log.info("Capital updated in Supabase: delta=%s, new_balance=%s", pnl, result.get("current_balance"))
+                        return result
+                    else:
+                        conn.commit()
+                finally:
+                    conn.close()
+            except Exception as e:
+                log.warning("Supabase apply_trade_pnl_to_capital failed: %s", e)
+            
+            # Local fallback update
+            local = self._load_local_capital_cache()
+            local["cumulative_realized_pnl"] = round(float(local.get("cumulative_realized_pnl", 0.0)) + pnl, 2)
+            local["current_balance"] = round(float(local.get("base_capital", 60000.0)) + local["cumulative_realized_pnl"], 2)
+            local["updated_at"] = datetime.datetime.now(IST).isoformat()
+            self._save_local_capital_cache(local)
+            return local
 
     @staticmethod
     def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
@@ -257,6 +399,8 @@ class TradeDB:
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, trade_id))
                     if cursor.rowcount > 0:
                         conn.commit()
+                        if actual_pnl is not None:
+                            self.apply_trade_pnl_to_capital(actual_pnl)
                         return True
 
                 # Fallback: Match by instrument, strike, signal and entry_time if trade_dict provided
@@ -278,6 +422,8 @@ class TradeDB:
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, idx, strike, etime, sig))
                     if cursor.rowcount > 0:
                         conn.commit()
+                        if actual_pnl is not None:
+                            self.apply_trade_pnl_to_capital(actual_pnl)
                         return True
 
                 return False

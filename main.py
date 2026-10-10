@@ -134,6 +134,13 @@ if "_journal" not in st.session_state:
     st.session_state["_journal"] = TradeJournal()
 if "_copilot" not in st.session_state:
     st.session_state["_copilot"] = AICopilot()
+if "_trade_db" not in st.session_state:
+    try:
+        from analytics.db import TradeDB
+        st.session_state["_trade_db"] = TradeDB()
+    except Exception as e:
+        logger.warning(f"TradeDB initialization failed: {e}")
+        st.session_state["_trade_db"] = None
 
 signal_engine = st.session_state["_signal_engine"]
 risk_mgr      = st.session_state["_risk_mgr"]

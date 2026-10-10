@@ -557,3 +557,52 @@ def render_expander_open_trade(trade, sc):
     <div style="margin-left:auto;"><div class="label">UNREALIZED P&L</div><div class="num" style="font-size:20px;color:{upl_c};">{norm['pnl_disp']}</div></div>
   </div>
 </div>"""
+
+
+def render_account_capital_hud(portfolio_stats: dict) -> str:
+    """Render top-level Brokerage Account HUD showing real liquid capital, live MTM floating P&L, equity, and margin."""
+    equity = portfolio_stats.get("total_equity", 0.0)
+    cash = portfolio_stats.get("cash_balance", 0.0)
+    margin_avail = portfolio_stats.get("available_margin", 0.0)
+    margin_used = portfolio_stats.get("margin_used", 0.0)
+    rpnl = portfolio_stats.get("realized_pnl", 0.0)
+    upnl = portfolio_stats.get("unrealized_pnl", 0.0)
+    base = portfolio_stats.get("base_capital", 60000.0)
+
+    equity_color = "#10b981" if equity >= base else "#ef4444"
+    rpnl_color = "#10b981" if rpnl >= 0 else "#ef4444"
+    upnl_color = "#10b981" if upnl >= 0 else "#ef4444"
+
+    return f"""
+<div class="card" style="border-left: 4px solid #6366f1; background: linear-gradient(135deg, rgba(30, 27, 75, 0.4), rgba(24, 24, 27, 0.7)); margin-bottom: 20px; padding: 16px 20px; border-radius: 12px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:12px; gap:8px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span style="font-size:12px; font-weight:800; color:#818cf8; letter-spacing:0.1em; text-transform:uppercase;">💼 REAL TRADING CAPITAL HUD</span>
+      <span style="background:rgba(16,185,129,0.15); color:#10b981; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; border:1px solid rgba(16,185,129,0.3);">🟢 SUPABASE PERSISTED</span>
+    </div>
+    <div style="font-size:12px; color:#a1a1aa; font-weight:600;">Cash Balance: <b style="color:#ffffff;">₹{cash:,.2f}</b> | Base: <b style="color:#ffffff;">₹{base:,.0f}</b></div>
+  </div>
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:16px;">
+    <div>
+      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Live Net Equity</div>
+      <div class="kpi" style="font-size:22px; font-weight:800; color:{equity_color};">₹{equity:,.2f}</div>
+    </div>
+    <div>
+      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Available Margin</div>
+      <div class="kpi" style="font-size:22px; font-weight:800; color:#e4e4e7;">₹{margin_avail:,.2f}</div>
+    </div>
+    <div>
+      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Margin in Trades</div>
+      <div class="kpi" style="font-size:22px; font-weight:800; color:#f59e0b;">₹{margin_used:,.2f}</div>
+    </div>
+    <div>
+      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Floating P&L (MTM)</div>
+      <div class="kpi" style="font-size:22px; font-weight:800; color:{upnl_color};">{'+' if upnl>=0 else ''}₹{upnl:,.2f}</div>
+    </div>
+    <div>
+      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Cumulative Realized P&L</div>
+      <div class="kpi" style="font-size:22px; font-weight:800; color:{rpnl_color};">{'+' if rpnl>=0 else ''}₹{rpnl:,.2f}</div>
+    </div>
+  </div>
+</div>"""
+

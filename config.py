@@ -9,7 +9,7 @@ import datetime
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # ── CAPITAL & RISK ──
-CAPITAL                = 20_000
+CAPITAL                = 60_000
 MAX_LOSS               = 1500      # Max loss per trade (₹1,500 max per trade)
 MAX_INDEX_DAILY_LOSS   = 4500      # Max cumulative daily loss per index (₹4,500 per index)
 MAX_DAILY_LOSS         = 9000      # Max cumulative daily loss across portfolio (₹9,000)
@@ -163,6 +163,9 @@ NVIDIA_API_KEY = ''
 TELEGRAM_TOKEN = ''
 TELEGRAM_CHAT_ID = ''
 
+# SUPABASE CREDENTIALS
+SUPABASE_URI = os.environ.get("SUPABASE_URI", "").strip()
+
 # Fallback to Streamlit Secrets
 try:
     import streamlit as _st
@@ -190,12 +193,9 @@ try:
         if "TELEGRAM_CHAT_ID" in _secrets:
             TELEGRAM_CHAT_ID = str(_secrets["TELEGRAM_CHAT_ID"])
         if "SUPABASE_URI" in _secrets:
-            SUPABASE_URI = str(_secrets["SUPABASE_URI"])
+            SUPABASE_URI = str(_secrets["SUPABASE_URI"]).strip()
 except Exception:
     pass
-
-# SUPABASE CREDENTIALS
-SUPABASE_URI = ''
 
 # ML / XGBOOST CONFIG
 ML_ENABLED = True

@@ -20,7 +20,7 @@ from ui.components import (
     render_trade_entry_card, render_trap_alert, render_tracker_grid,
     render_risk_card, render_open_positions_summary, render_open_trade_detail,
     render_expander_open_trade, render_empty_open_trades,
-    normalize_trade, render_trade_card_html,
+    normalize_trade, render_trade_card_html, render_account_capital_hud,
 )
 from utils.logger import get_logger
 
@@ -418,6 +418,19 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         # 4. Strict daily trade limit: max 3 trades per day across portfolio
         daily_trades_exceeded = trades_today_count >= MAX_DAILY_TRADES
 
+        # 5. Margin Check: Ensure account has enough cash to buy option
+        all_curr_trades = []
+        for _i in INDEX_CONFIG:
+            all_curr_trades.extend(st.session_state.get(sk(_i, "trade_log"), []))
+        trade_db = st.session_state.get("_trade_db")
+        cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
+        portfolio_stats = risk_mgr.calculate_portfolio_equity(
+            cap_info.get("base_capital", CAPITAL),
+            all_curr_trades,
+            all_time_pnl=cap_info.get("cumulative_realized_pnl"),
+        )
+        can_afford, afford_reason = risk_mgr.can_afford_trade(ep, qty, portfolio_stats["available_margin"])
+
         if daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
         elif not daily_allowed:
@@ -428,6 +441,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             st.warning(f"⚠️ Option price ₹{ep} is too low (min ₹{MIN_ENTRY_PRICE}) — skipping")
         elif oi_unusual:
             st.warning("🚨 Unusual OI activity detected — holding off entry")
+        elif not can_afford:
+            st.warning(f"⚠️ {afford_reason}")
         elif conf_score < 30:
             st.warning(f"⚠️ Confidence score ({conf_score}) is too low to enter trade (Minimum: 30)")
         elif expiry_today and ep < MIN_ENTRY_PRICE:
@@ -440,6 +455,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             and conf_score >= 30
             and not daily_trades_exceeded
             and daily_allowed
+            and can_afford
         )
 
         if (final_signal != st.session_state[sk(idx, "last_signal")]
@@ -799,6 +815,19 @@ def render_open_trades_tab(trade_mgr, fetcher):
 
     wins = sum(1 for t in closed_today if float(t.get("Actual P&L ₹") or 0) > 0)
     win_rate = (wins / len(closed_today) * 100.0) if closed_today else None
+
+    # ── 0. Real Brokerage Capital HUD (Supabase Persisted) ──
+    risk_mgr = st.session_state.get("_risk_mgr")
+    trade_db = st.session_state.get("_trade_db")
+    if risk_mgr:
+        cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
+        all_trades_combined = all_open + closed_today
+        portfolio_stats = risk_mgr.calculate_portfolio_equity(
+            cap_info.get("base_capital", CAPITAL),
+            all_trades_combined,
+            all_time_pnl=cap_info.get("cumulative_realized_pnl"),
+        )
+        st.markdown(render_account_capital_hud(portfolio_stats), unsafe_allow_html=True)
 
     # ── 1. Summary Cards ──
     st.markdown(
