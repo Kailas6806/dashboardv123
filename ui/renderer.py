@@ -1766,7 +1766,10 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
     col_nifty, col_bn, col_fin = st.columns(3)
     cols = {"NIFTY": col_nifty, "BANKNIFTY": col_bn, "FINNIFTY": col_fin}
     
-    current_selected = st.session_state.get("auto_idx", "NIFTY")
+    idx_list = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+    if "selected_auto_idx" not in st.session_state:
+        st.session_state["selected_auto_idx"] = "NIFTY"
+    current_selected = st.session_state["selected_auto_idx"]
     
     for idx_name, col in cols.items():
         # Quick extract of spot and pcr
@@ -1832,7 +1835,8 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             </div>
             """, unsafe_allow_html=True)
             if st.button(f"Analyze {idx_name}", key=f"quick_btn_{idx_name}", use_container_width=True):
-                st.session_state["auto_idx"] = idx_name
+                st.session_state["selected_auto_idx"] = idx_name
+                st.session_state["auto_idx_select"] = idx_name
                 st.rerun()
 
     st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.07); margin:15px 0;'>", unsafe_allow_html=True)
@@ -1840,28 +1844,43 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
     # ─────────────────────────────────────────────────────────────
     # 2. RUN AUTONOMOUS ENGINE (Multi-Stage Animated Pipeline HUD)
     # ─────────────────────────────────────────────────────────────
-    idx_list = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
-    cur_idx_idx = idx_list.index(current_selected) if current_selected in idx_list else 0
-    selected_idx = st.selectbox("Selected Index for In-Depth AI Synthesis", idx_list, index=cur_idx_idx, key="auto_idx")
+    def _on_idx_select():
+        st.session_state["selected_auto_idx"] = st.session_state["auto_idx_select"]
 
-    if st.button(f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}", type="primary", use_container_width=True):
+    cur_idx_idx = idx_list.index(current_selected) if current_selected in idx_list else 0
+    selected_idx = st.selectbox(
+        "Selected Index for In-Depth AI Synthesis",
+        idx_list,
+        index=cur_idx_idx,
+        key="auto_idx_select",
+        on_change=_on_idx_select,
+    )
+
+    if st.button(f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}", key=f"btn_run_auto_{selected_idx}", type="primary", use_container_width=True):
         with st.status(f"⚡ Autonomous AI Pipeline: Analyzing {selected_idx}...", expanded=True) as status_box:
             # Step 1: Feed
             st.write("📡 **Step 1/3: Verifying Real-Time Tick & Market Feed...**")
-            data = fetcher.fetch_option_chain(selected_idx) if fetcher else None
-            cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
-            if not data and os.path.exists(cache_file):
+            data = None
+            if fetcher:
                 try:
-                    with open(cache_file, "r") as f:
-                        data = json.load(f)
-                except Exception:
-                    pass
-
+                    data = fetcher.fetch_option_chain(selected_idx)
+                except Exception as e:
+                    logger.warning(f"Live fetch error for {selected_idx}: {e}")
             if not data:
-                st.error("Failed to load option chain data.")
+                cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
+                if os.path.exists(cache_file):
+                    try:
+                        with open(cache_file, "r") as f:
+                            data = json.load(f)
+                    except Exception as e:
+                        logger.warning(f"Cache load error for {selected_idx}: {e}")
+
+            if not data or not isinstance(data, dict) or "records" not in data:
+                st.error("Option chain data is temporarily unavailable. Please retry.")
                 return
 
-            spot = data['records']['underlyingValue']
+            records_data = data["records"].get("data", [])
+            spot = float(data["records"].get("underlyingValue", 0.0) or 0.0)
             is_live_tick = False
             if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
                 tok = fetcher.index_tokens.get(selected_idx, {}).get("token")
@@ -1877,11 +1896,11 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             # Step 2: Structure & Walls
             st.write("📊 **Step 2/3: Scanning Option Chain Structure & Volatility Walls...**")
             rows = []
-            for item in data['records']['data']:
-                ce = item.get('CE', {})
-                pe = item.get('PE', {})
+            for item in records_data:
+                ce = item.get('CE', {}) or {}
+                pe = item.get('PE', {}) or {}
                 rows.append({
-                    'Strike': item['strikePrice'],
+                    'Strike': item.get('strikePrice', 0),
                     'CE LTP': ce.get('lastPrice', 0),
                     'CE OI': ce.get('openInterest', 0),
                     'PE LTP': pe.get('lastPrice', 0),
@@ -1896,7 +1915,7 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                 st.session_state.get(sk(selected_idx, "prev_df"), None),
                 st.session_state.get(sk(selected_idx, "oi_baseline"), None)
             )
-            atm = md.get("atm_actual", round(spot / step) * step)
+            atm = md.get("atm_actual", round(spot / step) * step if step else 0)
             call_wall = md.get("call_wall", 0)
             put_wall = md.get("put_wall", 0)
             pcr = md.get("pcr", 1.0)
@@ -1916,6 +1935,7 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             st.session_state["autonomous_idx"] = selected_idx
             
             status_box.update(label=f"✅ Autonomous AI Decision Complete ({lat})", state="complete", expanded=False)
+            st.rerun()
 
     # ─────────────────────────────────────────────────────────────
     # 3. HIGH-IMPACT SIGNAL CARD, CONVICTION GAUGE & CATALYST PILLS

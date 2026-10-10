@@ -82,7 +82,7 @@ for _k, _default in [
 # Core constants exported for main.py
 INDEX_CONFIG = getattr(config, "INDEX_CONFIG")
 IST = getattr(config, "IST")
-FRAGMENT_REFRESH_SECONDS = getattr(config, "FRAGMENT_REFRESH_SECONDS", 1)
+FRAGMENT_REFRESH_SECONDS = getattr(config, "FRAGMENT_REFRESH_SECONDS", 3)
 DAILY_REPORT_CHECK_SECS = getattr(config, "DAILY_REPORT_CHECK_SECS", 60)
 DAILY_REPORT_TIME = getattr(config, "DAILY_REPORT_TIME", datetime.time(15, 35))
 LOG_DIR = getattr(config, "LOG_DIR", os.path.join(BASE_DIR, "logs"))
@@ -242,11 +242,17 @@ with tab_ml:
     render_ml_dashboard()
 
 with tab_ai:
-    render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+    @st.fragment
+    def show_ai():
+        render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+    show_ai()
 
 with tab_autonomous:
-    from ui.renderer import render_autonomous_tab
-    render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    @st.fragment
+    def show_autonomous():
+        from ui.renderer import render_autonomous_tab
+        render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    show_autonomous()
 
 
 
