@@ -74,6 +74,9 @@ ATR_SL_MULTIPLIER        = 2.5   # SL = entry ∓ (multiplier × ATR)
 
 MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
 
+# ── SMART WEBSOCKET ──
+ENABLE_WEBSOCKET = False          # Master safety switch: Disabled to prevent any account rate limiting / lockout
+
 # ── CACHING ──
 CACHE_TTL_SECONDS = 1            # option chain cache TTL
 

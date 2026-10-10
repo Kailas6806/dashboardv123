@@ -59,10 +59,42 @@ class SmartWebSocketManager:
         # Rate-limiting / deduplication for subscription calls
         self._pending_subscriptions: Dict[int, Set[str]] = {1: set(), 2: set()}
 
+    @staticmethod
+    def is_market_hours() -> bool:
+        """Return True only on weekdays between 09:00 and 15:35 IST."""
+        try:
+            import datetime
+            import pytz
+            ist = pytz.timezone("Asia/Kolkata")
+            now = datetime.datetime.now(ist)
+        except Exception:
+            import datetime
+            now = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+
+        # 5 = Saturday, 6 = Sunday
+        if now.weekday() >= 5:
+            return False
+
+        t = now.time()
+        import datetime as _dt
+        return _dt.time(9, 0) <= t <= _dt.time(15, 35)
+
     def start(self) -> bool:
         """Start WebSocket connection in a background daemon thread."""
         if not HAS_SMART_WS:
             log.warning("SmartWebSocketV2 unavailable. Cannot start streaming.")
+            return False
+
+        try:
+            import config
+            if not getattr(config, "ENABLE_WEBSOCKET", False):
+                log.info("SmartWebSocket is disabled via ENABLE_WEBSOCKET=False config.")
+                return False
+        except Exception:
+            pass
+
+        if not self.is_market_hours():
+            log.info("Market is closed. SmartWebSocket streaming halted to protect Angel One account from lockout.")
             return False
 
         with self._lock:
@@ -75,7 +107,7 @@ class SmartWebSocketManager:
                     api_key=self.api_key,
                     client_code=self.client_code,
                     feed_token=self.feed_token,
-                    max_retry_attempt=self.max_retries,
+                    max_retry_attempt=2,
                     retry_strategy=1,
                     retry_delay=5,
                 )
@@ -100,18 +132,33 @@ class SmartWebSocketManager:
                 return False
 
     def _run_connection(self) -> None:
-        """Worker thread executing sws.connect()."""
+        """Worker thread executing sws.connect(). Halts immediately on off-market or repeated disconnects."""
+        reconnect_attempts = 0
         while self._is_running:
+            if not self.is_market_hours():
+                log.info("Market is closed. Halting WebSocket background connection to protect account.")
+                self._is_running = False
+                break
+
             try:
                 log.info("Connecting to Angel One WebSocket...")
                 if self.sws:
                     self.sws.connect()
             except Exception as e:
                 log.warning("WebSocket connect error: %s", e)
-            
-            if not self._is_running:
+
+            reconnect_attempts += 1
+            if not self._is_running or not self.is_market_hours():
+                self._is_running = False
                 break
-            time.sleep(3)
+
+            # If connection was closed twice, STOP completely to protect account
+            if reconnect_attempts >= 2:
+                log.warning("WebSocket disconnected (%d attempts). Stopping background thread to prevent Angel One rate limiting.", reconnect_attempts)
+                self._is_running = False
+                break
+
+            time.sleep(10)
 
     def _on_open(self, wsapp: Any) -> None:
         """Handle successful connection."""

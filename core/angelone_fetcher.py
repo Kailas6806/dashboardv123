@@ -66,6 +66,16 @@ class AngelOneDataFetcher:
     def _init_websocket(self):
         """Initialize and start background SmartWebSocketManager for live ticks."""
         try:
+            import config
+            if not getattr(config, "ENABLE_WEBSOCKET", False):
+                log.info("SmartWebSocket is disabled via ENABLE_WEBSOCKET=False config.")
+                return
+
+            from core.websocket_manager import SmartWebSocketManager
+            if not SmartWebSocketManager.is_market_hours():
+                log.info("Off-market hours detected. SmartWebSocket is kept idle to protect Angel One account from lockout.")
+                return
+
             if not self.session:
                 return
             jwt_token = self.session.get("jwtToken")
@@ -73,7 +83,6 @@ class AngelOneDataFetcher:
             if not jwt_token or not feed_token:
                 return
 
-            from core.websocket_manager import SmartWebSocketManager
             if self.ws_mgr is None:
                 self.ws_mgr = SmartWebSocketManager(
                     auth_token=jwt_token,
