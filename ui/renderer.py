@@ -83,7 +83,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
 
     data = None
-    if not in_window:
+    # 1. Fetch live data from SmartAPI / SmartWebSocket if available
+    if fetcher:
+        try:
+            data = fetcher.fetch_option_chain(idx)
+        except Exception as e:
+            logger.warning(f"Live fetch error for {idx}: {e}")
+
+    # 2. Fallback to off-market cache file if live fetch returned None
+    if data is None:
         if os.path.exists(cache_file):
             try:
                 with open(cache_file, "r") as f:
@@ -91,24 +99,13 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                 logger.info(f"Loaded off-market cache for {idx} from file")
             except Exception as e:
                 logger.warning(f"Failed to load cache file for {idx}: {e}")
-
-    if data is None:
-        data = fetcher.fetch_option_chain(idx)
-        if data is None:
-            if os.path.exists(cache_file):
-                try:
-                    with open(cache_file, "r") as f:
-                        data = json.load(f)
-                    logger.warning(f"Live fetch failed. Fallback to cache for {idx}")
-                except Exception:
-                    pass
-        else:
-            # Save cache file for off-market hours
-            try:
-                with open(cache_file, "w") as f:
-                    json.dump(data, f)
-            except Exception as e:
-                logger.warning(f"Failed to save cache file for {idx}: {e}")
+    else:
+        # Save cache file for off-market hours
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.warning(f"Failed to save cache file for {idx}: {e}")
 
     if data is None:
         st.error(f"❌ {idx} data unavailable. Retrying...")
@@ -116,6 +113,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
     records = data["records"]["data"]
     spot = data["records"]["underlyingValue"]
+
+    # 3. Always ensure underlying spot uses sub-50ms live tick if WebSocket connected
+    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+        tok = fetcher.index_tokens.get(idx, {}).get("token")
+        if tok:
+            ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+            if ws_spot and ws_spot > 0:
+                spot = ws_spot
+                data["records"]["underlyingValue"] = ws_spot
 
     # ── BUILD DATAFRAME ──
     atm = round(spot / step) * step
@@ -207,7 +213,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
     # ── CHECK SL/TARGET ON OPEN TRADES ──
     events = trade_mgr.update_live_prices(
-        idx, st.session_state[tlog_key], records, now_ist
+        idx, st.session_state[tlog_key], records, now_ist, fetcher=fetcher
     )
     if events:
         for ev in events:
@@ -765,7 +771,7 @@ def render_open_trades_tab(trade_mgr, fetcher):
             if not d or "records" not in d:
                 continue
 
-            events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now)
+            events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now, fetcher=fetcher)
             if events:
                 trade_mgr.save_log(idx, tlog)
                 for ev in events:
@@ -1434,15 +1440,18 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     # Fetch fresh or cached data for selected index
     cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
     d = None
-    if os.path.exists(cache_file):
+    if fetcher:
+        try:
+            d = fetcher.fetch_option_chain(selected_idx)
+        except Exception:
+            pass
+
+    if d is None and os.path.exists(cache_file):
         try:
             with open(cache_file, "r") as f:
                 d = json.load(f)
         except Exception:
             pass
-    if d is None:
-        with st.spinner(f"Fetching market data for {selected_idx}..."):
-            d = fetcher.fetch_option_chain(selected_idx)
 
     if not d or "records" not in d or not d["records"].get("data"):
         st.warning(f"Could not load option chain data for {selected_idx}. Market may be closed or offline.")
@@ -1450,6 +1459,15 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
 
     records = d["records"]["data"]
     spot = d["records"].get("underlyingValue") or 0.0
+
+    # Ensure live sub-50ms WebSocket spot tick if connected
+    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+        tok = fetcher.index_tokens.get(selected_idx, {}).get("token")
+        if tok:
+            ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+            if ws_spot and ws_spot > 0:
+                spot = ws_spot
+                d["records"]["underlyingValue"] = ws_spot
     cfg = INDEX_CONFIG[selected_idx]
     step, rng = cfg["step"], cfg["rng"]
     atm = round(spot / step) * step if step else 0
@@ -1709,14 +1727,29 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
     
     if st.button(f"Generate Autonomous Signal for {selected_idx}", type="primary", use_container_width=True):
         with st.spinner(f"AI is deeply analyzing {selected_idx} data..."):
-            # Fetch fresh data
-            data = fetcher.fetch_option_chain(selected_idx)
+            # Fetch fresh data from SmartAPI/WebSocket or fallback to cache
+            data = fetcher.fetch_option_chain(selected_idx) if fetcher else None
+            cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
+            if not data and os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+
             if not data:
                 st.error("Failed to fetch live data from Angel One.")
                 return
                 
             import pandas as pd
             spot = data['records']['underlyingValue']
+            if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+                tok = fetcher.index_tokens.get(selected_idx, {}).get("token")
+                if tok:
+                    ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+                    if ws_spot and ws_spot > 0:
+                        spot = ws_spot
+
             rows = []
             for item in data['records']['data']:
                 ce = item.get('CE', {})
@@ -1730,9 +1763,10 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                 })
             df = pd.DataFrame(rows)
             
-            # Use signal engine to compute market data
+            # Use signal engine to compute market data with correct step
+            step = INDEX_CONFIG.get(selected_idx, {}).get("step", 50)
             md = signal_engine.compute_market_data(
-                df, spot, 50, selected_idx, 
+                df, spot, step, selected_idx, 
                 st.session_state.get(sk(selected_idx, "spot_history"), []), 
                 st.session_state.get(sk(selected_idx, "pcr_history"), []), 
                 st.session_state.get(sk(selected_idx, "prev_df"), None),

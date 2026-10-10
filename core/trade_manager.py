@@ -8,7 +8,7 @@ import datetime
 import math
 import os
 import threading
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -203,6 +203,7 @@ class TradeManager:
         trade_log: List[Dict[str, Any]],
         chain_records: Dict[float, Dict[str, Any]],
         now: datetime.datetime,
+        fetcher: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
         """Update live prices for all open trades and check exit conditions.
 
@@ -216,6 +217,8 @@ class TradeManager:
             Mapping of strikePrice -> chain item from current snapshot.
         now : datetime.datetime
             Current IST-aware datetime.
+        fetcher : object, optional
+            AngelOneDataFetcher instance for real-time WebSocket tick access.
 
         Returns
         -------
@@ -243,18 +246,37 @@ class TradeManager:
                     trade["Status"] = "CLOSED"
                     continue
 
-                # ── Resolve live price from chain ──
+                # ── Resolve live price from WebSocket or chain ──
                 try:
                     strike = float(trade.get("Strike", 0))
                 except (ValueError, TypeError):
                     strike = 0.0
 
                 signal = trade.get("Signal", "")
-                item = chain_records.get(strike, {})
-                opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
-                lp = round(float(opt.get("lastPrice", 0) or 0), 2)
 
-                if lp == 0:
+                # 1. Token discovery & auto-subscription to WebSocket
+                tok = trade.get("_token")
+                if not tok and fetcher and hasattr(fetcher, "get_option_token"):
+                    tok, _ = fetcher.get_option_token(idx, strike, signal)
+                    if tok:
+                        trade["_token"] = tok
+                        if hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+                            fetcher.ws_mgr.subscribe_tokens(2, [str(tok)])
+
+                # 2. Check for real-time sub-50ms WebSocket live tick
+                lp = 0.0
+                if tok and fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+                    ws_lp = fetcher.ws_mgr.get_live_ltp(str(tok))
+                    if ws_lp is not None and ws_lp > 0:
+                        lp = round(float(ws_lp), 2)
+
+                # 3. Fallback to Option Chain snapshot if no WS tick yet
+                if lp == 0.0:
+                    item = chain_records.get(strike, {})
+                    opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
+                    lp = round(float(opt.get("lastPrice", 0) or 0), 2)
+
+                if lp == 0.0:
                     # Fallback: keep previous live price
                     lp = float(
                         trade.get("Live Price") or trade.get("Entry Price") or 0

@@ -167,9 +167,17 @@ ticker_items = []
 import json
 for idx in INDEX_CONFIG:
     spot = None
-    hist = st.session_state.get(sk(idx, "spot_history"), [])
-    if hist:
-        spot = hist[-1]
+    # 1. Check live sub-50ms WebSocket spot tick first
+    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+        tok = fetcher.index_tokens.get(idx, {}).get("token")
+        if tok:
+            ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+            if ws_spot and ws_spot > 0:
+                spot = ws_spot
+    if spot is None:
+        hist = st.session_state.get(sk(idx, "spot_history"), [])
+        if hist:
+            spot = hist[-1]
     if spot is None:
         cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
         if os.path.exists(cache_file):
@@ -182,9 +190,10 @@ for idx in INDEX_CONFIG:
     ticker_items.append({"symbol": idx, "spot": spot})
 
 is_connected = any(it.get("spot") is not None for it in ticker_items)
+ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
 
 # ── RENDER HEADER & TICKER ──
-st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
+st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
 
 # ── DYNAMIC NAVIGATION TABS ──

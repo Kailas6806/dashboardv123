@@ -112,10 +112,11 @@ def normalize_trade(raw: Dict[str, Any]) -> Dict[str, Any]:
 # ──────────────────────────────────────────────────
 # 2. TERMINAL HEADER & TICKER
 # ──────────────────────────────────────────────────
-def render_app_header(is_market_open: bool, is_connected: bool, datetime_str: str) -> str:
+def render_app_header(is_market_open: bool, is_connected: bool, datetime_str: str, ws_connected: bool = False) -> str:
     """Renders compact terminal header with status indicators."""
     market_pill = '<span class="pill pill-on">MARKET OPEN</span>' if is_market_open else '<span class="pill pill-off">MARKET CLOSED</span>'
     live_pill = '<span class="pill pill-live">LIVE</span>' if is_connected else '<span class="pill pill-off">DATA DISCONNECTED</span>'
+    ws_pill = '<span class="pill pill-live" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#10b981;font-weight:600;">⚡ WS: &lt;50ms</span>' if ws_connected else '<span class="pill pill-off" style="opacity:0.8;">⚡ WS: STANDBY</span>'
 
     return f"""
 <div class="app-header">
@@ -127,6 +128,7 @@ def render_app_header(is_market_open: bool, is_connected: bool, datetime_str: st
     <div style="display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-bottom: 4px;">
       {market_pill}
       {live_pill}
+      {ws_pill}
     </div>
     <div class="num" style="font-size: 12px; color: var(--text-1); letter-spacing: 0.02em;">
       {datetime_str}

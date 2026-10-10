@@ -26,6 +26,7 @@ class AngelOneDataFetcher:
         self.smartApi = SmartConnect(api_key=self.api_key)
         self.session = None
         self._cache = TTLCache(default_ttl=1)
+        self.ws_mgr = None
         self.index_tokens = {
             "NIFTY": {"token": "26000", "symbol": "Nifty 50", "exch": "NSE"},
             "BANKNIFTY": {"token": "26009", "symbol": "Nifty Bank", "exch": "NSE"},
@@ -53,6 +54,7 @@ class AngelOneDataFetcher:
             if data and data.get('status'):
                 self.session = data['data']
                 log.info("Angel One Login Successful")
+                self._init_websocket()
                 return True
             else:
                 log.error(f"Angel One Login Failed: {data}")
@@ -60,6 +62,32 @@ class AngelOneDataFetcher:
         except Exception as e:
             log.error(f"Angel One Login Exception: {e}")
             return False
+
+    def _init_websocket(self):
+        """Initialize and start background SmartWebSocketManager for live ticks."""
+        try:
+            if not self.session:
+                return
+            jwt_token = self.session.get("jwtToken")
+            feed_token = self.session.get("feedToken")
+            if not jwt_token or not feed_token:
+                return
+
+            from core.websocket_manager import SmartWebSocketManager
+            if self.ws_mgr is None:
+                self.ws_mgr = SmartWebSocketManager(
+                    auth_token=jwt_token,
+                    api_key=self.api_key,
+                    client_code=self.client_id,
+                    feed_token=feed_token,
+                )
+                if self.ws_mgr.start():
+                    # Subscribe Spot Indices immediately
+                    spot_tokens = [self.index_tokens[i]["token"] for i in self.index_tokens]
+                    self.ws_mgr.subscribe_tokens(1, spot_tokens)
+                    log.info("WebSocket streaming spot tokens initiated: %s", spot_tokens)
+        except Exception as e:
+            log.warning("WebSocket initialization error: %s", e)
 
     def _load_scrip_master(self):
         log.info("Downloading Angel One Scrip Master...")
@@ -71,13 +99,24 @@ class AngelOneDataFetcher:
             log.error(f"Failed to load scrip master: {e}")
 
     def get_ltp(self, exchange, tradingsymbol, token):
+        # 1. Check ultra-fast live WebSocket tick cache (< 0.001ms)
+        if self.ws_mgr and token:
+            ws_ltp = self.ws_mgr.get_live_ltp(str(token))
+            if ws_ltp is not None and ws_ltp > 0:
+                return ws_ltp
+
         if not self.session:
             if not self.login():
                 return 0.0
         try:
             res = self.smartApi.ltpData(exchange, tradingsymbol, token)
             if res and res.get('status') and res.get('data'):
-                return float(res['data']['ltp'])
+                ltp_val = float(res['data']['ltp'])
+                # Subscribe to WebSocket so future ticks stream via WS
+                if self.ws_mgr and token:
+                    exch_type = 2 if exchange in ("NFO", "NSE_FO") else 1
+                    self.ws_mgr.subscribe_tokens(exch_type, [str(token)])
+                return ltp_val
             elif res and not res.get('status'):
                 err_code = str(res.get('errorcode', ''))
                 msg = str(res.get('message', ''))
@@ -99,6 +138,23 @@ class AngelOneDataFetcher:
 
         cached = self._cache.get(idx_name)
         if cached:
+            # Continuously overlay live WebSocket ticks for spot & strikes on cached chain
+            if self.ws_mgr:
+                tok = self.index_tokens.get(idx_name, {}).get("token")
+                if tok:
+                    ws_spot = self.ws_mgr.get_live_ltp(str(tok))
+                    if ws_spot and ws_spot > 0:
+                        cached["records"]["underlyingValue"] = ws_spot
+                for record in cached.get("records", {}).get("data", []):
+                    for side in ("CE", "PE"):
+                        opt = record.get(side)
+                        if isinstance(opt, dict) and "token" in opt:
+                            tick = self.ws_mgr.get_live_tick(str(opt["token"]))
+                            if tick:
+                                if tick.get("ltp", 0.0) > 0:
+                                    opt["lastPrice"] = tick["ltp"]
+                                if tick.get("oi", 0) > 0:
+                                    opt["openInterest"] = tick["oi"]
             return cached
             
         if is_market_closed and hasattr(self, "_perm_cache") and idx_name in self._perm_cache:
@@ -144,6 +200,13 @@ class AngelOneDataFetcher:
                     
         if not tokens_to_fetch: return None
         
+        # 3b. Subscribe active strikes to WebSocket streaming on exchangeType 2 (NFO)
+        if self.ws_mgr and tokens_to_fetch:
+            try:
+                self.ws_mgr.subscribe_tokens(2, tokens_to_fetch)
+            except Exception as e:
+                log.debug("WebSocket strike subscription error: %s", e)
+
         # 4. Fetch Market Data in batches of 50
         all_data = {}
         for i in range(0, len(tokens_to_fetch), 50):
@@ -161,14 +224,26 @@ class AngelOneDataFetcher:
         for strk in sorted(strike_map.keys()):
             record = {"strikePrice": strk, "CE": {}, "PE": {}}
             for sym, token in strike_map[strk].items():
-                mdata = all_data.get(token)
-                if not mdata: continue
+                mdata = all_data.get(token) or {}
+                ltp_val = float(mdata.get('ltp', 0))
+                oi_val = int(mdata.get('opnInterest', 0))
+
+                # Overlay live sub-50ms WebSocket tick (LTP + OI) directly into chain record
+                if self.ws_mgr:
+                    ws_tick = self.ws_mgr.get_live_tick(token)
+                    if ws_tick:
+                        if ws_tick.get("ltp", 0.0) > 0:
+                            ltp_val = ws_tick["ltp"]
+                        if ws_tick.get("oi", 0) > 0:
+                            oi_val = ws_tick["oi"]
+
                 opt_data = {
-                    "lastPrice": float(mdata.get('ltp', 0)),
-                    "openInterest": int(mdata.get('opnInterest', 0)),
+                    "lastPrice": ltp_val,
+                    "openInterest": oi_val,
                     # Angel One's full market data does not return Change in OI directly.
                     # As a workaround to prevent "NO DATA", we can pass 0 or a mocked value.
-                    "changeinOpenInterest": 1000 
+                    "changeinOpenInterest": 1000,
+                    "token": token
                 }
                 if sym.endswith('CE'):
                     record["CE"] = opt_data
@@ -184,6 +259,40 @@ class AngelOneDataFetcher:
         }
         self._cache.set(idx_name, result)
         return result
+
+    def get_option_token(self, idx_name: str, strike: float, signal: str) -> Tuple[Optional[str], Optional[str]]:
+        """Look up symbolToken and tradingSymbol for an option contract."""
+        opt_type = "CE" if "CE" in signal else "PE"
+        opt_scrips = [s for s in self.scrip_master if s.get('name') == idx_name and s.get('instrumenttype') == 'OPTIDX']
+        if not opt_scrips:
+            return None, None
+        
+        # Closest expiry
+        expiries = sorted(
+            list(set(s['expiry'] for s in opt_scrips)),
+            key=lambda exp: datetime.datetime.strptime(exp, '%d%b%Y') if exp else datetime.datetime.max
+        )
+        if not expiries:
+            return None, None
+        current_expiry = expiries[0]
+
+        for s in opt_scrips:
+            if s.get('expiry') == current_expiry:
+                try:
+                    s_strk = float(s['strike']) / 100.0
+                except Exception:
+                    continue
+                if abs(s_strk - float(strike)) < 0.1 and s.get('symbol', '').endswith(opt_type):
+                    return s.get('token'), s.get('symbol')
+        return None, None
+
+    def is_websocket_connected(self) -> bool:
+        """Return True if WebSocket streaming is active."""
+        return self.ws_mgr.is_connected() if self.ws_mgr else False
+
+    def get_websocket_stats(self) -> Dict[str, Any]:
+        """Return diagnostic WebSocket streaming statistics."""
+        return self.ws_mgr.get_stats() if self.ws_mgr else {"connected": False, "running": False}
 
     def get_strike_price(self, idx_name: str, strike: float, signal: str):
         data = self.fetch_option_chain(idx_name)
@@ -217,7 +326,13 @@ class AngelOneDataFetcher:
         self._cache.invalidate(idx_name)
 
     def get_cache_stats(self) -> Dict[str, Any]:
-        return {"total_fetches": 0, "total_errors": 0, "consecutive_failures": 0, "session_active": self.session is not None}
+        return {
+            "total_fetches": 0,
+            "total_errors": 0,
+            "consecutive_failures": 0,
+            "session_active": self.session is not None,
+            "websocket": self.get_websocket_stats(),
+        }
 
 _fetcher_lock = threading.Lock()
 _global_angel_fetcher = None
