@@ -2,10 +2,14 @@
 V12 PRO MAX — Per-index renderer and open trades renderer.
 Orchestrates signal engine, trade manager, risk manager, and UI components.
 """
-import streamlit as st
+import os
+import json
+import math
+import time
+import datetime
 import pandas as pd
 import plotly.express as px
-import datetime
+import streamlit as st
 
 from config import (
     INDEX_CONFIG, CAPITAL, DAILY_TGT, IST, LOG_COLS,
@@ -1807,6 +1811,8 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             
             st.write("🧠 Querying Gemini 3.5 Flash-Lite decision engine...")
             result = copilot.generate_autonomous_signal(selected_idx, md)
+            if not result or not isinstance(result, dict):
+                result = {"signal": "WAIT", "conviction": 0, "reasoning": "AI did not return a valid decision.", "inference_time": "0.0s"}
             st.session_state["autonomous_result"] = result
             st.session_state["autonomous_md"] = md
             st.session_state["autonomous_idx"] = selected_idx
