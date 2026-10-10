@@ -1611,7 +1611,10 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                         f"Auto-Trade: conviction {auto_conv}/100 below threshold ({AI_MIN_CONVICTION}) or signal is AVOID — no trade fired.",
                     )
 
-            st.rerun()
+            try:
+                st.rerun(scope="fragment")
+            except Exception:
+                st.rerun()
 
     analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
     if not analysis:
@@ -1752,6 +1755,76 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _run_autonomous_pipeline(target_idx, fetcher, signal_engine, copilot):
+    """
+    Executes the autonomous AI analysis pipeline for target_idx:
+    1. Fetches live or cached option chain data
+    2. Computes market structure (OI deltas, PCR, Walls, VWAP)
+    3. Calls copilot.generate_autonomous_signal
+    4. Persists the result into session state
+    Returns (True, result) on success, or (False, error_msg) on failure.
+    """
+    data = None
+    if fetcher:
+        try:
+            data = fetcher.fetch_option_chain(target_idx)
+        except Exception as e:
+            logger.warning(f"Live fetch error for {target_idx}: {e}")
+    if not data:
+        cache_file = os.path.join(BASE_DIR, f"last_data_{target_idx}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"Cache load error for {target_idx}: {e}")
+
+    if not data or not isinstance(data, dict) or "records" not in data:
+        return False, f"Option chain data for {target_idx} is temporarily unavailable. Please retry."
+
+    records_data = data["records"].get("data", [])
+    spot = float(data["records"].get("underlyingValue", 0.0) or 0.0)
+    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+        tok = fetcher.index_tokens.get(target_idx, {}).get("token")
+        if tok:
+            ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+            if ws_spot and ws_spot > 0:
+                spot = ws_spot
+
+    rows = []
+    for item in records_data:
+        ce = item.get('CE', {}) or {}
+        pe = item.get('PE', {}) or {}
+        rows.append({
+            'Strike': item.get('strikePrice', 0),
+            'CE LTP': ce.get('lastPrice', 0),
+            'CE OI': ce.get('openInterest', 0),
+            'PE LTP': pe.get('lastPrice', 0),
+            'PE OI': pe.get('openInterest', 0),
+        })
+    df = pd.DataFrame(rows)
+    step = INDEX_CONFIG.get(target_idx, {}).get("step", 50)
+    md = signal_engine.compute_market_data(
+        df, spot, step, target_idx,
+        st.session_state.get(sk(target_idx, "spot_history"), []),
+        st.session_state.get(sk(target_idx, "pcr_history"), []),
+        st.session_state.get(sk(target_idx, "prev_df"), None),
+        st.session_state.get(sk(target_idx, "oi_baseline"), None)
+    )
+
+    result = copilot.generate_autonomous_signal(target_idx, md)
+    if not result or not isinstance(result, dict):
+        result = {"signal": "WAIT", "conviction": 0, "reasoning": "AI did not return a valid decision.", "inference_time": "0.0s"}
+
+    st.session_state[f"autonomous_result_{target_idx}"] = result
+    st.session_state[f"autonomous_md_{target_idx}"] = md
+    st.session_state["autonomous_result"] = result
+    st.session_state["autonomous_md"] = md
+    st.session_state["autonomous_idx"] = target_idx
+    st.session_state["selected_auto_idx"] = target_idx
+    st.session_state["auto_idx_select"] = target_idx
+
+    return True, result
 
 
 def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot):
@@ -1834,10 +1907,19 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                 <div style="margin-top:4px;">{stance_badge}</div>
             </div>
             """, unsafe_allow_html=True)
-            if st.button(f"Analyze {idx_name}", key=f"quick_btn_{idx_name}", use_container_width=True):
-                st.session_state["selected_auto_idx"] = idx_name
-                st.session_state["auto_idx_select"] = idx_name
-                st.rerun()
+            quick_label = f"⚡ Analyze {idx_name}" if not idx_res else f"🔄 Re-Analyze {idx_name}"
+            if st.button(quick_label, key=f"quick_btn_{idx_name}", use_container_width=True):
+                with st.spinner(f"⚡ Synthesizing {idx_name} with Gemini 3.5 Flash-Lite..."):
+                    ok, res_obj = _run_autonomous_pipeline(idx_name, fetcher, signal_engine, copilot)
+                    if ok:
+                        lat = res_obj.get("inference_time", "")
+                        st.toast(f"✅ {idx_name} AI Analysis Complete ({lat})!", icon="⚡")
+                    else:
+                        st.error(res_obj)
+                try:
+                    st.rerun(scope="fragment")
+                except Exception:
+                    st.rerun()
 
     st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.07); margin:15px 0;'>", unsafe_allow_html=True)
 
@@ -1856,85 +1938,19 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
         on_change=_on_idx_select,
     )
 
-    if st.button(f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}", key=f"btn_run_auto_{selected_idx}", type="primary", use_container_width=True):
-        with st.status(f"⚡ Autonomous AI Pipeline: Analyzing {selected_idx}...", expanded=True) as status_box:
-            # Step 1: Feed
-            st.write("📡 **Step 1/3: Verifying Real-Time Tick & Market Feed...**")
-            data = None
-            if fetcher:
-                try:
-                    data = fetcher.fetch_option_chain(selected_idx)
-                except Exception as e:
-                    logger.warning(f"Live fetch error for {selected_idx}: {e}")
-            if not data:
-                cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
-                if os.path.exists(cache_file):
-                    try:
-                        with open(cache_file, "r") as f:
-                            data = json.load(f)
-                    except Exception as e:
-                        logger.warning(f"Cache load error for {selected_idx}: {e}")
-
-            if not data or not isinstance(data, dict) or "records" not in data:
-                st.error("Option chain data is temporarily unavailable. Please retry.")
-                return
-
-            records_data = data["records"].get("data", [])
-            spot = float(data["records"].get("underlyingValue", 0.0) or 0.0)
-            is_live_tick = False
-            if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
-                tok = fetcher.index_tokens.get(selected_idx, {}).get("token")
-                if tok:
-                    ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
-                    if ws_spot and ws_spot > 0:
-                        spot = ws_spot
-                        is_live_tick = True
-
-            feed_mode = "🟢 SmartWebSocket 2.0 (sub-50ms live)" if is_live_tick else "⚪ Live Snapshot Feed"
-            st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ {feed_mode} — Underlying Spot: **₹{spot:,.2f}**")
-
-            # Step 2: Structure & Walls
-            st.write("📊 **Step 2/3: Scanning Option Chain Structure & Volatility Walls...**")
-            rows = []
-            for item in records_data:
-                ce = item.get('CE', {}) or {}
-                pe = item.get('PE', {}) or {}
-                rows.append({
-                    'Strike': item.get('strikePrice', 0),
-                    'CE LTP': ce.get('lastPrice', 0),
-                    'CE OI': ce.get('openInterest', 0),
-                    'PE LTP': pe.get('lastPrice', 0),
-                    'PE OI': pe.get('openInterest', 0),
-                })
-            df = pd.DataFrame(rows)
-            step = INDEX_CONFIG.get(selected_idx, {}).get("step", 50)
-            md = signal_engine.compute_market_data(
-                df, spot, step, selected_idx, 
-                st.session_state.get(sk(selected_idx, "spot_history"), []), 
-                st.session_state.get(sk(selected_idx, "pcr_history"), []), 
-                st.session_state.get(sk(selected_idx, "prev_df"), None),
-                st.session_state.get(sk(selected_idx, "oi_baseline"), None)
-            )
-            atm = md.get("atm_actual", round(spot / step) * step if step else 0)
-            call_wall = md.get("call_wall", 0)
-            put_wall = md.get("put_wall", 0)
-            pcr = md.get("pcr", 1.0)
-            st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ ATM: **{atm}** | Call Resistance: **{call_wall}** | Put Support: **{put_wall}** | PCR: **{pcr:.2f}**")
-
-            # Step 3: Gemini 3.5 Flash-Lite Inference
-            st.write("🧠 **Step 3/3: Gemini 3.5 Flash-Lite Synthesizing Multi-Factor Decision...**")
-            result = copilot.generate_autonomous_signal(selected_idx, md)
-            if not result or not isinstance(result, dict):
-                result = {"signal": "WAIT", "conviction": 0, "reasoning": "AI did not return a valid decision.", "inference_time": "0.0s"}
-            lat = result.get("inference_time", "1.2s")
-            
-            st.session_state[f"autonomous_result_{selected_idx}"] = result
-            st.session_state[f"autonomous_md_{selected_idx}"] = md
-            st.session_state["autonomous_result"] = result
-            st.session_state["autonomous_md"] = md
-            st.session_state["autonomous_idx"] = selected_idx
-            
-            status_box.update(label=f"✅ Autonomous AI Decision Complete ({lat})", state="complete", expanded=False)
+    cur_res = st.session_state.get(f"autonomous_result_{selected_idx}")
+    main_btn_label = f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}" if not cur_res else f"⚡ RE-RUN AUTONOMOUS AI ENGINE FOR {selected_idx}"
+    if st.button(main_btn_label, key=f"btn_run_auto_{selected_idx}", type="primary", use_container_width=True):
+        with st.spinner(f"⚡ Synthesizing {selected_idx} with Gemini 3.5 Flash-Lite..."):
+            ok, res_obj = _run_autonomous_pipeline(selected_idx, fetcher, signal_engine, copilot)
+            if ok:
+                lat = res_obj.get("inference_time", "")
+                st.toast(f"✅ {selected_idx} Autonomous AI Decision Complete ({lat})!", icon="⚡")
+            else:
+                st.error(res_obj)
+        try:
+            st.rerun(scope="fragment")
+        except Exception:
             st.rerun()
 
     # ─────────────────────────────────────────────────────────────
@@ -2087,7 +2103,10 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                         st.toast(f"🎯 Order Sent: {idx} {signal} @ ₹{ep:.2f}!", icon="⚡")
                         st.success(f"✅ Trade Executed Successfully: {msg}")
                         st.info("💡 You can monitor this position with live trailing SL under the **OPEN TRADES** tab.")
-                        st.rerun()
+                        try:
+                            st.rerun(scope="fragment")
+                        except Exception:
+                            st.rerun()
                     else:
                         st.error(f"❌ Execution Blocked: {msg}")
             else:

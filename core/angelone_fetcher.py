@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import time as pytime
 import requests
 import pyotp
@@ -8,7 +9,7 @@ import threading
 import urllib.request, email.utils
 from typing import Optional, Tuple, Dict, Any, List
 from SmartApi import SmartConnect
-from config import ANGEL_API_KEY, ANGEL_CLIENT_ID, ANGEL_PASSWORD, ANGEL_TOTP_SECRET, INDEX_CONFIG
+from config import ANGEL_API_KEY, ANGEL_CLIENT_ID, ANGEL_PASSWORD, ANGEL_TOTP_SECRET, INDEX_CONFIG, BASE_DIR
 from utils.cache import TTLCache
 import datetime
 
@@ -99,11 +100,28 @@ class AngelOneDataFetcher:
             log.warning("WebSocket initialization error: %s", e)
 
     def _load_scrip_master(self):
+        cache_file = os.path.join(BASE_DIR, "scrip_master_cache.json")
+        if os.path.exists(cache_file):
+            try:
+                mtime = os.path.getmtime(cache_file)
+                if time.time() - mtime < 86400:  # 24 hours
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        self.scrip_master = json.load(f)
+                    log.info(f"Loaded {len(self.scrip_master)} scrips from local disk cache in <0.05s.")
+                    return
+            except Exception as e:
+                log.warning(f"Failed to read local scrip cache: {e}")
+
         log.info("Downloading Angel One Scrip Master...")
         try:
-            res = requests.get('https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json', timeout=10.0)
+            res = requests.get('https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json', timeout=15.0)
             self.scrip_master = res.json()
             log.info(f"Loaded {len(self.scrip_master)} scrips.")
+            try:
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(self.scrip_master, f)
+            except Exception:
+                pass
         except Exception as e:
             log.error(f"Failed to load scrip master: {e}")
 

@@ -18,6 +18,7 @@ Thumbs.db
 
 # Option chain cache files
 last_data_*.json
+scrip_master_cache.json
 
 # Log directories
 logs/

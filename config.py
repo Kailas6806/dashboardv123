@@ -123,7 +123,7 @@ CONF_WEIGHT_SR_PROX   = 10   # max points from S/R proximity
 CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 
 # ── STREAMLIT REFRESH ──
-FRAGMENT_REFRESH_SECONDS = 1   # @st.fragment(run_every=N)
+FRAGMENT_REFRESH_SECONDS = 3   # @st.fragment(run_every=N)
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)
 

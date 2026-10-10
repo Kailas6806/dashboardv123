@@ -228,6 +228,15 @@ def show_finnifty():
 def show_analytics():
     render_analytics_tab(journal)
 
+@st.fragment
+def show_ai():
+    render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
+
+@st.fragment
+def show_autonomous():
+    from ui.renderer import render_autonomous_tab
+    render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+
 with tab_open:
     show_open_trades()
 
@@ -242,16 +251,9 @@ with tab_ml:
     render_ml_dashboard()
 
 with tab_ai:
-    @st.fragment
-    def show_ai():
-        render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, journal)
     show_ai()
 
 with tab_autonomous:
-    @st.fragment
-    def show_autonomous():
-        from ui.renderer import render_autonomous_tab
-        render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
     show_autonomous()
 
 
