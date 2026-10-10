@@ -112,8 +112,17 @@ def normalize_trade(raw: Dict[str, Any]) -> Dict[str, Any]:
 # ──────────────────────────────────────────────────
 # 2. TERMINAL HEADER & TICKER
 # ──────────────────────────────────────────────────
-def render_app_header(is_market_open: bool, is_connected: bool, datetime_str: str, ws_connected: bool = False) -> str:
+def render_app_header(
+    is_market_open: bool,
+    is_connected: bool,
+    datetime_str: str,
+    ws_connected: bool = False,
+    *args,
+    **kwargs,
+) -> str:
     """Renders compact terminal header with status indicators."""
+    if "ws_connected" in kwargs:
+        ws_connected = kwargs["ws_connected"]
     market_pill = '<span class="pill pill-on">MARKET OPEN</span>' if is_market_open else '<span class="pill pill-off">MARKET CLOSED</span>'
     live_pill = '<span class="pill pill-live">LIVE</span>' if is_connected else '<span class="pill pill-off">DATA DISCONNECTED</span>'
     ws_pill = '<span class="pill pill-live" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#10b981;font-weight:600;">⚡ WS: &lt;50ms</span>' if ws_connected else '<span class="pill pill-off" style="opacity:0.8;">⚡ WS: STANDBY</span>'

@@ -193,7 +193,10 @@ is_connected = any(it.get("spot") is not None for it in ticker_items)
 ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
 
 # ── RENDER HEADER & TICKER ──
-st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected), unsafe_allow_html=True)
+try:
+    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected), unsafe_allow_html=True)
+except TypeError:
+    st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
 
 # ── DYNAMIC NAVIGATION TABS ──
