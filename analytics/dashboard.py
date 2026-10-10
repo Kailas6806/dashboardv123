@@ -96,6 +96,7 @@ def render_analytics_tab(journal: Any) -> None:
     hdr_col, days_col, reset_col = st.columns([3, 1.2, 0.8])
     with hdr_col:
         st.markdown("## 📊 Trade Analytics")
+        st.caption("☁️ **Powered by Supabase PostgreSQL Database** · Cloud Persisted across server sleep & reboots")
     with days_col:
         timeframe = st.selectbox(
             "Timeframe",
@@ -111,40 +112,48 @@ def render_analytics_tab(journal: Any) -> None:
             days = 36500  # practically all time
     with reset_col:
         if st.button("🗑️ Reset", key="reset_journal", use_container_width=True,
-                      help="Clear all trade journal entries"):
+                      help="Clear all trade history from Supabase and Journal"):
             st.session_state["_confirm_reset_journal"] = True
 
     # Confirmation dialog
     if st.session_state.get("_confirm_reset_journal", False):
-        st.warning("⚠️ **This will permanently delete ALL trade journal entries.** Are you sure?")
+        st.warning("⚠️ **This will permanently delete ALL trade history from Supabase Cloud Database.** Are you sure?")
         c1, c2, c3 = st.columns([1, 1, 3])
         with c1:
             if st.button("✅ Yes, Reset", key="confirm_reset_journal", type="primary",
                           use_container_width=True):
-                journal.trades = []
-                # Force save empty list by clearing load failed flag
-                try:
-                    with open(journal.journal_path, "w", encoding="utf-8") as fh:
-                        fh.write("[]")
-                except Exception:
-                    pass
+                if hasattr(journal, "clear_all_trades"):
+                    journal.clear_all_trades()
+                else:
+                    journal.trades = []
+                    try:
+                        with open(journal.journal_path, "w", encoding="utf-8") as fh:
+                            fh.write("[]")
+                    except Exception:
+                        pass
                 st.session_state["_confirm_reset_journal"] = False
-                st.success("✅ Trade journal cleared!")
+                st.success("✅ Trade database cleared!")
                 st.rerun()
         with c2:
             if st.button("❌ Cancel", key="cancel_reset_journal", use_container_width=True):
                 st.session_state["_confirm_reset_journal"] = False
                 st.rerun()
 
-    # ── Persistence & Backup Toolbar ──
-    with st.expander("💾 Backup, Restore & Streamlit Cloud Persistence", expanded=False):
+    # ── Supabase Cloud Toolbar & Offline Exports ──
+    with st.expander("☁️ Supabase Cloud Sync & Offline Exports", expanded=False):
         st.caption(
-            "💡 **Streamlit Cloud Note:** Streamlit Community Cloud runs in stateless containers. "
-            "To prevent data loss on container sleep or reboot, download periodic backups or restore "
-            "your saved journal JSON file here."
+            "💡 **Supabase Cloud Database is Active:** All trades are permanently stored in Supabase PostgreSQL "
+            "and will never be lost when Streamlit sleeps or restarts. You can refresh live data from Supabase "
+            "or export offline backups (JSON/CSV) below."
         )
-        b_c1, b_c2, b_c3 = st.columns([1.5, 1.5, 3])
+        b_c1, b_c2, b_c3, b_c4 = st.columns([1.5, 1.5, 1.5, 2.5])
         with b_c1:
+            if st.button("🔄 Sync from Supabase", use_container_width=True, help="Force refresh data directly from Supabase"):
+                if hasattr(journal, "_load"):
+                    journal._load()
+                st.success("✅ Refreshed from Supabase!")
+                st.rerun()
+        with b_c2:
             st.download_button(
                 "📥 Export JSON",
                 data=journal.export_to_json(),
@@ -153,7 +162,7 @@ def render_analytics_tab(journal: Any) -> None:
                 use_container_width=True,
                 help="Download full trade history as JSON"
             )
-        with b_c2:
+        with b_c3:
             st.download_button(
                 "📥 Export CSV",
                 data=journal.export_to_csv(),
@@ -162,9 +171,9 @@ def render_analytics_tab(journal: Any) -> None:
                 use_container_width=True,
                 help="Download trade history as CSV"
             )
-        with b_c3:
+        with b_c4:
             uploaded_journal = st.file_uploader(
-                "Restore Backup",
+                "Restore Backup to Supabase",
                 type=["json"],
                 key="analytics_upload_journal",
                 label_visibility="collapsed"
@@ -173,27 +182,28 @@ def render_analytics_tab(journal: Any) -> None:
                 try:
                     content = uploaded_journal.read().decode("utf-8")
                     imported_count = journal.import_from_json_string(content)
-                    st.success(f"✅ Restored {imported_count} trades into journal!")
+                    st.success(f"✅ Restored {imported_count} trades into Supabase Database!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Failed to restore backup: {e}")
 
-    analytics: Dict[str, Any] = journal.get_analytics(days=days)
+    # Gather trades & compute analytics directly from Supabase DB
+    all_trades: List[Dict[str, Any]] = journal.get_all_trades() if journal else []
+    analytics: Dict[str, Any] = journal.get_analytics(days=days) if journal else {}
     
-    if days < 36500:
+    if days < 36500 and journal:
         import datetime
         from config import IST
         cutoff = datetime.datetime.now(tz=IST) - datetime.timedelta(days=days)
-        all_trades = journal._filter_since(cutoff)
+        filtered_trades = journal._filter_since(cutoff, trade_list=all_trades)
     else:
-        all_trades: List[Dict[str, Any]] = journal.get_all_trades()
+        filtered_trades = all_trades
 
     if not all_trades:
         st.info(
-            "🗒️ **No trades recorded yet.**\n\n"
+            "🗒️ **No trades recorded in Supabase yet.**\n\n"
             "Once your first trade is executed and journaled, "
-            "analytics will appear here automatically. "
-            "If you have a previous backup, expand **Backup, Restore & Streamlit Cloud Persistence** above to restore it."
+            "analytics will appear here automatically from Supabase Cloud Database."
         )
         return
 
@@ -203,7 +213,7 @@ def render_analytics_tab(journal: Any) -> None:
     st.markdown("---")
 
     # ── 2. Cumulative P&L Chart ───────────────────────────────────────
-    _render_cumulative_pnl(all_trades)
+    _render_cumulative_pnl(filtered_trades)
 
     # ── 3 & 4. Side-by-side: P&L by Index  |  Performance by Hour ─────
     col_left, col_right = st.columns(2)
@@ -222,7 +232,7 @@ def render_analytics_tab(journal: Any) -> None:
     st.markdown("---")
 
     # ── 7. Recent Trades Table ────────────────────────────────────────
-    _render_recent_trades(all_trades)
+    _render_recent_trades(filtered_trades)
 
 
 # ====================================================================
@@ -260,12 +270,19 @@ def _render_cumulative_pnl(trades: List[Dict[str, Any]]) -> None:
     running = 0.0
     labels: List[str] = []
 
-    for i, t in enumerate(trades, start=1):
+    # Sort chronologically for proper progression
+    sorted_trades = sorted(
+        trades,
+        key=lambda t: (str(t.get("date") or str(t.get("recorded_at") or "")[:10]), str(t.get("Entry Time") or ""))
+    )
+
+    for i, t in enumerate(sorted_trades, start=1):
         pnl = _safe_float(t.get("Actual P&L ₹", 0))
         running += pnl
         cumulative.append(running)
         entry_time = t.get("Entry Time", "")
-        label = str(entry_time)[:16] if entry_time else f"Trade {i}"
+        t_date = str(t.get("date") or str(t.get("recorded_at") or "")[:10])
+        label = f"{t_date} {entry_time}" if (t_date and entry_time) else (str(entry_time) or f"Trade {i}")
         labels.append(label)
 
     df = pd.DataFrame({"Trade": labels, "Cumulative P&L (₹)": cumulative})

@@ -48,18 +48,25 @@ class TradeJournal:
         """
         self._lock = threading.RLock()
         self.journal_path: str = journal_path or JOURNAL_FILE
+        self.is_custom_path: bool = (journal_path is not None and journal_path != JOURNAL_FILE)
         self.trades: List[Dict[str, Any]] = []
         self._load_failed = False
         self.db = None
-        try:
-            from analytics.db import TradeDB
-            self.db = TradeDB()
-        except Exception as e:
-            logger.warning("TradeDB init in TradeJournal: %s", e)
+        if not self.is_custom_path:
+            try:
+                from analytics.db import TradeDB
+                self.db = TradeDB()
+            except Exception as e:
+                logger.warning("TradeDB init in TradeJournal: %s", e)
         self._load()
-        if not self._load_failed and (journal_path is None or journal_path == JOURNAL_FILE):
-            self._import_from_csv()
-            self._reconcile_stale_open_trades()
+        # Seed Supabase from local CSV/JSON files if Supabase is completely empty
+        if not self._load_failed and not self.is_custom_path and len(self.trades) == 0 and self.db:
+            try:
+                synced = self.db.sync_from_json_and_csv()
+                if synced > 0:
+                    self._load()
+            except Exception as sync_err:
+                logger.debug("TradeDB initial seeding: %s", sync_err)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -257,35 +264,36 @@ class TradeJournal:
             self._lock.release()
 
     def get_all_trades(self) -> List[Dict[str, Any]]:
-        """Return a copy of every trade in the journal (preferring SQLite DB)."""
+        """Return a copy of every trade in the journal (prioritizing Supabase PostgreSQL DB)."""
         with self._lock:
-            if self.db:
+            if self.db and not self.is_custom_path:
                 try:
                     db_trades = self.db.get_all_trades()
                     if db_trades:
-                        return db_trades
+                        self.trades = db_trades
+                        return list(db_trades)
                 except Exception as e:
                     logger.warning("TradeDB get_all_trades error: %s", e)
             self._load()
             return list(self.trades)
 
     def get_trades_for_date(self, date_str: str) -> List[Dict[str, Any]]:
-        """Return trades whose recorded_at falls on *date_str*.
+        """Return trades whose recorded_at or date falls on *date_str*.
 
         Args:
             date_str: Date in ``YYYY-MM-DD`` format.
         """
         with self._lock:
-            self._load()
+            all_trades = self.get_all_trades()
             results: List[Dict[str, Any]] = []
-            for t in self.trades:
-                recorded_at = t.get("recorded_at", "")
-                if recorded_at and str(recorded_at)[:10] == date_str:
+            for t in all_trades:
+                rec_date = str(t.get("date") or t.get("recorded_at") or "")[:10]
+                if rec_date and rec_date == date_str:
                     results.append(t)
             return results
 
     def get_analytics(self, days: int = 7) -> Dict[str, Any]:
-        """Compute comprehensive analytics over the last *days* days.
+        """Compute comprehensive analytics over the last *days* days directly from database.
 
         Returns a dict with keys:
             total_trades, wins, losses, win_rate,
@@ -295,9 +303,12 @@ class TradeJournal:
             current_streak, consecutive_losses.
         """
         with self._lock:
-            self._load()
-            cutoff = datetime.now(tz=IST) - timedelta(days=days)
-            trades = self._filter_since(cutoff)
+            all_trades = self.get_all_trades()
+            if days < 36500:
+                cutoff = datetime.now(tz=IST) - timedelta(days=days)
+                trades = self._filter_since(cutoff, trade_list=all_trades)
+            else:
+                trades = all_trades
 
         analytics: Dict[str, Any] = {
             "total_trades": 0,
@@ -460,46 +471,74 @@ class TradeJournal:
                         pass
         logger.error("Failed to save journal after 3 attempts")
 
+    def _save_cache_only(self) -> None:
+        """Write backup cache to local disk silently without blocking."""
+        try:
+            dir_name = os.path.dirname(self.journal_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name or '.', prefix="trade_journal_cache_", suffix=".json", text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(self.trades, fh, indent=2, ensure_ascii=False, cls=NpEncoder)
+            os.replace(tmp_path, self.journal_path)
+        except Exception:
+            pass
+
     def _load(self) -> None:
-        """Read the journal list from the JSON file with retry and fallback."""
-        import time
-        if not os.path.isfile(self.journal_path):
-            return
+        """Read trades, prioritizing Supabase PostgreSQL database with JSON fallback."""
+        with self._lock:
+            # 1. Primary Source of Truth: Supabase PostgreSQL
+            if self.db and not self.is_custom_path:
+                try:
+                    db_trades = self.db.get_all_trades()
+                    if db_trades:
+                        self.trades = db_trades
+                        self._load_failed = False
+                        self._save_cache_only()
+                        return
+                except Exception as e:
+                    logger.warning("TradeDB get_all_trades in _load error: %s (falling back to JSON cache)", e)
 
-        loaded_data = None
-        for attempt in range(3):
-            try:
-                if os.path.getsize(self.journal_path) > 0:
-                    with open(self.journal_path, "r", encoding="utf-8") as fh:
-                        loaded_data = json.load(fh)
-                    break
-                else:
+            # 2. Local Fallback / Custom Path: Read from self.journal_path
+            import time
+            if not os.path.isfile(self.journal_path):
+                return
+
+            loaded_data = None
+            for attempt in range(3):
+                try:
+                    if os.path.getsize(self.journal_path) > 0:
+                        with open(self.journal_path, "r", encoding="utf-8") as fh:
+                            loaded_data = json.load(fh)
+                        break
+                    else:
+                        time.sleep(0.05 * (attempt + 1))
+                except (json.JSONDecodeError, OSError):
                     time.sleep(0.05 * (attempt + 1))
-            except (json.JSONDecodeError, OSError) as exc:
-                time.sleep(0.05 * (attempt + 1))
 
-        if isinstance(loaded_data, list):
-            self.trades = loaded_data
-            self._load_failed = False
-            logger.debug("Loaded %d trades from journal", len(self.trades))
-        elif loaded_data is not None:
-            logger.warning("Journal file is not a list")
-        else:
-            if not self.trades:
-                self.trades = []
+            if isinstance(loaded_data, list):
+                self.trades = loaded_data
+                self._load_failed = False
+                logger.debug("Loaded %d trades from journal", len(self.trades))
+            elif loaded_data is not None:
+                logger.warning("Journal file is not a list")
             else:
-                logger.warning("Could not read journal file; preserving %d in-memory trades", len(self.trades))
+                if not self.trades:
+                    self.trades = []
+                else:
+                    logger.warning("Could not read journal file; preserving %d in-memory trades", len(self.trades))
 
-        if not self._load_failed and self.trades:
-            # Deduplicate any existing entries
-            deduped = self._deduplicate(self.trades)
-            if len(deduped) < len(self.trades):
-                logger.info(
-                    "Removed %d duplicate journal entries on load",
-                    len(self.trades) - len(deduped),
-                )
-                self.trades = deduped
-                self._save()
+            if not self._load_failed and self.trades:
+                # Deduplicate any existing entries
+                deduped = self._deduplicate(self.trades)
+                if len(deduped) < len(self.trades):
+                    logger.info(
+                        "Removed %d duplicate journal entries on load",
+                        len(self.trades) - len(deduped),
+                    )
+                    self.trades = deduped
+                    self._save()
 
     def _reconcile_stale_open_trades(self) -> None:
         """Auto-close any open trades from previous dates to prevent stale open state."""
@@ -649,21 +688,36 @@ class TradeJournal:
                     seen[key] = entry
         return list(seen.values())
 
+    def clear_all_trades(self) -> None:
+        """Clear all trades from memory, Supabase database, and local cache."""
+        with self._lock:
+            self.trades = []
+            if self.db and not self.is_custom_path:
+                try:
+                    self.db.clear_all_trades()
+                except Exception as e:
+                    logger.warning("TradeDB clear_all_trades error: %s", e)
+            try:
+                with open(self.journal_path, "w", encoding="utf-8") as fh:
+                    fh.write("[]")
+            except Exception:
+                pass
+
     def export_to_json(self) -> str:
         """Export all trades to a formatted JSON string."""
         with self._lock:
-            self._load()
-            return json.dumps(self.trades, indent=2, ensure_ascii=False, cls=NpEncoder)
+            trades = self.get_all_trades()
+            return json.dumps(trades, indent=2, ensure_ascii=False, cls=NpEncoder)
 
     def export_to_csv(self) -> str:
         """Export all trades to a CSV string."""
         import io
         import pandas as pd
         with self._lock:
-            self._load()
-            if not self.trades:
+            trades = self.get_all_trades()
+            if not trades:
                 return ""
-            df = pd.DataFrame(self.trades)
+            df = pd.DataFrame(trades)
             # Remove complex objects from signal_metadata for clean CSV export
             if "signal_metadata" in df.columns:
                 df["signal_metadata"] = df["signal_metadata"].apply(lambda x: json.dumps(x) if isinstance(x, dict) else x)
@@ -672,10 +726,7 @@ class TradeJournal:
             return buf.getvalue()
 
     def import_from_json_string(self, json_str: str) -> int:
-        """Import and merge trades from a JSON string.
-        
-        Returns the number of newly added trades.
-        """
+        """Import and merge trades from a JSON string into memory and Supabase DB."""
         with self._lock:
             try:
                 data = json.loads(json_str)
@@ -688,8 +739,16 @@ class TradeJournal:
                 deduped = self._deduplicate(merged)
                 self.trades = deduped
                 self._save()
+
+                if self.db and not self.is_custom_path:
+                    for t in deduped:
+                        try:
+                            self.db.upsert_trade(t, t.get("signal_metadata"))
+                        except Exception as e:
+                            logger.warning("TradeDB upsert during import: %s", e)
+
                 added = len(self.trades) - initial_count
-                logger.info("Imported %d new trades into journal", max(0, added))
+                logger.info("Imported %d new trades into journal and Supabase", max(0, added))
                 return max(0, added)
             except Exception as e:
                 logger.error("Failed to import trades from JSON: %s", e)
@@ -699,11 +758,12 @@ class TradeJournal:
     #  Internal helpers                                                    #
     # ------------------------------------------------------------------ #
 
-    def _filter_since(self, cutoff: datetime) -> List[Dict[str, Any]]:
-        """Return trades with recorded_at >= *cutoff*."""
+    def _filter_since(self, cutoff: datetime, trade_list: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """Return trades with recorded_at or date >= *cutoff*."""
+        source = trade_list if trade_list is not None else self.trades
         results: List[Dict[str, Any]] = []
-        for t in self.trades:
-            recorded_at = t.get("recorded_at", "")
+        for t in source:
+            recorded_at = t.get("recorded_at") or t.get("date") or ""
             if not recorded_at:
                 continue
             try:
@@ -714,7 +774,14 @@ class TradeJournal:
                 if recorded_dt >= cutoff:
                     results.append(t)
             except (ValueError, TypeError):
-                pass
+                d_str = str(t.get("date") or "")
+                if len(d_str) >= 10:
+                    try:
+                        d_dt = datetime.fromisoformat(d_str[:10]).replace(tzinfo=IST)
+                        if d_dt >= cutoff:
+                            results.append(t)
+                    except Exception:
+                        pass
         return results
 
     @staticmethod

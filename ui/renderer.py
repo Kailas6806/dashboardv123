@@ -936,7 +936,7 @@ def render_trade_history_tab(journal):
     Timeframe, Instrument, Outcome, and Search query, plus Backup/Restore controls.
     Backed by SQLite database (trades.db) for permanent persistence.
     """
-    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY (SQLITE & JOURNAL)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">TRADE HISTORY (SUPABASE CLOUD DATABASE)</div>', unsafe_allow_html=True)
 
     from analytics.db import TradeDB
     db = TradeDB()

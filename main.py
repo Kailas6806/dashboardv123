@@ -132,7 +132,7 @@ if "_trade_mgr" not in st.session_state:
     )
 else:
     st.session_state["_trade_mgr"]._risk_mgr = st.session_state["_risk_mgr"]
-if "_journal" not in st.session_state:
+if "_journal" not in st.session_state or not hasattr(st.session_state.get("_journal"), "clear_all_trades"):
     st.session_state["_journal"] = TradeJournal()
 if "_copilot" not in st.session_state:
     st.session_state["_copilot"] = AICopilot()

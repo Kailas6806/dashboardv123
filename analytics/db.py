@@ -531,3 +531,15 @@ class TradeDB:
 
         log.info("Synced %d total trade entries into Supabase", imported)
         return imported
+
+    def clear_all_trades(self) -> None:
+        """Clear all trades from Supabase database table."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM trades")
+                conn.commit()
+                log.info("Cleared all trades from Supabase trades table")
+            finally:
+                conn.close()
