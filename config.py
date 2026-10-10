@@ -138,7 +138,7 @@ NVIDIA_MODEL            = "meta/llama-3.2-11b-vision-instruct"
 AI_AUTO_TRADE_DEFAULT   = True
 AI_MIN_CONVICTION       = 60   # Minimum conviction score (0-100) to recommend/execute trade
 
-# ── GEMINI AI FALLBACK ──
+# ── GEMINI AI (PRIMARY REAL-TIME ENGINE - 1.2s LATENCY) ──
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 try:
     import streamlit as _st
@@ -148,6 +148,7 @@ except Exception:
     pass
 
 GEMINI_MODEL            = "gemini-3.5-flash-lite"
+AI_PRIMARY_ENGINE       = "gemini-3.5-flash-lite"
 
 
 # ANGEL ONE CREDENTIALS

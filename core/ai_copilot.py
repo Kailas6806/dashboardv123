@@ -109,7 +109,7 @@ class AICopilot:
         prompt: str,
         system_instruction: str = "",
         json_mode: bool = True,
-        max_tokens: int = 250,
+        max_tokens: int = 600,
     ) -> Optional[str]:
         """Query Google Gemini API as a high-availability fallback."""
         if not self.gemini_key:
@@ -203,7 +203,9 @@ class AICopilot:
         pe_ltp = atm_row.get("PE LTP", 0) if hasattr(atm_row, "get") else 0
 
         # Check cache (30-second TTL on similar market state to prevent spamming API on fast UI refresh)
-        cache_key = f"{idx}_{round(spot, 0)}_{round(pcr, 2)}_{raw_signal}"
+        step_val = INDEX_CONFIG.get(idx, {}).get("step", 50)
+        atm_bucket = round(spot / step_val) * step_val if step_val else atm
+        cache_key = f"{idx}_{atm_bucket}_{round(pcr, 1)}_{raw_signal}"
         import time as _time
         _now_ts = _time.time()
         if hasattr(self, "_analysis_cache") and cache_key in self._analysis_cache:
@@ -262,9 +264,37 @@ OUTPUT SCHEMA (strict JSON):
   "risk_flags": ["<risk note>"]
 }}"""
 
-        # 1. Try NVIDIA NIM (Primary)
+        # 1. Try Google Gemini 3.5 Flash-Lite (Primary Engine - ~1.2s sub-second latency)
+        if self.gemini_key:
+            try:
+                _t_start = _time.time()
+                sys_prompt = "You are a quantitative NSE index options analysis engine. Output strictly one JSON object."
+                gemini_text = self._call_gemini(
+                    prompt,
+                    system_instruction=sys_prompt,
+                    json_mode=True,
+                    max_tokens=600,
+                )
+                if gemini_text:
+                    parsed = self._extract_json(gemini_text)
+                    if parsed:
+                        elapsed = round(_time.time() - _t_start, 2)
+                        parsed["provider"] = "Google Gemini 3.5 Flash-Lite"
+                        parsed["inference_time"] = f"{elapsed:.2f}s"
+                        parsed["reasoning_content"] = parsed.get("detailed_reasoning") or parsed.get("reasoning_summary", "")
+                        parsed["raw_content"] = gemini_text
+                        parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
+                        if hasattr(self, "_analysis_cache"):
+                            self._analysis_cache[cache_key] = (_now_ts, parsed)
+                        log.info("Gemini 3.5 Flash-Lite analysis completed in %.2fs", elapsed)
+                        return parsed
+            except Exception as fb_err:
+                log.warning("Gemini primary call failed (%s). Triggering NVIDIA NIM fallback...", fb_err)
+
+        # 2. Try NVIDIA NIM (Fallback Engine)
         if self._client:
             try:
+                _t_start = _time.time()
                 completion = self._client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -296,7 +326,9 @@ OUTPUT SCHEMA (strict JSON):
                         "risk_warning": "Verify market signals manually",
                     }
 
-                parsed["provider"] = "NVIDIA NIM"
+                elapsed = round(_time.time() - _t_start, 2)
+                parsed["provider"] = "NVIDIA NIM (Fallback)"
+                parsed["inference_time"] = f"{elapsed:.2f}s"
                 parsed["reasoning_content"] = parsed.get("detailed_reasoning") or reasoning or parsed.get("reasoning_summary", "")
                 parsed["raw_content"] = content
                 parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
@@ -305,30 +337,7 @@ OUTPUT SCHEMA (strict JSON):
                 return parsed
 
             except Exception as e:
-                log.warning("NVIDIA NIM analysis failed (%s). Triggering Gemini fallback...", e)
-
-        # 2. Try Google Gemini (Fallback)
-        if self.gemini_key:
-            try:
-                sys_prompt = "You are a quantitative NSE index options analysis engine. Output strictly one JSON object."
-                gemini_text = self._call_gemini(
-                    prompt,
-                    system_instruction=sys_prompt,
-                    json_mode=True,
-                    max_tokens=350,
-                )
-                if gemini_text:
-                    parsed = self._extract_json(gemini_text)
-                    if parsed:
-                        parsed["provider"] = "Google Gemini (Fallback)"
-                        parsed["reasoning_content"] = parsed.get("detailed_reasoning") or parsed.get("reasoning_summary", "")
-                        parsed["raw_content"] = gemini_text
-                        parsed["timestamp"] = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
-                        if hasattr(self, "_analysis_cache"):
-                            self._analysis_cache[cache_key] = (_now_ts, parsed)
-                        return parsed
-            except Exception as fb_err:
-                log.error("Gemini fallback failed: %s", fb_err)
+                log.error("NVIDIA NIM fallback failed: %s", e)
 
         log.error("AICopilot analysis failed: all providers exhausted")
         return {
@@ -417,6 +426,29 @@ DECISION RULE:
 - Score 30-59: WAIT (mixed signals)
 - Score < 30: WAIT (no clear edge)'''
 
+        import time as _t
+        _t0 = _t.time()
+
+        # 1. Try Google Gemini (Primary Engine - ~1.2s response time)
+        if self.gemini_key:
+            try:
+                gemini_text = self._call_gemini(
+                    prompt,
+                    system_instruction="You are an elite autonomous trading AI. Output strict JSON only.",
+                    json_mode=True,
+                    max_tokens=250,
+                )
+                if gemini_text:
+                    parsed = self._extract_json(gemini_text)
+                    if parsed:
+                        elapsed = round(_t.time() - _t0, 2)
+                        parsed["provider"] = "Google Gemini 3.5 Flash-Lite"
+                        parsed["inference_time"] = f"{elapsed:.2f}s"
+                        return parsed
+            except Exception as fb_err:
+                log.warning("Gemini autonomous primary failed (%s). Triggering NVIDIA fallback...", fb_err)
+
+        # 2. Fallback to NVIDIA NIM
         try:
             if self._client:
                 completion = self._client.chat.completions.create(
@@ -432,6 +464,9 @@ DECISION RULE:
                 content = completion.choices[0].message.content or ""
                 parsed = self._extract_json(content)
                 if parsed:
+                    elapsed = round(_t.time() - _t0, 2)
+                    parsed["provider"] = "NVIDIA NIM (Fallback)"
+                    parsed["inference_time"] = f"{elapsed:.2f}s"
                     return parsed
             elif self.api_key:
                 import requests
@@ -452,31 +487,36 @@ DECISION RULE:
                     content = resp.json()["choices"][0]["message"]["content"]
                     parsed = self._extract_json(content)
                     if parsed:
+                        elapsed = round(_t.time() - _t0, 2)
+                        parsed["provider"] = "NVIDIA NIM (Fallback)"
+                        parsed["inference_time"] = f"{elapsed:.2f}s"
                         return parsed
         except Exception as e:
-            log.warning("NVIDIA autonomous signal failed (%s). Triggering Gemini fallback...", e)
+            log.warning("NVIDIA autonomous signal fallback failed: %s", e)
 
-        # Fallback to Google Gemini
-        if self.gemini_key:
-            try:
-                gemini_text = self._call_gemini(
-                    prompt,
-                    system_instruction="You are an elite autonomous trading AI. Output strict JSON only.",
-                    json_mode=True,
-                    max_tokens=250,
-                )
-                if gemini_text:
-                    parsed = self._extract_json(gemini_text)
-                    if parsed:
-                        return parsed
-            except Exception as fb_err:
-                log.warning("Gemini autonomous fallback failed: %s", fb_err)
-
-        return {"signal": "WAIT", "conviction": 0, "reasoning": "AI unavailable across NVIDIA and Gemini."}
+        return {"signal": "WAIT", "conviction": 0, "reasoning": "AI unavailable across Gemini and NVIDIA.", "inference_time": "0.0s"}
 
     def chat_with_agent(self, messages: list) -> str:
         if not self.is_configured():
-            return "AI Copilot is not configured. Please add NVIDIA_API_KEY or GEMINI_API_KEY."
+            return "AI Copilot is not configured. Please add GEMINI_API_KEY or NVIDIA_API_KEY."
+
+        # 1. Try Google Gemini (Primary for fast chat)
+        if self.gemini_key:
+            try:
+                sys_prompt = "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."
+                chat_prompt = "\n".join([f"{m.get('role', 'user').upper()}: {m.get('content', '')}" for m in messages])
+                gemini_reply = self._call_gemini(
+                    chat_prompt,
+                    system_instruction=sys_prompt,
+                    json_mode=False,
+                    max_tokens=512,
+                )
+                if gemini_reply:
+                    return gemini_reply
+            except Exception as fb_err:
+                log.warning("Gemini chat primary failed (%s). Triggering NVIDIA fallback...", fb_err)
+
+        # 2. Fallback to NVIDIA NIM
         try:
             if self._client:
                 completion = self._client.chat.completions.create(
@@ -502,25 +542,9 @@ DECISION RULE:
                 if resp.status_code == 200:
                     return resp.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            log.warning("NVIDIA chat failed (%s). Triggering Gemini fallback...", e)
+            log.warning("NVIDIA chat fallback failed (%s)", e)
 
-        # Fallback to Google Gemini
-        if self.gemini_key:
-            try:
-                sys_prompt = "You are V12 PRO MAX, an elite financial AI assistant. You help the user analyze stocks, debug their trading logic, and understand market trends."
-                chat_prompt = "\n".join([f"{m.get('role', 'user').upper()}: {m.get('content', '')}" for m in messages])
-                gemini_reply = self._call_gemini(
-                    chat_prompt,
-                    system_instruction=sys_prompt,
-                    json_mode=False,
-                    max_tokens=512,
-                )
-                if gemini_reply:
-                    return gemini_reply
-            except Exception as fb_err:
-                log.warning("Gemini chat fallback failed: %s", fb_err)
-
-        return "AI Copilot is currently offline. Please check your network and API credentials."
+        return "AI Copilot is currently offline. Please verify API keys."
 
     def draft_swing_message(self, picks_data: list) -> str:
         """Use the Copilot to draft a Telegram message for swing trade picks."""

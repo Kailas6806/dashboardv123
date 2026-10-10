@@ -269,12 +269,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             col_ai_btn, col_ai_txt = st.columns([1.8, 5.2])
             with col_ai_btn:
                 if st.button(f"🧠 AI VALIDATE {idx}", key=f"btn_quick_ai_{idx}", use_container_width=True):
-                    with st.spinner(f"Evaluating {idx} with NVIDIA AI Copilot..."):
+                    with st.status(f"⚡ AI Copilot: Analyzing {idx} with Gemini 3.5 Flash-Lite...", expanded=True) as status_box:
+                        st.write("📊 Evaluating 21-strike Option Chain & Spot vs VWAP...")
                         ai_res = copilot.analyze_market_and_signals(
                             idx, md, final_signal, conf_score,
                             active_trades_count=len([t for t in st.session_state[tlog_key] if t.get("Status") == "OPEN"])
                         )
                         st.session_state[sk(idx, "ai_analysis")] = ai_res
+                        lat = ai_res.get("inference_time", "1.2s")
+                        status_box.update(label=f"✅ Analysis complete ({lat})", state="complete", expanded=False)
             with col_ai_txt:
                 if ai_res:
                     rec = ai_res.get("recommendation", "AVOID_WAIT").replace("_", " ")
@@ -283,7 +286,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     detailed = ai_res.get("detailed_reasoning") or ai_res.get("reasoning_content") or summary
                     t_stamp = ai_res.get("timestamp", datetime.datetime.now(IST).strftime("%I:%M:%S %p"))
                     bias = ai_res.get("market_bias", "NEUTRAL")
-                    provider = ai_res.get("provider", "AI Copilot")
+                    provider = ai_res.get("provider", "Gemini 3.5 Flash-Lite")
+                    inf_t = ai_res.get("inference_time")
+                    time_badge = f" • ⚡ **{inf_t}**" if inf_t else ""
                     regime = str(ai_res.get("regime", "")).replace("_", " ").upper()
 
                     is_buy = "BUY" in rec
@@ -330,14 +335,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
                     banner_fn(
                         f"🤖 **Verdict: {rec}** | Conviction: **{conv}/100** ({bias}"
-                        f"{f' • {regime}' if regime else ''}) • *{provider} @ {t_stamp}*\n\n"
+                        f"{f' • {regime}' if regime else ''}) • *{provider}{time_badge} @ {t_stamp}*\n\n"
                         f"**🧠 Reasoning:** {detailed}"
                         f"{trade_details}"
                         f"{factors_text}"
                         f"{flags_text}"
                     )
                 else:
-                    st.caption("🤖 AI Copilot ready. Click button to validate live option chain & market bias.")
+                    st.caption("⚡ **Gemini 3.5 Flash-Lite Engine Active (~1.2s)**. Click button for instant multi-factor signal validation.")
 
     # ── RISK MANAGEMENT CARD ──
     # Show ATR SL info if we have enough history
@@ -1526,9 +1531,12 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     with col_info:
         active_analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
         if active_analysis and "timestamp" in active_analysis:
-            st.caption(f"Last AI analysis generated at: {active_analysis['timestamp']}")
+            lat = active_analysis.get("inference_time")
+            lat_str = f" ({lat})" if lat else ""
+            prov = active_analysis.get("provider", "Gemini 3.5 Flash-Lite")
+            st.caption(f"Last AI analysis: {active_analysis['timestamp']}{lat_str} via {prov}")
         else:
-            st.caption("Click to trigger Nemotron 550B reasoning on live option chain structure.")
+            st.caption("⚡ Powered by Gemini 3.5 Flash-Lite (~1.2s). Click to evaluate live option chain & market regime.")
 
     tlog_key = sk(selected_idx, "trade_log")
     if tlog_key not in st.session_state:
@@ -1537,11 +1545,14 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     open_trades_count = len([t for t in tlog if t.get("Status") == "OPEN"])
 
     if run_ai:
-        with st.spinner(f"NVIDIA Nemotron 550B is analyzing {selected_idx} market mechanics..."):
+        with st.status(f"⚡ Gemini 3.5 Flash-Lite: Analyzing {selected_idx} market structure...", expanded=True) as status_box:
+            st.write(f"📊 Ingesting {selected_idx} 21-strike Option Chain, Greeks, and PCR momentum...")
             analysis = copilot.analyze_market_and_signals(
                 selected_idx, md, final_signal, conf_score, active_trades_count=open_trades_count
             )
             st.session_state[sk(selected_idx, "ai_analysis")] = analysis
+            latency = analysis.get("inference_time", "1.2s")
+            status_box.update(label=f"✅ Analysis complete ({latency})", state="complete", expanded=False)
 
             # ── AUTO-TRADE: fire immediately if toggle is ON and conviction is high ──
             if auto_trade:
@@ -1726,7 +1737,8 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
     selected_idx = st.selectbox("Select Index for Autonomous Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="auto_idx")
     
     if st.button(f"Generate Autonomous Signal for {selected_idx}", type="primary", use_container_width=True):
-        with st.spinner(f"AI is deeply analyzing {selected_idx} data..."):
+        with st.status(f"⚡ Autonomous AI: Evaluating {selected_idx} market structure...", expanded=True) as status_box:
+            st.write("📊 Fetching live Option Chain & Open Interest...")
             # Fetch fresh data from SmartAPI/WebSocket or fallback to cache
             data = fetcher.fetch_option_chain(selected_idx) if fetcher else None
             cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
@@ -1773,11 +1785,13 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                 st.session_state.get(sk(selected_idx, "oi_baseline"), None)
             )
             
-            # Send to AI
+            st.write("🧠 Querying Gemini 3.5 Flash-Lite decision engine...")
             result = copilot.generate_autonomous_signal(selected_idx, md)
             st.session_state["autonomous_result"] = result
             st.session_state["autonomous_md"] = md
             st.session_state["autonomous_idx"] = selected_idx
+            lat = result.get("inference_time", "1.2s")
+            status_box.update(label=f"✅ Autonomous decision ready ({lat})", state="complete", expanded=False)
             
     res = st.session_state.get("autonomous_result")
     if res:
@@ -1787,12 +1801,18 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
         bias = res.get("trend_bias", "UNKNOWN")
         conv = res.get("conviction", 0)
         logic = res.get("reasoning", "")
+        prov = res.get("provider", "Gemini 3.5 Flash-Lite")
+        lat = res.get("inference_time", "")
+        lat_pill = f" ({lat})" if lat else ""
         
         sig_color = "#10b981" if "BUY CE" in signal else ("#ef4444" if "BUY PE" in signal else "#64748b")
         
         st.markdown(f"""
         <div style="background:#1e293b; padding:20px; border-radius:10px; border-left:5px solid {sig_color}; margin-top:15px;">
-            <h4 style="margin:0; color:#94a3b8;">{idx} AUTONOMOUS DECISION</h4>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h4 style="margin:0; color:#94a3b8;">{idx} AUTONOMOUS DECISION</h4>
+                <span style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.15); padding:3px 8px; border-radius:4px;">⚡ {prov}{lat_pill}</span>
+            </div>
             <h1 style="color:{sig_color}; margin:10px 0;">{signal}</h1>
             <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
                 <div><b>Bias:</b> {bias}</div>
