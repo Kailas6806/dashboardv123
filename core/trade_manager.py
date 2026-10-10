@@ -236,8 +236,12 @@ class TradeManager:
         now_str = now.strftime("%I:%M:%S %p")
         auto_sq = now.time() >= AUTO_SQUARE_OFF_TIME
 
-        if isinstance(chain_records, list):
+        if not chain_records:
+            chain_records = {}
+        elif isinstance(chain_records, list):
             chain_records = {float(r.get("strikePrice", 0)): r for r in chain_records if r.get("strikePrice") is not None}
+        elif not isinstance(chain_records, dict):
+            chain_records = {}
 
         with self._lock:
             self._cleanup_exit_sets()
