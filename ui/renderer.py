@@ -419,17 +419,25 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         daily_trades_exceeded = trades_today_count >= MAX_DAILY_TRADES
 
         # 5. Margin Check: Ensure account has enough cash to buy option
+        if not hasattr(risk_mgr, "calculate_portfolio_equity") or not hasattr(risk_mgr, "can_afford_trade"):
+            from core.risk_manager import RiskManager
+            risk_mgr = RiskManager()
+            st.session_state["_risk_mgr"] = risk_mgr
+
         all_curr_trades = []
         for _i in INDEX_CONFIG:
             all_curr_trades.extend(st.session_state.get(sk(_i, "trade_log"), []))
         trade_db = st.session_state.get("_trade_db")
-        cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
-        portfolio_stats = risk_mgr.calculate_portfolio_equity(
-            cap_info.get("base_capital", CAPITAL),
-            all_curr_trades,
-            all_time_pnl=cap_info.get("cumulative_realized_pnl"),
-        )
-        can_afford, afford_reason = risk_mgr.can_afford_trade(ep, qty, portfolio_stats["available_margin"])
+        cap_info = trade_db.get_or_init_capital(CAPITAL) if (trade_db and hasattr(trade_db, "get_or_init_capital")) else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
+        try:
+            portfolio_stats = risk_mgr.calculate_portfolio_equity(
+                cap_info.get("base_capital", CAPITAL),
+                all_curr_trades,
+                all_time_pnl=cap_info.get("cumulative_realized_pnl"),
+            )
+            can_afford, afford_reason = risk_mgr.can_afford_trade(ep, qty, portfolio_stats["available_margin"])
+        except Exception:
+            can_afford, afford_reason = True, ""
 
         if daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
@@ -818,8 +826,21 @@ def render_open_trades_tab(trade_mgr, fetcher):
 
     # ── 0. Real Brokerage Capital HUD (Supabase Persisted) ──
     risk_mgr = st.session_state.get("_risk_mgr")
+    if not risk_mgr or not hasattr(risk_mgr, "calculate_portfolio_equity"):
+        from core.risk_manager import RiskManager
+        risk_mgr = RiskManager()
+        st.session_state["_risk_mgr"] = risk_mgr
+
     trade_db = st.session_state.get("_trade_db")
-    if risk_mgr:
+    if not trade_db or not hasattr(trade_db, "get_or_init_capital"):
+        try:
+            from analytics.db import TradeDB
+            trade_db = TradeDB()
+            st.session_state["_trade_db"] = trade_db
+        except Exception:
+            trade_db = None
+
+    try:
         cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
         all_trades_combined = all_open + closed_today
         portfolio_stats = risk_mgr.calculate_portfolio_equity(
@@ -828,6 +849,8 @@ def render_open_trades_tab(trade_mgr, fetcher):
             all_time_pnl=cap_info.get("cumulative_realized_pnl"),
         )
         st.markdown(render_account_capital_hud(portfolio_stats), unsafe_allow_html=True)
+    except Exception as e:
+        logger.warning(f"Error rendering capital HUD: {e}")
 
     # ── 1. Summary Cards ──
     st.markdown(

@@ -121,7 +121,7 @@ logger.info("Dashboard loaded")
 # ── INITIALIZE SINGLETONS (via session state) ──
 if "_signal_engine" not in st.session_state:
     st.session_state["_signal_engine"] = SignalEngine()
-if "_risk_mgr" not in st.session_state:
+if "_risk_mgr" not in st.session_state or not hasattr(st.session_state["_risk_mgr"], "calculate_portfolio_equity"):
     st.session_state["_risk_mgr"] = RiskManager()
 if "_notifier" not in st.session_state:
     st.session_state["_notifier"] = TelegramNotifier()
@@ -130,11 +130,13 @@ if "_trade_mgr" not in st.session_state:
         notifier=st.session_state["_notifier"],
         risk_mgr=st.session_state["_risk_mgr"],
     )
+else:
+    st.session_state["_trade_mgr"]._risk_mgr = st.session_state["_risk_mgr"]
 if "_journal" not in st.session_state:
     st.session_state["_journal"] = TradeJournal()
 if "_copilot" not in st.session_state:
     st.session_state["_copilot"] = AICopilot()
-if "_trade_db" not in st.session_state:
+if "_trade_db" not in st.session_state or not hasattr(st.session_state.get("_trade_db"), "get_or_init_capital"):
     try:
         from analytics.db import TradeDB
         st.session_state["_trade_db"] = TradeDB()
