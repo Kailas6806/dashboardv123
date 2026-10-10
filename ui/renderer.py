@@ -1755,15 +1755,99 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
 
 
 def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot):
-    st.markdown("<h3 style='color:#38bdf8;'>🤖 Autonomous AI Signal Generator</h3>", unsafe_allow_html=True)
-    st.write("Feed live Open Interest data to the AI and let it generate a completely independent trade signal.")
+    st.markdown("<h3 style='color:#38bdf8; margin-bottom:4px;'>🤖 Autonomous AI Signal Generator</h3>", unsafe_allow_html=True)
+    st.write("Live institutional Open Interest analytics synthesized by Gemini 3.5 Flash-Lite for sub-second trade setups.")
+
+    # ─────────────────────────────────────────────────────────────
+    # 1. MULTI-INDEX AT-A-GLANCE SCANNER (Zero-Click Insights)
+    # ─────────────────────────────────────────────────────────────
+    st.markdown("<div style='font-size:13px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px; margin: 15px 0 8px 0;'>📡 Multi-Index Market Radar</div>", unsafe_allow_html=True)
     
-    selected_idx = st.selectbox("Select Index for Autonomous Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="auto_idx")
+    col_nifty, col_bn, col_fin = st.columns(3)
+    cols = {"NIFTY": col_nifty, "BANKNIFTY": col_bn, "FINNIFTY": col_fin}
     
-    if st.button(f"Generate Autonomous Signal for {selected_idx}", type="primary", use_container_width=True):
-        with st.status(f"⚡ Autonomous AI: Evaluating {selected_idx} market structure...", expanded=True) as status_box:
-            st.write("📊 Fetching live Option Chain & Open Interest...")
-            # Fetch fresh data from SmartAPI/WebSocket or fallback to cache
+    current_selected = st.session_state.get("auto_idx", "NIFTY")
+    
+    for idx_name, col in cols.items():
+        # Quick extract of spot and pcr
+        cached_spot = 0.0
+        cached_pcr = 1.0
+        is_live_ws = False
+        
+        if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+            tok = fetcher.index_tokens.get(idx_name, {}).get("token")
+            if tok:
+                ws_ltp = fetcher.ws_mgr.get_live_ltp(str(tok))
+                if ws_ltp and ws_ltp > 0:
+                    cached_spot = ws_ltp
+                    is_live_ws = True
+                    
+        cache_f = os.path.join(BASE_DIR, f"last_data_{idx_name}.json")
+        if os.path.exists(cache_f):
+            try:
+                with open(cache_f, "r") as f:
+                    cd = json.load(f)
+                    if cached_spot == 0.0:
+                        cached_spot = cd.get("records", {}).get("underlyingValue", 0.0)
+                    c_data = cd.get("records", {}).get("data", [])
+                    tot_ce_oi = sum(item.get("CE", {}).get("openInterest", 0) for item in c_data)
+                    tot_pe_oi = sum(item.get("PE", {}).get("openInterest", 0) for item in c_data)
+                    if tot_ce_oi > 0:
+                        cached_pcr = round(tot_pe_oi / tot_ce_oi, 2)
+            except Exception:
+                pass
+                
+        # Existing session stance
+        idx_res = st.session_state.get(f"autonomous_result_{idx_name}")
+        if idx_res:
+            sig = idx_res.get("signal", "WAIT")
+            conv = idx_res.get("conviction", 0)
+            if "BUY CE" in sig:
+                stance_badge = f"<span style='color:#00e5a0; background:rgba(0,229,160,0.12); padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;'>🟢 BUY CE ({conv}%)</span>"
+            elif "BUY PE" in sig:
+                stance_badge = f"<span style='color:#ff4d6d; background:rgba(255,77,109,0.12); padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;'>🔴 BUY PE ({conv}%)</span>"
+            else:
+                stance_badge = f"<span style='color:#f59e0b; background:rgba(245,158,11,0.12); padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;'>⚪ WAIT ({conv}%)</span>"
+        else:
+            stance_badge = "<span style='color:#64748b; background:rgba(255,255,255,0.05); padding:3px 8px; border-radius:4px; font-size:11px;'>⚪ Not Analyzed</span>"
+            
+        pcr_color = "#00e5a0" if cached_pcr >= 1.05 else ("#ff4d6d" if cached_pcr <= 0.85 else "#f59e0b")
+        pcr_tag = "Bullish" if cached_pcr >= 1.05 else ("Bearish" if cached_pcr <= 0.85 else "Neutral")
+        ws_dot = "🟢 Live WS" if is_live_ws else "⚪ Snapshot"
+        is_active_card = (current_selected == idx_name)
+        border_highlight = "border: 1.5px solid #38bdf8;" if is_active_card else "border: 1px solid rgba(255,255,255,0.08);"
+        
+        with col:
+            st.markdown(f"""
+            <div style="background:#111421; {border_highlight} border-radius:10px; padding:12px 15px; margin-bottom:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-weight:700; font-size:14px; color:#f8fafc;">{idx_name}</span>
+                    <span style="font-size:10px; color:#94a3b8;">{ws_dot}</span>
+                </div>
+                <div style="font-size:18px; font-weight:800; color:#38bdf8; margin:4px 0;">₹{cached_spot:,.2f}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; margin-bottom:6px;">
+                    <span style="color:#94a3b8;">PCR: <b style="color:{pcr_color};">{cached_pcr:.2f} ({pcr_tag})</b></span>
+                </div>
+                <div style="margin-top:4px;">{stance_badge}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"Analyze {idx_name}", key=f"quick_btn_{idx_name}", use_container_width=True):
+                st.session_state["auto_idx"] = idx_name
+                st.rerun()
+
+    st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.07); margin:15px 0;'>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────
+    # 2. RUN AUTONOMOUS ENGINE (Multi-Stage Animated Pipeline HUD)
+    # ─────────────────────────────────────────────────────────────
+    idx_list = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+    cur_idx_idx = idx_list.index(current_selected) if current_selected in idx_list else 0
+    selected_idx = st.selectbox("Selected Index for In-Depth AI Synthesis", idx_list, index=cur_idx_idx, key="auto_idx")
+
+    if st.button(f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}", type="primary", use_container_width=True):
+        with st.status(f"⚡ Autonomous AI Pipeline: Analyzing {selected_idx}...", expanded=True) as status_box:
+            # Step 1: Feed
+            st.write("📡 **Step 1/3: Verifying Real-Time Tick & Market Feed...**")
             data = fetcher.fetch_option_chain(selected_idx) if fetcher else None
             cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
             if not data and os.path.exists(cache_file):
@@ -1774,18 +1858,24 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                     pass
 
             if not data:
-                st.error("Failed to fetch live data from Angel One.")
+                st.error("Failed to load option chain data.")
                 return
-                
-            import pandas as pd
+
             spot = data['records']['underlyingValue']
+            is_live_tick = False
             if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
                 tok = fetcher.index_tokens.get(selected_idx, {}).get("token")
                 if tok:
                     ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
                     if ws_spot and ws_spot > 0:
                         spot = ws_spot
+                        is_live_tick = True
 
+            feed_mode = "🟢 SmartWebSocket 2.0 (sub-50ms live)" if is_live_tick else "⚪ Live Snapshot Feed"
+            st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ {feed_mode} — Underlying Spot: **₹{spot:,.2f}**")
+
+            # Step 2: Structure & Walls
+            st.write("📊 **Step 2/3: Scanning Option Chain Structure & Volatility Walls...**")
             rows = []
             for item in data['records']['data']:
                 ce = item.get('CE', {})
@@ -1798,8 +1888,6 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                     'PE OI': pe.get('openInterest', 0),
                 })
             df = pd.DataFrame(rows)
-            
-            # Use signal engine to compute market data with correct step
             step = INDEX_CONFIG.get(selected_idx, {}).get("step", 50)
             md = signal_engine.compute_market_data(
                 df, spot, step, selected_idx, 
@@ -1808,59 +1896,182 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                 st.session_state.get(sk(selected_idx, "prev_df"), None),
                 st.session_state.get(sk(selected_idx, "oi_baseline"), None)
             )
-            
-            st.write("🧠 Querying Gemini 3.5 Flash-Lite decision engine...")
+            atm = md.get("atm_actual", round(spot / step) * step)
+            call_wall = md.get("call_wall", 0)
+            put_wall = md.get("put_wall", 0)
+            pcr = md.get("pcr", 1.0)
+            st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ ATM: **{atm}** | Call Resistance: **{call_wall}** | Put Support: **{put_wall}** | PCR: **{pcr:.2f}**")
+
+            # Step 3: Gemini 3.5 Flash-Lite Inference
+            st.write("🧠 **Step 3/3: Gemini 3.5 Flash-Lite Synthesizing Multi-Factor Decision...**")
             result = copilot.generate_autonomous_signal(selected_idx, md)
             if not result or not isinstance(result, dict):
                 result = {"signal": "WAIT", "conviction": 0, "reasoning": "AI did not return a valid decision.", "inference_time": "0.0s"}
+            lat = result.get("inference_time", "1.2s")
+            
+            st.session_state[f"autonomous_result_{selected_idx}"] = result
+            st.session_state[f"autonomous_md_{selected_idx}"] = md
             st.session_state["autonomous_result"] = result
             st.session_state["autonomous_md"] = md
             st.session_state["autonomous_idx"] = selected_idx
-            lat = result.get("inference_time", "1.2s")
-            status_box.update(label=f"✅ Autonomous decision ready ({lat})", state="complete", expanded=False)
             
-    res = st.session_state.get("autonomous_result")
-    if res:
-        idx = st.session_state["autonomous_idx"]
-        md = st.session_state["autonomous_md"]
+            status_box.update(label=f"✅ Autonomous AI Decision Complete ({lat})", state="complete", expanded=False)
+
+    # ─────────────────────────────────────────────────────────────
+    # 3. HIGH-IMPACT SIGNAL CARD, CONVICTION GAUGE & CATALYST PILLS
+    # ─────────────────────────────────────────────────────────────
+    res = st.session_state.get(f"autonomous_result_{selected_idx}") or (
+        st.session_state.get("autonomous_result") if st.session_state.get("autonomous_idx") == selected_idx else None
+    )
+    md = st.session_state.get(f"autonomous_md_{selected_idx}") or (
+        st.session_state.get("autonomous_md") if st.session_state.get("autonomous_idx") == selected_idx else None
+    )
+
+    if res and md:
+        idx = selected_idx
         signal = res.get("signal", "WAIT")
         bias = res.get("trend_bias", "UNKNOWN")
-        conv = res.get("conviction", 0)
+        conv = int(res.get("conviction", 0) or 0)
         logic = res.get("reasoning", "")
         prov = res.get("provider", "Gemini 3.5 Flash-Lite")
         lat = res.get("inference_time", "")
         lat_pill = f" ({lat})" if lat else ""
-        
-        sig_color = "#10b981" if "BUY CE" in signal else ("#ef4444" if "BUY PE" in signal else "#64748b")
-        
+
+        atm = md.get("atm_actual", 0)
+        pcr = md.get("pcr", 1.0)
+        call_wall = md.get("call_wall", 0)
+        put_wall = md.get("put_wall", 0)
+
+        # Style palette
+        if "BUY CE" in signal:
+            sig_color = "#00e5a0"
+            bg_gradient = "linear-gradient(135deg, rgba(0, 229, 160, 0.08) 0%, rgba(17, 20, 33, 0.98) 100%)"
+            border_color = "rgba(0, 229, 160, 0.4)"
+            bar_color = "linear-gradient(90deg, #10b981, #00e5a0)"
+            sig_icon = "🟢"
+        elif "BUY PE" in signal:
+            sig_color = "#ff4d6d"
+            bg_gradient = "linear-gradient(135deg, rgba(255, 77, 109, 0.08) 0%, rgba(17, 20, 33, 0.98) 100%)"
+            border_color = "rgba(255, 77, 109, 0.4)"
+            bar_color = "linear-gradient(90deg, #ef4444, #ff4d6d)"
+            sig_icon = "🔴"
+        else:
+            sig_color = "#f59e0b"
+            bg_gradient = "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(17, 20, 33, 0.98) 100%)"
+            border_color = "rgba(245, 158, 11, 0.4)"
+            bar_color = "linear-gradient(90deg, #d97706, #f59e0b)"
+            sig_icon = "⚪"
+
+        conv_label = "High Institutional Conviction" if conv >= 75 else ("Moderate Confidence" if conv >= 60 else "Low / Neutral Bias")
+        pcr_tag = "Bullish" if pcr >= 1.05 else ("Bearish" if pcr <= 0.85 else "Neutral")
+
         st.markdown(f"""
-        <div style="background:#1e293b; padding:20px; border-radius:10px; border-left:5px solid {sig_color}; margin-top:15px;">
+        <div style="background:{bg_gradient}; border: 1.5px solid {border_color}; border-radius:14px; padding:22px; margin-top:20px; box-shadow:0 8px 24px rgba(0,0,0,0.35);">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h4 style="margin:0; color:#94a3b8;">{idx} AUTONOMOUS DECISION</h4>
-                <span style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.15); padding:3px 8px; border-radius:4px;">⚡ {prov}{lat_pill}</span>
+                <div style="font-size:13px; font-weight:700; color:#94a3b8; letter-spacing:0.5px;">{idx} AUTONOMOUS STANCE</div>
+                <span style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.15); padding:4px 10px; border-radius:6px; font-weight:600;">⚡ {prov}{lat_pill}</span>
             </div>
-            <h1 style="color:{sig_color}; margin:10px 0;">{signal}</h1>
-            <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-                <div><b>Bias:</b> {bias}</div>
-                <div><b>Conviction:</b> {conv}/100</div>
+            <div style="display:flex; align-items:baseline; gap:12px; margin: 12px 0 6px 0;">
+                <h1 style="color:{sig_color}; margin:0; font-size:34px; font-weight:800; letter-spacing:-0.5px;">{sig_icon} {signal}</h1>
+                <span style="font-size:14px; color:#cbd5e1; font-weight:500;">Bias: <b style="color:#f8fafc;">{bias}</b></span>
             </div>
-            <div style="background:#0f172a; padding:15px; border-radius:5px; color:#cbd5e1;">
-                <b>AI Logic:</b><br>{logic}
+            <!-- Conviction Gauge Bar -->
+            <div style="margin: 12px 0 16px 0;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px;">
+                    <span style="color:#94a3b8;">Conviction Rating: <b style="color:{sig_color};">{conv}/100</b> ({conv_label})</span>
+                    <span style="color:#cbd5e1; font-weight:600;">{conv}%</span>
+                </div>
+                <div style="background:rgba(255,255,255,0.08); height:9px; border-radius:5px; overflow:hidden;">
+                    <div style="width:{min(max(conv, 0), 100)}%; height:100%; background:{bar_color}; border-radius:5px;"></div>
+                </div>
+            </div>
+            <!-- Signal Drivers Pill Tags -->
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+                <span style="font-size:11px; padding:4px 9px; border-radius:5px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#e2e8f0;">📊 <b>PCR:</b> {pcr:.2f} ({pcr_tag})</span>
+                <span style="font-size:11px; padding:4px 9px; border-radius:5px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#e2e8f0;">🎯 <b>ATM Strike:</b> {atm}</span>
+                <span style="font-size:11px; padding:4px 9px; border-radius:5px; background:rgba(255,77,109,0.1); border:1px solid rgba(255,77,109,0.25); color:#ff4d6d;">🔴 <b>Resistance (Call Wall):</b> {call_wall}</span>
+                <span style="font-size:11px; padding:4px 9px; border-radius:5px; background:rgba(0,229,160,0.1); border:1px solid rgba(0,229,160,0.25); color:#00e5a0;">🟢 <b>Support (Put Wall):</b> {put_wall}</span>
+                <span style="font-size:11px; padding:4px 9px; border-radius:5px; background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25); color:#38bdf8;">📈 <b>Structure:</b> {bias}</span>
+            </div>
+            <!-- AI Logic Box -->
+            <div style="background:#090d16; border:1px solid rgba(255,255,255,0.07); padding:16px; border-radius:8px; color:#cbd5e1; font-size:13px; line-height:1.6;">
+                <div style="font-weight:700; color:#94a3b8; font-size:11px; text-transform:uppercase; margin-bottom:6px;">🧠 Gemini Synthesized Market Thesis:</div>
+                {logic}
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
+
+        # ─────────────────────────────────────────────────────────────
+        # 4. PRE-FLIGHT ALGO TRADE TICKET & FRICTIONLESS SAFE EXECUTION
+        # ─────────────────────────────────────────────────────────────
         if signal in ["BUY CE", "BUY PE"]:
-            if st.button(f"⚡ EXECUTE {signal} NOW", key="auto_exec", type="primary"):
-                ok, _, msg = copilot.take_trade(
-                    idx, signal, md, trade_mgr, risk_mgr, journal, 
-                    st.session_state.get(sk(idx, "trade_log"), []),
-                    ai_conviction=conv, ai_reasoning=logic, force=True
-                )
-                if ok:
-                    st.success(f"Trade Executed: {msg}")
-                else:
-                    st.error(f"Failed to execute: {msg}")
+            atm_row = md.get("atm_row", {})
+            opt_type = signal.split()[-1]
+            ep = float(atm_row.get(f"{opt_type} LTP", 0)) if hasattr(atm_row, "get") else 0.0
+            lot = INDEX_CONFIG.get(idx, {}).get("lot", 50)
+            
+            qty, sl_p, tgt_p, ml, tp = risk_mgr.calc_trade_with_atr(
+                ep, lot, md.get("spot_history", [md.get("spot", 0)])
+            )
+            sl_pts = round(abs(ep - sl_p), 2)
+            tgt_pts = round(abs(tgt_p - ep), 2)
+            rr = round(tgt_pts / max(sl_pts, 0.1), 1)
+
+            st.markdown(f"""
+            <div style="background: #0d111e; border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 12px; padding: 18px; margin-top: 18px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px; margin-bottom: 15px;">
+                    <span style="font-weight: 700; font-size: 14px; color: #f8fafc; letter-spacing:0.5px;">📋 PRE-FLIGHT ALGO TRADE TICKET</span>
+                    <span style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600;">1:2 ATR PROTECTED</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center;">
+                    <div style="background: #161b2c; padding: 10px; border-radius: 8px;">
+                        <div style="font-size: 11px; color: #94a3b8;">CONTRACT</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #38bdf8;">{idx} {atm} {opt_type}</div>
+                    </div>
+                    <div style="background: #161b2c; padding: 10px; border-radius: 8px;">
+                        <div style="font-size: 11px; color: #94a3b8;">EST. ENTRY</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #f8fafc;">₹{ep:.2f}</div>
+                    </div>
+                    <div style="background: #161b2c; padding: 10px; border-radius: 8px;">
+                        <div style="font-size: 11px; color: #94a3b8;">HARD STOP LOSS</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #ff4d6d;">₹{sl_p:.2f} <span style="font-size:10px;">(-{sl_pts} pts)</span></div>
+                    </div>
+                    <div style="background: #161b2c; padding: 10px; border-radius: 8px;">
+                        <div style="font-size: 11px; color: #94a3b8;">TARGET 1 (1:2 R:R)</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #00e5a0;">₹{tgt_p:.2f} <span style="font-size:10px;">(+{tgt_pts} pts)</span></div>
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 12px;">
+                    <span>📦 Order Qty: <b>{qty} ({qty // lot} Lot{'s' if qty // lot > 1 else ''})</b></span>
+                    <span>⚖️ Risk/Reward: <b>1 : {rr}</b></span>
+                    <span>🛡️ Max Risk Allowance: <b style="color: #ff4d6d;">₹{ml:.2f}</b> (Daily limit: ₹4,500)</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.write("")
+            is_armed = st.checkbox(
+                f"🔒 Arm 1-Click Execution for {idx} {atm} {opt_type} @ ₹{ep:.2f}",
+                key=f"arm_exec_{idx}",
+                value=False,
+            )
+
+            if is_armed:
+                if st.button(f"🚀 CONFIRM & FIRE {signal} (₹{ep:.2f})", key=f"auto_exec_{idx}", type="primary", use_container_width=True):
+                    tlog = st.session_state.get(sk(idx, "trade_log"), [])
+                    ok, trade_entry, msg = copilot.take_trade(
+                        idx, signal, md, trade_mgr, risk_mgr, journal, tlog,
+                        ai_conviction=conv, ai_reasoning=logic, force=True
+                    )
+                    if ok:
+                        st.toast(f"🎯 Order Sent: {idx} {signal} @ ₹{ep:.2f}!", icon="⚡")
+                        st.success(f"✅ Trade Executed Successfully: {msg}")
+                        st.info("💡 You can monitor this position with live trailing SL under the **OPEN TRADES** tab.")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Execution Blocked: {msg}")
+            else:
+                st.button(f"🔒 Check Box Above to Arm & Fire Order", disabled=True, use_container_width=True)
 
 
 
