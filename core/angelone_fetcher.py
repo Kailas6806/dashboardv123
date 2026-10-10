@@ -9,7 +9,7 @@ import threading
 import urllib.request, email.utils
 from typing import Optional, Tuple, Dict, Any, List
 from SmartApi import SmartConnect
-from config import ANGEL_API_KEY, ANGEL_CLIENT_ID, ANGEL_PASSWORD, ANGEL_TOTP_SECRET, INDEX_CONFIG, BASE_DIR
+from config import ANGEL_API_KEY, ANGEL_CLIENT_ID, ANGEL_PASSWORD, ANGEL_TOTP_SECRET, INDEX_CONFIG, BASE_DIR, IST
 from utils.cache import TTLCache
 import datetime
 
@@ -17,6 +17,10 @@ log = logging.getLogger("angelone_fetcher")
 if not log.handlers:
     log.addHandler(logging.StreamHandler())
     log.setLevel(logging.INFO)
+
+SCRIP_CACHE_TTL_SECONDS = 86400  # 24 hours
+SCRIP_MASTER_URL = 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json'
+
 
 class AngelOneDataFetcher:
     def __init__(self):
@@ -34,12 +38,28 @@ class AngelOneDataFetcher:
             "FINNIFTY": {"token": "26037", "symbol": "Nifty Fin Service", "exch": "NSE"}
         }
         self.scrip_master = []
+        self.login_status = "NOT_ATTEMPTED"
+        self.login_message = ""
+        self.last_login_time = None
+        self.ws_status = "NOT_INITIALIZED"
+        self.ws_message = ""
+        self.scrip_load_status = "NOT_LOADED"
+        self.scrip_source = "NONE"
+        self.scrip_count = 0
+        self.scrip_load_time = None
+        self.total_fetches = 0
+        self.total_errors = 0
+        self.consecutive_failures = 0
+        self.last_fetch_times = {}
+
         self.login()
         self._load_scrip_master()
 
     def login(self):
         if not self.client_id or not self.password or not self.totp_secret:
-            log.warning("Angel credentials missing. Running in DEMO mode.")
+            self.login_status = "DEMO_MODE"
+            self.login_message = "Angel One credentials missing in config or secrets.toml. Running in DEMO mode."
+            log.warning(self.login_message)
             return False
         try:
             drift = 0.0
@@ -54,14 +74,23 @@ class AngelOneDataFetcher:
             data = self.smartApi.generateSession(self.client_id, self.password, totp)
             if data and data.get('status'):
                 self.session = data['data']
-                log.info("Angel One Login Successful")
+                self.login_status = "CONNECTED"
+                self.last_login_time = datetime.datetime.now(IST)
+                masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else self.client_id
+                self.login_message = f"Authenticated successfully as {masked_id} (Session active)."
+                log.info("Angel One Login Successful: %s", self.login_message)
                 self._init_websocket()
                 return True
             else:
-                log.error(f"Angel One Login Failed: {data}")
+                self.login_status = "FAILED"
+                err_msg = data.get('message', 'Login error') if isinstance(data, dict) else str(data)
+                self.login_message = f"Angel One login failed: {err_msg}"
+                log.error("Angel One Login Failed: %s", data)
                 return False
         except Exception as e:
-            log.error(f"Angel One Login Exception: {e}")
+            self.login_status = "ERROR"
+            self.login_message = f"Angel One login exception: {e}"
+            log.error("Angel One Login Exception: %s", e)
             return False
 
     def _init_websocket(self):
@@ -69,19 +98,27 @@ class AngelOneDataFetcher:
         try:
             import config
             if not getattr(config, "ENABLE_WEBSOCKET", False):
+                self.ws_status = "DISABLED_BY_CONFIG"
+                self.ws_message = "Disabled via ENABLE_WEBSOCKET=False config (Account protection active)."
                 log.info("SmartWebSocket is disabled via ENABLE_WEBSOCKET=False config.")
                 return
 
             from core.websocket_manager import SmartWebSocketManager
             if not SmartWebSocketManager.is_market_hours():
+                self.ws_status = "OFF_MARKET_IDLE"
+                self.ws_message = "Market is closed (Mon–Fri 09:00–15:35 IST only). Kept idle to prevent lockout."
                 log.info("Off-market hours detected. SmartWebSocket is kept idle to protect Angel One account from lockout.")
                 return
 
             if not self.session:
+                self.ws_status = "NO_SESSION"
+                self.ws_message = "Cannot start WebSocket: Angel One session is not active."
                 return
             jwt_token = self.session.get("jwtToken")
             feed_token = self.session.get("feedToken")
             if not jwt_token or not feed_token:
+                self.ws_status = "TOKEN_MISSING"
+                self.ws_message = "jwtToken or feedToken missing from session."
                 return
 
             if self.ws_mgr is None:
@@ -92,11 +129,18 @@ class AngelOneDataFetcher:
                     feed_token=feed_token,
                 )
                 if self.ws_mgr.start():
+                    self.ws_status = "STREAMING"
+                    self.ws_message = "SmartWebSocket running and streaming in background thread."
                     # Subscribe Spot Indices immediately
                     spot_tokens = [self.index_tokens[i]["token"] for i in self.index_tokens]
                     self.ws_mgr.subscribe_tokens(1, spot_tokens)
                     log.info("WebSocket streaming spot tokens initiated: %s", spot_tokens)
+                else:
+                    self.ws_status = "HALTED"
+                    self.ws_message = "WebSocket failed to start or halted by market hours guard."
         except Exception as e:
+            self.ws_status = "ERROR"
+            self.ws_message = f"WebSocket initialization error: {e}"
             log.warning("WebSocket initialization error: %s", e)
 
     def _load_scrip_master(self):
@@ -104,25 +148,35 @@ class AngelOneDataFetcher:
         if os.path.exists(cache_file):
             try:
                 mtime = os.path.getmtime(cache_file)
-                if time.time() - mtime < 86400:  # 24 hours
+                if time.time() - mtime < SCRIP_CACHE_TTL_SECONDS:
                     with open(cache_file, "r", encoding="utf-8") as f:
                         self.scrip_master = json.load(f)
-                    log.info(f"Loaded {len(self.scrip_master)} scrips from local disk cache in <0.05s.")
+                    self.scrip_count = len(self.scrip_master)
+                    self.scrip_load_status = "LOADED"
+                    self.scrip_source = "DISK_CACHE"
+                    self.scrip_load_time = datetime.datetime.fromtimestamp(mtime, tz=IST)
+                    log.info(f"Loaded {self.scrip_count} scrips from local disk cache in <0.05s.")
                     return
             except Exception as e:
                 log.warning(f"Failed to read local scrip cache: {e}")
 
         log.info("Downloading Angel One Scrip Master...")
         try:
-            res = requests.get('https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json', timeout=15.0)
+            res = requests.get(SCRIP_MASTER_URL, timeout=15.0)
             self.scrip_master = res.json()
-            log.info(f"Loaded {len(self.scrip_master)} scrips.")
+            self.scrip_count = len(self.scrip_master)
+            self.scrip_load_status = "LOADED"
+            self.scrip_source = "REMOTE_DOWNLOAD"
+            self.scrip_load_time = datetime.datetime.now(IST)
+            log.info(f"Loaded {self.scrip_count} scrips from remote.")
             try:
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(self.scrip_master, f)
             except Exception:
                 pass
         except Exception as e:
+            self.scrip_load_status = "FAILED"
+            self.scrip_source = "ERROR"
             log.error(f"Failed to load scrip master: {e}")
 
     def get_ltp(self, exchange, tradingsymbol, token):
@@ -158,8 +212,8 @@ class AngelOneDataFetcher:
         return 0.0
 
     def fetch_option_chain(self, idx_name: str) -> Optional[Dict[str, Any]]:
-        import pytz
-        IST = pytz.timezone('Asia/Kolkata')
+        self.total_fetches += 1
+        self.last_fetch_times[idx_name] = datetime.datetime.now(IST)
         now = datetime.datetime.now(IST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30) or now.hour < 9 or (now.hour == 9 and now.minute < 15)
 
@@ -267,9 +321,7 @@ class AngelOneDataFetcher:
                 opt_data = {
                     "lastPrice": ltp_val,
                     "openInterest": oi_val,
-                    # Angel One's full market data does not return Change in OI directly.
-                    # As a workaround to prevent "NO DATA", we can pass 0 or a mocked value.
-                    "changeinOpenInterest": 1000,
+                    "changeinOpenInterest": int(mdata.get('changeOpenInterest', 0) or mdata.get('opnInterestChange', 0) or 0),
                     "token": token
                 }
                 if sym.endswith('CE'):
@@ -354,11 +406,77 @@ class AngelOneDataFetcher:
 
     def get_cache_stats(self) -> Dict[str, Any]:
         return {
-            "total_fetches": 0,
-            "total_errors": 0,
-            "consecutive_failures": 0,
+            "total_fetches": self.total_fetches,
+            "total_errors": self.total_errors,
+            "consecutive_failures": self.consecutive_failures,
             "session_active": self.session is not None,
             "websocket": self.get_websocket_stats(),
+        }
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """Return structured, real-time diagnostic health info without hardcoded placeholders."""
+        import config
+        from core.websocket_manager import SmartWebSocketManager
+
+        masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else (self.client_id or "DEMO")
+        
+        ws_conn = self.ws_mgr.is_connected() if self.ws_mgr else False
+        ws_run = self.ws_mgr._is_running if self.ws_mgr else False
+        ws_ticks = len(self.ws_mgr._ticks) if self.ws_mgr else 0
+        ws_subs = (len(self.ws_mgr._subscriptions.get(1, set())) + len(self.ws_mgr._subscriptions.get(2, set()))) if self.ws_mgr else 0
+        is_mkt_open = SmartWebSocketManager.is_market_hours()
+
+        if ws_conn:
+            ws_state_badge = "LIVE STREAMING"
+            ws_color = "#10b981"
+        elif not getattr(config, "ENABLE_WEBSOCKET", False):
+            ws_state_badge = "PAUSED (SAFETY LOCK)"
+            ws_color = "#94a3b8"
+        elif not is_mkt_open:
+            ws_state_badge = "OFF-MARKET IDLE"
+            ws_color = "#f59e0b"
+        elif ws_run:
+            ws_state_badge = "CONNECTING"
+            ws_color = "#38bdf8"
+        else:
+            ws_state_badge = "STOPPED"
+            ws_color = "#64748b"
+
+        login_color = "#10b981" if self.session else ("#f59e0b" if self.login_status == "DEMO_MODE" else "#ef4444")
+
+        return {
+            "broker": {
+                "name": "Angel One SmartAPI",
+                "client_id": masked_id,
+                "status": self.login_status,
+                "badge": "CONNECTED" if self.session else self.login_status,
+                "color": login_color,
+                "message": self.login_message,
+                "last_login": self.last_login_time.strftime("%I:%M:%S %p") if self.last_login_time else "Not Logged In",
+                "has_jwt": bool(self.session and self.session.get("jwtToken")),
+                "has_feed_token": bool(self.session and self.session.get("feedToken")),
+            },
+            "websocket": {
+                "name": "SmartWebSocket 2.0 (sub-50ms)",
+                "status": ws_state_badge,
+                "color": ws_color,
+                "message": self.ws_message,
+                "is_market_hours": is_mkt_open,
+                "connected": ws_conn,
+                "running": ws_run,
+                "cached_ticks": ws_ticks,
+                "subscribed_tokens": ws_subs,
+            },
+            "scrip_master": {
+                "count": self.scrip_count or len(self.scrip_master),
+                "source": self.scrip_source,
+                "status": self.scrip_load_status,
+                "time": self.scrip_load_time.strftime("%I:%M:%S %p") if self.scrip_load_time else "Loaded",
+            },
+            "last_fetches": {
+                idx: self.last_fetch_times[idx].strftime("%I:%M:%S %p")
+                for idx in self.last_fetch_times
+            }
         }
 
 _fetcher_lock = threading.Lock()
