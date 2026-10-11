@@ -21,6 +21,16 @@ class TestTradeDB(unittest.TestCase):
                 os.remove(self.test_db_path)
             except Exception:
                 pass
+        try:
+            conn = self.db._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM trades WHERE trade_id IN ('TEST_NIFTY_001', 'TEST_NIFTY_002')")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
 
     def test_upsert_and_retrieve(self):
         trade_data = {

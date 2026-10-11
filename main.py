@@ -155,8 +155,9 @@ fetcher       = get_fetcher()
 # ── INITIALIZE PER-INDEX STATE ──
 for idx in INDEX_CONFIG:
     init_state(idx)
-    if not st.session_state[sk(idx, "trade_log")]:
-        st.session_state[sk(idx, "trade_log")] = load_log(idx)
+    today_log = load_log(idx)
+    if not st.session_state[sk(idx, "trade_log")] or today_log == []:
+        st.session_state[sk(idx, "trade_log")] = today_log
 
 # ── COMPUTE TICKER & MARKET STATUS ──
 now_ist = datetime.datetime.now(IST)

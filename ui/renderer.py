@@ -54,15 +54,29 @@ def init_state(idx):
 
 
 def load_log(idx):
-    """Load trade log from CSV file for today."""
+    """Load trade log for today, prioritizing Supabase Cloud Database with CSV fallback."""
+    try:
+        from analytics.db import TradeDB
+        _db = TradeDB()
+        all_db = _db.get_all_trades(instrument=idx)
+        if all_db is not None:
+            today_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+            today_trades = [t for t in all_db if str(t.get("date") or "")[:10] == today_str]
+            return today_trades
+    except Exception as e:
+        logger.debug("Failed to load today's trades from Supabase for %s: %s", idx, e)
+
     import os
     f = os.path.join(LOG_DIR, f"trade_log_{idx}_{datetime.datetime.now(IST).strftime('%Y-%m-%d')}.csv")
     if os.path.exists(f):
-        df = pd.read_csv(f, encoding="utf-8")
-        for c in LOG_COLS:
-            if c not in df.columns:
-                df[c] = None
-        return df[LOG_COLS].to_dict("records")
+        try:
+            df = pd.read_csv(f, encoding="utf-8")
+            for c in LOG_COLS:
+                if c not in df.columns:
+                    df[c] = None
+            return df[LOG_COLS].to_dict("records")
+        except Exception:
+            return []
     return []
 
 
@@ -720,13 +734,21 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             else:
                 st.info("No open position. Waiting for signal...")
         with t2:
-            from analytics.db import TradeDB
-            _idx_db = TradeDB()
-            display_trades = _idx_db.get_all_trades(instrument=idx)
-            if not display_trades:
+            display_trades = None
+            try:
+                from analytics.db import TradeDB
+                _idx_db = TradeDB()
+                display_trades = _idx_db.get_all_trades(instrument=idx)
+            except Exception as e:
+                logger.debug("TradeDB get_all_trades failed in history tab for %s: %s", idx, e)
+                display_trades = None
+
+            if display_trades is None:
                 display_trades = list(st.session_state.get(tlog_key, []))
-            if not display_trades and journal:
+            if display_trades is None and journal:
                 display_trades = [t for t in journal.get_all_trades() if t.get("Index") == idx]
+            if display_trades is None:
+                display_trades = []
             if display_trades:
                 cols = [
                     "Entry Time", "Exit Time", "Signal", "Strike",
@@ -980,13 +1002,23 @@ def render_trade_history_tab(journal):
     st.caption("☁️ All trades are permanently stored and securely synced to Supabase Cloud Database.")
 
     # 2. Gather trades: Query Supabase directly
-    all_trades = db.get_all_trades()
-    if not all_trades and journal:
-        all_trades = journal.get_all_trades()
+    all_trades = None
+    try:
+        all_trades = db.get_all_trades()
+    except Exception as e:
+        logger.warning(f"Failed to query trades from DB: {e}")
+        all_trades = None
 
-    # Merge active session trades if not yet committed
+    if all_trades is None and journal:
+        all_trades = journal.get_all_trades()
+    if all_trades is None:
+        all_trades = []
+
+    # Merge active session trades ONLY if currently OPEN and not yet in database
     for idx in INDEX_CONFIG:
         for t in st.session_state.get(sk(idx, "trade_log"), []):
+            if t.get("Status") != "OPEN":
+                continue
             t_id = t.get("trade_id") or t.get("_journal_id")
             if t_id and any(at.get("trade_id") == t_id for at in all_trades):
                 continue
@@ -1001,7 +1033,10 @@ def render_trade_history_tab(journal):
             )
             if not exists:
                 all_trades.append(t)
-                db.upsert_trade(t)
+                try:
+                    db.upsert_trade(t)
+                except Exception as e:
+                    logger.warning(f"Failed to upsert open session trade to DB: {e}")
 
     # ── Manual Record Trade Expander ──
     with st.expander("➕ Manually Record Past Trade (e.g. from Zerodha / AngelOne / Groww)", expanded=False):

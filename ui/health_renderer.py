@@ -11,7 +11,15 @@ from config import (
 )
 
 def get_recent_trades():
-    """Load latest trade entries from the persistent journal."""
+    """Load latest trade entries from the persistent Supabase DB or journal."""
+    try:
+        from analytics.db import TradeDB
+        db = TradeDB()
+        trades = db.get_all_trades()
+        if trades is not None:
+            return trades
+    except Exception:
+        pass
     if os.path.exists(JOURNAL_FILE):
         try:
             with open(JOURNAL_FILE, "r", encoding="utf-8") as f:

@@ -11,7 +11,39 @@ class TestAnalyticsSupabase(unittest.TestCase):
 
     def setUp(self):
         self.db = TradeDB()
+        self.test_trade = {
+            "trade_id": "TEST_ANALYTICS_001",
+            "date": datetime.now(tz=IST).strftime("%Y-%m-%d"),
+            "Entry Time": "10:00:00 AM",
+            "Exit Time": "10:15:00 AM",
+            "Index": "NIFTY",
+            "Signal": "BUY CE",
+            "Strike": 24500,
+            "Entry Price": 100.0,
+            "Exit Price": 120.0,
+            "Qty": 65,
+            "Actual P&L ₹": 1300.0,
+            "Status": "CLOSED",
+            "Result": "🟢 WIN",
+        }
+        self.db.upsert_trade(self.test_trade)
         self.journal = TradeJournal()
+
+    def tearDown(self):
+        try:
+            conn = self.db._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM trades WHERE trade_id = 'TEST_ANALYTICS_001'")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        try:
+            self.journal.get_all_trades()
+        except Exception:
+            pass
 
     def test_journal_loads_from_supabase(self):
         """Verify TradeJournal loads all trades directly from Supabase."""

@@ -59,14 +59,6 @@ class TradeJournal:
             except Exception as e:
                 logger.warning("TradeDB init in TradeJournal: %s", e)
         self._load()
-        # Seed Supabase from local CSV/JSON files if Supabase is completely empty
-        if not self._load_failed and not self.is_custom_path and len(self.trades) == 0 and self.db:
-            try:
-                synced = self.db.sync_from_json_and_csv()
-                if synced > 0:
-                    self._load()
-            except Exception as sync_err:
-                logger.debug("TradeDB initial seeding: %s", sync_err)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -269,8 +261,9 @@ class TradeJournal:
             if self.db and not self.is_custom_path:
                 try:
                     db_trades = self.db.get_all_trades()
-                    if db_trades:
+                    if db_trades is not None:
                         self.trades = db_trades
+                        self._save_cache_only()
                         return list(db_trades)
                 except Exception as e:
                     logger.warning("TradeDB get_all_trades error: %s", e)
@@ -492,7 +485,7 @@ class TradeJournal:
             if self.db and not self.is_custom_path:
                 try:
                     db_trades = self.db.get_all_trades()
-                    if db_trades:
+                    if db_trades is not None:
                         self.trades = db_trades
                         self._load_failed = False
                         self._save_cache_only()
