@@ -119,7 +119,7 @@ logger = setup_logger()
 logger.info("Dashboard loaded")
 
 # ── INITIALIZE SINGLETONS (via session state) ──
-if "_signal_engine" not in st.session_state:
+if "_signal_engine" not in st.session_state or not hasattr(st.session_state.get("_signal_engine"), "_has_15m_trend"):
     st.session_state["_signal_engine"] = SignalEngine()
 if "_risk_mgr" not in st.session_state or not hasattr(st.session_state["_risk_mgr"], "calculate_portfolio_equity"):
     st.session_state["_risk_mgr"] = RiskManager()

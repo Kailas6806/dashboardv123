@@ -171,11 +171,19 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     if fetcher and hasattr(fetcher, "get_15m_trend"):
         trend_15m_info = fetcher.get_15m_trend(idx, current_spot=spot)
 
-    md = signal_engine.compute_market_data(
-        df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline,
-        trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
-        trend_15m_ema=trend_15m_info.get("ema20", 0.0),
-    )
+    try:
+        md = signal_engine.compute_market_data(
+            df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline,
+            trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
+            trend_15m_ema=trend_15m_info.get("ema20", 0.0),
+        )
+    except TypeError:
+        md = signal_engine.compute_market_data(
+            df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline
+        )
+        if isinstance(md, dict):
+            md["trend_15m"] = trend_15m_info.get("trend", "NEUTRAL")
+            md["trend_15m_ema"] = trend_15m_info.get("ema20", 0.0)
 
     # Save updated state
     st.session_state[sk(idx, "prev_df")] = md["prev_df"]
@@ -1569,11 +1577,19 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     if fetcher and hasattr(fetcher, "get_15m_trend"):
         trend_15m_info = fetcher.get_15m_trend(selected_idx, current_spot=spot)
 
-    md = signal_engine.compute_market_data(
-        df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline,
-        trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
-        trend_15m_ema=trend_15m_info.get("ema20", 0.0),
-    )
+    try:
+        md = signal_engine.compute_market_data(
+            df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline,
+            trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
+            trend_15m_ema=trend_15m_info.get("ema20", 0.0),
+        )
+    except TypeError:
+        md = signal_engine.compute_market_data(
+            df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline
+        )
+        if isinstance(md, dict):
+            md["trend_15m"] = trend_15m_info.get("trend", "NEUTRAL")
+            md["trend_15m_ema"] = trend_15m_info.get("ema20", 0.0)
 
     now_ist = datetime.datetime.now(IST)
     in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)

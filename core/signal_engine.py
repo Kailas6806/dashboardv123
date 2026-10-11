@@ -47,6 +47,7 @@ class SignalEngine:
     The core signal thresholds (PCR levels, VWAP checks, OI momentum)
     are the trading philosophy and MUST NOT be altered.
     """
+    _has_15m_trend = True
 
     # ──────────────────────────────────────────────
     # 1. COMPUTE MARKET DATA
