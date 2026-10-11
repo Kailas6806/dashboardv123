@@ -495,6 +495,67 @@ class AngelOneDataFetcher:
             }
         }
 
+    def get_15m_trend(self, idx: str, current_spot: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Calculate 15-minute higher timeframe trend using 20-EMA on 15m historical candles.
+        Cached with 60-second TTL for maximum UI performance.
+        Returns:
+            {"trend": "BULLISH"|"BEARISH"|"NEUTRAL", "ema20": float, "last_close": float, ...}
+        """
+        cache_key = f"trend_15m_{idx}"
+        cached = self._perm_cache.get(cache_key)
+        now_ts = pytime.time()
+        if cached and (now_ts - cached.get("_time", 0)) < 60:
+            trend_data = dict(cached)
+            if current_spot and current_spot > 0 and trend_data.get("ema20", 0) > 0:
+                ema20 = trend_data["ema20"]
+                trend_data["trend"] = "BULLISH" if current_spot > ema20 else ("BEARISH" if current_spot < ema20 else "NEUTRAL")
+                trend_data["last_close"] = current_spot
+            return trend_data
+
+        candle_tokens = {
+            "NIFTY": "99926000",
+            "BANKNIFTY": "99926009",
+            "FINNIFTY": "99926037"
+        }
+        token = candle_tokens.get(idx)
+        if not token or not self.session:
+            return {"trend": "NEUTRAL", "ema20": 0.0, "last_close": 0.0, "status": "NO_SESSION"}
+
+        try:
+            now_dt = datetime.datetime.now(IST)
+            from_dt = now_dt - datetime.timedelta(days=7)
+            param = {
+                "exchange": "NSE",
+                "symboltoken": token,
+                "interval": "FIFTEEN_MINUTE",
+                "fromdate": from_dt.strftime("%Y-%m-%d %H:%M"),
+                "todate": now_dt.strftime("%Y-%m-%d %H:%M")
+            }
+            res = self.smartApi.getCandleData(param)
+            if res and res.get("status") and res.get("data"):
+                data = res["data"]
+                closes = [float(c[4]) for c in data if len(c) > 4 and c[4] is not None]
+                if len(closes) >= 20:
+                    import pandas as pd
+                    series = pd.Series(closes)
+                    ema20 = round(float(series.ewm(span=20, adjust=False).mean().iloc[-1]), 2)
+                    ref_price = current_spot if (current_spot and current_spot > 0) else closes[-1]
+                    trend = "BULLISH" if ref_price > ema20 else ("BEARISH" if ref_price < ema20 else "NEUTRAL")
+                    result = {
+                        "trend": trend,
+                        "ema20": ema20,
+                        "last_close": round(ref_price, 2),
+                        "_time": now_ts,
+                        "status": "OK"
+                    }
+                    self._perm_cache[cache_key] = result
+                    return result
+        except Exception as e:
+            log.warning("get_15m_trend failed for %s: %s", idx, e)
+
+        return {"trend": "NEUTRAL", "ema20": 0.0, "last_close": 0.0, "status": "ERROR"}
+
 _fetcher_lock = threading.Lock()
 _global_angel_fetcher = None
 

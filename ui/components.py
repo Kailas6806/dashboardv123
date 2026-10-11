@@ -371,7 +371,8 @@ def render_kpi_grid(idx, spot, atm_actual, pcr, bias, support, resistance,
 
 def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
                        pcr_momentum, total_ce_delta, total_pe_delta,
-                       sideways_info=None, cooldown_info=None):
+                       sideways_info=None, cooldown_info=None,
+                       trend_15m=None, trend_15m_ema=0.0):
     """Filter status cards for index tabs."""
     tw_c = "#00E5A0" if in_window else "#FF4D6D"
     oi_c = "#00E5A0" if oi_active else "#FF4D6D"
@@ -379,6 +380,13 @@ def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
     pm_c = "#00E5A0" if pcr_momentum != "FLAT" else "#F59E0B"
 
     extra_cards = ""
+    if trend_15m and trend_15m != "NEUTRAL":
+        t_c = "#00E5A0" if trend_15m == "BULLISH" else "#FF4D6D"
+        ema_str = f" ({trend_15m_ema:,.0f})" if trend_15m_ema > 0 else ""
+        extra_cards += f"""
+  <div class="card"><div class="label">15M TREND (20 EMA)</div>
+    <div class="num" style="color:{t_c};font-size:15px;">{trend_15m}{ema_str}</div></div>"""
+
     if sideways_info and sideways_info.get("is_sideways"):
         strength = sideways_info.get("strength", "MILD")
         sw_c = "#FF4D6D" if strength == "STRONG SIDEWAYS" else "#F59E0B"

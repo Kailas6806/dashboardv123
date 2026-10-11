@@ -22,6 +22,7 @@ from config import (
     CONF_WEIGHT_PCR_MOM,
     CONF_WEIGHT_SR_PROX,
     CONF_PENALTY_TRAP,
+    USE_15M_TREND_FILTER,
 )
 
 try:
@@ -60,6 +61,10 @@ class SignalEngine:
         pcr_history: List[float],
         prev_df: Optional[pd.DataFrame],
         oi_baseline: Optional[pd.DataFrame],
+        trend_15m: str = "NEUTRAL",
+        trend_15m_ema: float = 0.0,
+        *args,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Compute all market-derived metrics from an option chain snapshot.
 
@@ -225,6 +230,8 @@ class SignalEngine:
             "spot": spot,
             "is_sideways": is_sideways,
             "sideways_strength": sideways_strength,
+            "trend_15m": trend_15m,
+            "trend_15m_ema": trend_15m_ema,
             "df": df,
             "prev_df": updated_prev_df,
             "oi_baseline": updated_oi_baseline,
@@ -254,6 +261,7 @@ class SignalEngine:
         oi_momentum_bearish = market_data["oi_momentum_bearish"]
         bias = market_data["bias"]
         oi_active = market_data["oi_active"]
+        trend_15m = market_data.get("trend_15m", "NEUTRAL")
 
         # ── SIGNAL LOGIC (Fixed & Improved) ──
         # Primary logic: PCR + spot position relative to support/resistance + VWAP
@@ -285,6 +293,17 @@ class SignalEngine:
                 signal="BUY PE"; confidence="LOW"
             elif bias == "Neutral":
                 signal="⚠️ SIDEWAYS"; confidence="AVOID"
+
+            # ── 15-MINUTE HIGHER TIMEFRAME TREND CONFLUENCE ──
+            if USE_15M_TREND_FILTER:
+                if signal == "BUY CE" and trend_15m == "BEARISH":
+                    filter_reason = "⚠️ 15m Trend is BEARISH (Counter-trend CE trade blocked)"
+                    signal = "WAIT"
+                    confidence = "LOW"
+                elif signal == "BUY PE" and trend_15m == "BULLISH":
+                    filter_reason = "⚠️ 15m Trend is BULLISH (Counter-trend PE trade blocked)"
+                    signal = "WAIT"
+                    confidence = "LOW"
 
         return signal, confidence, filter_reason
 

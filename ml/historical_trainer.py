@@ -68,9 +68,9 @@ def fetch_historical_candles_angel(idx: str, days: int = 60) -> Optional[List[Di
             return None
 
         tokens = {
-            "NIFTY": {"token": "26000", "exch": "NSE"},
-            "BANKNIFTY": {"token": "26009", "exch": "NSE"},
-            "FINNIFTY": {"token": "26037", "exch": "NSE"}
+            "NIFTY": {"token": "99926000", "exch": "NSE"},
+            "BANKNIFTY": {"token": "99926009", "exch": "NSE"},
+            "FINNIFTY": {"token": "99926037", "exch": "NSE"}
         }
         
         cfg = tokens.get(idx)
@@ -97,8 +97,15 @@ def fetch_historical_candles_angel(idx: str, days: int = 60) -> Optional[List[Di
             formatted = []
             for c in raw_candles:
                 # Angel format: [timestamp, open, high, low, close, volume]
-                # timestamp is ISO string e.g. '2026-09-01T09:15:00+05:30'
-                dt = datetime.datetime.fromisoformat(c[0]) if isinstance(c[0], str) else c[0]
+                if isinstance(c[0], str):
+                    try:
+                        dt = datetime.datetime.fromisoformat(c[0])
+                    except Exception:
+                        dt = pd.to_datetime(c[0]).to_pydatetime()
+                else:
+                    dt = c[0]
+                if getattr(dt, "tzinfo", None) is None:
+                    dt = dt.replace(tzinfo=IST)
                 formatted.append({
                     "dt": dt,
                     "open": float(c[1]),
@@ -253,6 +260,20 @@ def replay_rule_engine(
     total_bars = len(candles)
     
     logger.info(f"Starting Rule Engine replay for {idx} ({total_bars} bars, SL={sl_spot}pts, TGT={tgt_spot}pts)...")
+
+    # Precompute 15m resampled candles and 20-EMA for higher timeframe trend confluence
+    df_raw = pd.DataFrame(candles)
+    df_raw["dt_idx"] = pd.to_datetime(df_raw["dt"])
+    df_raw = df_raw.set_index("dt_idx").sort_index()
+    df_15m = df_raw.resample("15min").agg({
+        "open": "first", "high": "max", "low": "min", "close": "last"
+    }).dropna()
+    df_15m["ema20_15m"] = df_15m["close"].ewm(span=20, adjust=False).mean()
+    df_merged = pd.merge_asof(
+        df_raw.reset_index(), df_15m[["ema20_15m"]],
+        left_on="dt_idx", right_index=True, direction="backward"
+    )
+    ema15m_map = dict(zip(df_merged["dt"], df_merged["ema20_15m"]))
     
     for i, bar in enumerate(candles):
         if progress_callback and i % 200 == 0:
@@ -268,6 +289,10 @@ def replay_rule_engine(
         ema20 = pd.Series(spot_history).ewm(span=20, adjust=False).mean().iloc[-1]
         ema50 = pd.Series(spot_history).ewm(span=50, adjust=False).mean().iloc[-1] if len(spot_history) >= 20 else ema20
         
+        # 15m Higher Timeframe Trend
+        ema20_15m_val = float(ema15m_map.get(bar["dt"], 0.0) or 0.0)
+        trend_15m = "BULLISH" if spot > ema20_15m_val else ("BEARISH" if spot < ema20_15m_val else "NEUTRAL")
+
         # Realistic continuous PCR and strike OI simulation
         diff_pct = (spot - ema20) / ema20 * 100
         diff_50_pct = (spot - ema50) / ema50 * 100 if len(spot_history) >= 20 else 0
@@ -305,7 +330,8 @@ def replay_rule_engine(
         md = engine.compute_market_data(
             df=df, spot=spot, step=step, idx=idx,
             spot_history=list(spot_history), pcr_history=list(pcr_history),
-            prev_df=None, oi_baseline=None
+            prev_df=None, oi_baseline=None,
+            trend_15m=trend_15m, trend_15m_ema=ema20_15m_val
         )
         if not md:
             continue
@@ -366,9 +392,11 @@ def replay_rule_engine(
             if not features:
                 continue
                 
-            # --- GROUND TRUTH OUTCOME LABELING ---
+            # --- GROUND TRUTH OUTCOME LABELING WITH EARLY BREAKEVEN LOCK ---
             entry_spot = spot
             outcome = 0
+            be_threshold = round((1000.0 / lot) / 0.5, 2)  # Early breakeven threshold (+₹1,000)
+            be_locked = False
             
             for f_idx in range(i + 1, min(len(candles), i + 36)):
                 f_bar = candles[f_idx]
@@ -382,21 +410,33 @@ def replay_rule_engine(
                     break
                     
                 if final_sig == "BUY CE":
+                    if f_bar["high"] >= entry_spot + be_threshold:
+                        be_locked = True
                     # Target hit first
                     if f_bar["high"] >= entry_spot + tgt_spot:
                         outcome = 1
                         break
+                    # Breakeven lock protected
+                    elif be_locked and f_bar["low"] <= entry_spot:
+                        outcome = 1  # Protected from loss
+                        break
                     # Stop loss hit first
-                    elif f_bar["low"] <= entry_spot - sl_spot:
+                    elif not be_locked and f_bar["low"] <= entry_spot - sl_spot:
                         outcome = 0
                         break
                 elif final_sig == "BUY PE":
+                    if f_bar["low"] <= entry_spot - be_threshold:
+                        be_locked = True
                     # Target hit first
                     if f_bar["low"] <= entry_spot - tgt_spot:
                         outcome = 1
                         break
+                    # Breakeven lock protected
+                    elif be_locked and f_bar["high"] >= entry_spot:
+                        outcome = 1  # Protected from loss
+                        break
                     # Stop loss hit first
-                    elif f_bar["high"] >= entry_spot + sl_spot:
+                    elif not be_locked and f_bar["high"] >= entry_spot + sl_spot:
                         outcome = 0
                         break
                         

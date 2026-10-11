@@ -155,6 +155,98 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual(trade["Result"], "🟢 WIN (LOCKED)")
         self.assertEqual(trade["Actual P&L ₹"], 1440.0)
 
+    def test_early_breakeven_lock(self):
+        """
+        Verify Early Breakeven Lock (+₹1,000 unrealized profit):
+        1. Entry @ 100 with qty 65 (NIFTY).
+        2. When price reaches 116 (+16 pts * 65 = +₹1,040 >= ₹1,000):
+           SL is moved to cost + buffer (101.54).
+        3. Pullback to 101.0 triggers BREAKEVEN_EXIT without taking a loss!
+        """
+        now = datetime.datetime.now(IST).replace(hour=10, minute=0)
+        lot = 65
+        ep = 100.0
+        tgt = 150.0
+        sl = 76.92
+
+        trade = {
+            "Entry Time": "10:00:00 AM",
+            "Exit Time": None,
+            "Index": "NIFTY",
+            "Signal": "BUY CE",
+            "Spot": 24500.0,
+            "Strike": 24500,
+            "Entry Price": ep,
+            "Live Price": ep,
+            "Exit Price": None,
+            "Stop Loss": sl,
+            "Target": tgt,
+            "Qty": lot,
+            "Max Loss ₹": 1500,
+            "Target P&L ₹": 3000,
+            "Actual P&L ₹": None,
+            "Status": "OPEN",
+            "Result": "⏳ OPEN",
+            "_profit_locked": False,
+            "_breakeven_locked": False,
+            "_locked_profit": 0,
+            "_peak_price": ep,
+        }
+        trade_log = [trade]
+
+        # Step 1: Price touches 116 (+₹1,040 unrealized profit >= ₹1,000)
+        records = {24500.0: {"CE": {"lastPrice": 116.0}}}
+        events = self.trade_mgr.update_live_prices("NIFTY", trade_log, records, now)
+        self.assertEqual(len(events), 0, "Trade should stay OPEN")
+        self.assertTrue(trade.get("_breakeven_locked"))
+        self.assertGreater(trade["Stop Loss"], ep)
+        self.assertEqual(trade["Stop Loss"], 101.54)
+
+        # Step 2: Price pulls back to 101.0 (below 101.54 breakeven SL) -> Exits at breakeven
+        records = {24500.0: {"CE": {"lastPrice": 101.0}}}
+        events = self.trade_mgr.update_live_prices("NIFTY", trade_log, records, now)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "BREAKEVEN_EXIT")
+        self.assertEqual(trade["Status"], "CLOSED")
+        self.assertEqual(trade["Result"], "🛡️ BREAKEVEN EXIT")
+        self.assertEqual(trade["Actual P&L ₹"], 65.0)
+
+    def test_15m_trend_filter(self):
+        """
+        Verify that 15m trend confluence blocks counter-trend trades:
+        - Bullish market data + 15m BEARISH -> Blocks BUY CE
+        - Bullish market data + 15m BULLISH -> Generates BUY CE
+        """
+        from core.signal_engine import SignalEngine
+        engine = SignalEngine()
+
+        md_base = {
+            "pcr": 1.35,
+            "spot": 24550.0,
+            "support": 24400,
+            "resistance": 24700,
+            "spot_vs_vwap": "ABOVE",
+            "pcr_momentum": "RISING",
+            "oi_momentum_bullish": True,
+            "oi_momentum_bearish": False,
+            "bias": "Bullish",
+            "oi_active": True,
+        }
+
+        # Case 1: 15m Trend is BEARISH -> Counter-trend BUY CE must be blocked
+        md_bearish = dict(md_base)
+        md_bearish["trend_15m"] = "BEARISH"
+        sig, conf, reason = engine.generate_signal(md_bearish, in_window=True)
+        self.assertEqual(sig, "WAIT")
+        self.assertIn("15m Trend is BEARISH", reason)
+
+        # Case 2: 15m Trend is BULLISH -> BUY CE allowed
+        md_bullish = dict(md_base)
+        md_bullish["trend_15m"] = "BULLISH"
+        sig, conf, reason = engine.generate_signal(md_bullish, in_window=True)
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "HIGH")
+
 
 if __name__ == "__main__":
     unittest.main()

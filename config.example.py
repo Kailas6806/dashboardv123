@@ -19,6 +19,7 @@ PROFIT_LOCK_START      = 1500      # When trade reaches +₹1,500, lock SL at +�
 PROFIT_LOCK_STEP       = 1000      # Increase SL lock by ₹1,000 for each ₹1,000 gain (e.g. 2k -> 3k)
 MAX_PROFIT_EXIT        = 4000      # When trade reaches +₹4,000, exit immediately to take profit
 PROFIT_LOCK_THRESHOLD  = 2000      # Backward-compatible alias for PROFIT_LOCK_START
+EARLY_BREAKEVEN_PROFIT = 1000      # When trade reaches +₹1,000, lock SL at entry price (+₹100 brokerage buffer)
 
 # ── INDEX CONFIG ──
 # expiry_weekday: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri
@@ -47,9 +48,10 @@ LOG_COLS = [
 ]
 
 # ── SIGNAL QUALITY & FILTERING ──
-SIGNAL_BUFFER_SIZE     = 3       # number of refreshes to buffer
-SIGNAL_CONFIRM_COUNT   = 2       # confirmations needed (2-of-3)
-SIDEWAYS_PCR_LOW       = 0.85    # PCR below this + above high = sideways
+SIGNAL_BUFFER_SIZE      = 3       # number of refreshes to buffer
+SIGNAL_CONFIRM_COUNT    = 2       # confirmations needed (2-of-3)
+USE_15M_TREND_FILTER    = True    # Enforce 15m higher timeframe trend confluence (20-EMA)
+SIDEWAYS_PCR_LOW        = 0.85    # PCR below this + above high = sideways
 SIDEWAYS_PCR_HIGH      = 1.15
 SIDEWAYS_SPOT_STDEV_PCT = 0.001  # 0.1% stdev threshold for strong sideways
 

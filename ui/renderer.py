@@ -167,8 +167,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     pcr_history = st.session_state[sk(idx, "pcr_history")]
     spot_history = st.session_state[sk(idx, "spot_history")]
 
+    trend_15m_info = {}
+    if fetcher and hasattr(fetcher, "get_15m_trend"):
+        trend_15m_info = fetcher.get_15m_trend(idx, current_spot=spot)
+
     md = signal_engine.compute_market_data(
-        df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline
+        df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline,
+        trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
+        trend_15m_ema=trend_15m_info.get("ema20", 0.0),
     )
 
     # Save updated state
@@ -277,7 +283,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     st.markdown(render_filter_grid(
         in_window, oi_active, md["spot_vs_vwap"], md["vwap_proxy"],
         md["pcr_momentum"], md["total_ce_delta"], md["total_pe_delta"],
-        sideways_info=sideways_info, cooldown_info=cooldown_info
+        sideways_info=sideways_info, cooldown_info=cooldown_info,
+        trend_15m=md.get("trend_15m"), trend_15m_ema=md.get("trend_15m_ema", 0.0)
     ), unsafe_allow_html=True)
 
     # ── TRAP / SIGNAL ──
@@ -1558,8 +1565,14 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     pcr_hist = st.session_state.get(sk(selected_idx, "pcr_history"), [])
     spot_hist = st.session_state.get(sk(selected_idx, "spot_history"), [])
 
+    trend_15m_info = {}
+    if fetcher and hasattr(fetcher, "get_15m_trend"):
+        trend_15m_info = fetcher.get_15m_trend(selected_idx, current_spot=spot)
+
     md = signal_engine.compute_market_data(
-        df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline
+        df, spot, step, selected_idx, spot_hist, pcr_hist, prev_df, oi_baseline,
+        trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
+        trend_15m_ema=trend_15m_info.get("ema20", 0.0),
     )
 
     now_ist = datetime.datetime.now(IST)
