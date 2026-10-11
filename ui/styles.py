@@ -418,6 +418,51 @@ section[data-testid="stSidebar"] {
   border-bottom: 2px solid var(--purple) !important;
 }
 
+/* ── Navigation Pills (Fast Lazy Tabs) ── */
+div[data-testid="stPills"] {
+  background: var(--bg-1);
+  border: 1px solid var(--border-blue);
+  border-radius: var(--r);
+  padding: 4px;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  margin-bottom: 12px;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+}
+div[data-testid="stPills"]::-webkit-scrollbar { display: none; }
+div[data-testid="stPills"] button {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--r-sm) !important;
+  padding: 8px 14px !important;
+  min-height: var(--touch-min) !important;
+  font-family: 'Space Grotesk', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  letter-spacing: 0.04em !important;
+  color: var(--text-1) !important;
+  white-space: nowrap !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.15s ease !important;
+}
+div[data-testid="stPills"] button:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+div[data-testid="stPills"] button[aria-pressed="true"],
+div[data-testid="stPills"] button[aria-selected="true"],
+div[data-testid="stPills"] button[data-checked="true"] {
+  background: var(--indigo-dim) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--indigo-hi) !important;
+  border-bottom: 2px solid var(--purple) !important;
+}
+
 /* ── Signal Cards ── */
 .signal-card {
   border-radius: var(--r);

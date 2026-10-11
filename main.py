@@ -200,16 +200,90 @@ except TypeError:
     st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
 
-# ── DYNAMIC NAVIGATION TABS ──
+# ── DYNAMIC NAVIGATION (FAST LAZY-LOADED TABS) ──
 open_count = sum(
     len([t for t in st.session_state.get(sk(idx, "trade_log"), []) if t.get("Status") == "OPEN"])
     for idx in INDEX_CONFIG
 )
 open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
 
-tab_open, tab_nifty, tab_banknifty, tab_finnifty, tab_ml, tab_ai, tab_autonomous, tab_history, tab_analytics, tab_health, tab_settings = st.tabs([open_tab_label, "NIFTY", "BANKNIFTY", "FINNIFTY", "🧠 XGBOOST ML", "🤖 AI COPILOT", "🦾 AUTONOMOUS AI", "TRADE HISTORY", "ANALYTICS", "⚡ ACTIVITY", "SETTINGS"])
+tab_options = [
+    open_tab_label,
+    "NIFTY",
+    "BANKNIFTY",
+    "FINNIFTY",
+    "🧠 XGBOOST ML",
+    "🤖 AI COPILOT",
+    "🦾 AUTONOMOUS AI",
+    "TRADE HISTORY",
+    "ANALYTICS",
+    "⚡ ACTIVITY",
+    "SETTINGS",
+]
 
-# ── FRAGMENTS (silent background refresh every 3s) ──
+# Track active tab across reruns and open_count badge updates
+if "active_nav_tab" not in st.session_state:
+    st.session_state["active_nav_tab"] = open_tab_label if open_count > 0 else "NIFTY"
+
+curr_default = st.session_state["active_nav_tab"]
+if curr_default not in tab_options:
+    if "OPEN TRADES" in curr_default:
+        curr_default = open_tab_label
+    else:
+        curr_default = "NIFTY"
+    st.session_state["active_nav_tab"] = curr_default
+
+# Mobile Screen Wake Lock injection (keeps screen awake during market hours)
+import streamlit.components.v1 as components
+components.html(
+    """
+    <script>
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {}
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible') {
+        await requestWakeLock();
+      }
+    });
+    </script>
+    """,
+    height=0,
+    width=0,
+)
+
+selected_tab = st.pills(
+    "Navigation",
+    options=tab_options,
+    default=curr_default,
+    label_visibility="collapsed",
+    key="main_nav_pills",
+)
+
+if not selected_tab:
+    selected_tab = st.session_state.get("active_nav_tab", "NIFTY")
+else:
+    st.session_state["active_nav_tab"] = selected_tab
+
+# ── BACKGROUND OPEN TRADES MONITOR ──
+# Ensure stop loss / target monitoring continues even when viewing other tabs
+for _bg_idx in INDEX_CONFIG:
+    if selected_tab == _bg_idx or ("OPEN TRADES" in selected_tab):
+        continue
+    _bg_tlog = st.session_state.get(sk(_bg_idx, "trade_log"), [])
+    if any(t.get("Status") == "OPEN" for t in _bg_tlog):
+        try:
+            trade_mgr.update_live_prices(_bg_idx, _bg_tlog, {}, now_ist, fetcher=fetcher)
+        except Exception:
+            pass
+
+# ── FRAGMENTS (Only active tab runs its refresh timer!) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_open_trades():
     render_open_trades_tab(trade_mgr, fetcher)
@@ -238,36 +312,30 @@ def show_autonomous():
     from ui.renderer import render_autonomous_tab
     render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
-with tab_open:
+# ── PURE LAZY TAB RENDERING (Only active tab executes) ──
+if "OPEN TRADES" in selected_tab:
     show_open_trades()
-
-with tab_nifty:
+elif selected_tab == "NIFTY":
     show_nifty()
-with tab_banknifty:
+elif selected_tab == "BANKNIFTY":
     show_banknifty()
-with tab_finnifty:
+elif selected_tab == "FINNIFTY":
     show_finnifty()
-with tab_ml:
+elif "XGBOOST ML" in selected_tab:
     from ui.ml_renderer import render_ml_dashboard
     render_ml_dashboard()
-
-with tab_ai:
+elif "AI COPILOT" in selected_tab:
     show_ai()
-
-with tab_autonomous:
+elif "AUTONOMOUS AI" in selected_tab:
     show_autonomous()
-
-
-
-with tab_history:
+elif selected_tab == "TRADE HISTORY":
     render_trade_history_tab(journal)
-with tab_analytics:
+elif selected_tab == "ANALYTICS":
     show_analytics()
-with tab_health:
+elif "ACTIVITY" in selected_tab:
     from ui.health_renderer import render_health_dashboard
     render_health_dashboard(fetcher, trade_mgr, copilot)
-
-with tab_settings:
+elif selected_tab == "SETTINGS":
     render_settings_tab(trade_mgr, journal)
 
 

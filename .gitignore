@@ -29,3 +29,5 @@ logs/
 # Local SQLite databases
 *.db
 .env
+trade_journal_cache_*.json
+trade_journal_tmp_*.json
