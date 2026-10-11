@@ -546,7 +546,11 @@ div[data-testid="stPills"] button[data-checked="true"] {
   .mobile-signal-bar { display: none !important; }
 }
 
-/* Stale overlay disabled */
-div[data-stale="true"] { opacity: 1 !important; }
+/* Instant visual feedback when switching tabs */
+div[data-stale="true"] {
+  opacity: 0.25 !important;
+  transition: opacity 0.1s ease-out;
+  pointer-events: none;
+}
 </style>
 """

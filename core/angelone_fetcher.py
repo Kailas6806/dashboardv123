@@ -31,6 +31,7 @@ class AngelOneDataFetcher:
         self.smartApi = SmartConnect(api_key=self.api_key)
         self.session = None
         self._cache = TTLCache(default_ttl=1)
+        self._perm_cache = {}
         self.ws_mgr = None
         self.index_tokens = {
             "NIFTY": {"token": "26000", "symbol": "Nifty 50", "exch": "NSE"},
@@ -215,7 +216,7 @@ class AngelOneDataFetcher:
         self.total_fetches += 1
         self.last_fetch_times[idx_name] = datetime.datetime.now(IST)
         now = datetime.datetime.now(IST)
-        is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30) or now.hour < 9 or (now.hour == 9 and now.minute < 15)
+        is_market_closed = now.weekday() >= 5 or now.hour > 15 or (now.hour == 15 and now.minute >= 30) or now.hour < 9 or (now.hour == 9 and now.minute < 15)
 
         cached = self._cache.get(idx_name)
         if cached:
@@ -238,11 +239,25 @@ class AngelOneDataFetcher:
                                     opt["openInterest"] = tick["oi"]
             return cached
             
-        if is_market_closed and hasattr(self, "_perm_cache") and idx_name in self._perm_cache:
-            return self._perm_cache[idx_name]
+        if is_market_closed:
+            if idx_name in self._perm_cache:
+                return self._perm_cache[idx_name]
+            cache_file = os.path.join(BASE_DIR, f"last_data_{idx_name}.json")
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r") as f:
+                        disk_cached = json.load(f)
+                    if disk_cached and "records" in disk_cached:
+                        self._perm_cache[idx_name] = disk_cached
+                        return disk_cached
+                except Exception:
+                    pass
 
         if not self.session or not self.scrip_master:
-            return None # Fail gracefully to trigger mock or error
+            # Graceful fallback to perm/disk cache if session not ready
+            if idx_name in self._perm_cache:
+                return self._perm_cache[idx_name]
+            return None
             
         # 1. Get Spot Price
         spot = self.get_ltp("NSE", self.index_tokens[idx_name]["symbol"], self.index_tokens[idx_name]["token"])
@@ -337,6 +352,7 @@ class AngelOneDataFetcher:
             }
         }
         self._cache.set(idx_name, result)
+        self._perm_cache[idx_name] = result
         return result
 
     def get_option_token(self, idx_name: str, strike: float, signal: str) -> Tuple[Optional[str], Optional[str]]:

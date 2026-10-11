@@ -152,12 +152,13 @@ journal       = st.session_state["_journal"]
 copilot       = st.session_state["_copilot"]
 fetcher       = get_fetcher()
 
-# ── INITIALIZE PER-INDEX STATE ──
+# ── INITIALIZE PER-INDEX STATE (Loaded once into session state for instant sub-50ms tab switching) ──
 for idx in INDEX_CONFIG:
     init_state(idx)
-    today_log = load_log(idx)
-    if not st.session_state[sk(idx, "trade_log")] or today_log == []:
-        st.session_state[sk(idx, "trade_log")] = today_log
+    if not st.session_state.get(f"_trades_loaded_{idx}"):
+        st.session_state[sk(idx, "trade_log")] = load_log(idx)
+        st.session_state[f"_trades_loaded_{idx}"] = True
+
 
 # ── COMPUTE TICKER & MARKET STATUS ──
 now_ist = datetime.datetime.now(IST)
@@ -233,30 +234,12 @@ if curr_default not in tab_options:
         curr_default = "NIFTY"
     st.session_state["active_nav_tab"] = curr_default
 
-# Mobile Screen Wake Lock injection (keeps screen awake during market hours)
-import streamlit.components.v1 as components
-components.html(
-    """
-    <script>
-    let wakeLock = null;
-    async function requestWakeLock() {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (err) {}
-    }
-    requestWakeLock();
-    document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState === 'visible') {
-        await requestWakeLock();
-      }
-    });
-    </script>
-    """,
-    height=0,
-    width=0,
-)
+def _on_nav_change():
+    val = st.session_state.get("main_nav_pills")
+    if val:
+        st.session_state["active_nav_tab"] = val
+    else:
+        st.session_state["main_nav_pills"] = st.session_state.get("active_nav_tab", "NIFTY")
 
 selected_tab = st.pills(
     "Navigation",
@@ -264,6 +247,7 @@ selected_tab = st.pills(
     default=curr_default,
     label_visibility="collapsed",
     key="main_nav_pills",
+    on_change=_on_nav_change,
 )
 
 if not selected_tab:
@@ -492,4 +476,27 @@ def _send_weekly_report_if_friday():
 
 check_daily_report()
 
-# ── FORCED RELOAD TRIGGER ──
+# ── MOBILE SCREEN WAKE LOCK (Keeps screen alive during market hours) ──
+import streamlit.components.v1 as components
+components.html(
+    """
+    <script>
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {}
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible') {
+        await requestWakeLock();
+      }
+    });
+    </script>
+    """,
+    height=0,
+    width=0,
+)
