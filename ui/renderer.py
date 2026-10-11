@@ -694,15 +694,17 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             use_container_width=True,
         )
         
-        fig1 = px.bar(disp, x="Strike", y=["CE OI", "PE OI"], barmode="group",
-                      color_discrete_map={"CE OI": "#10b981", "PE OI": "#ef4444"})
-        fig1.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
-        st.plotly_chart(fig1, use_container_width=True)
-        
-        fig2 = px.bar(disp, x="Strike", y=["CE OI Δ", "PE OI Δ"], barmode="group",
-                      color_discrete_map={"CE OI Δ": "#34d399", "PE OI Δ": "#f87171"})
-        fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
-        st.plotly_chart(fig2, use_container_width=True)
+        show_charts = st.checkbox("📊 Render Visual OI Distribution Charts", value=False, key=f"show_charts_{idx}")
+        if show_charts:
+            fig1 = px.bar(disp, x="Strike", y=["CE OI", "PE OI"], barmode="group",
+                          color_discrete_map={"CE OI": "#10b981", "PE OI": "#ef4444"})
+            fig1.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
+            st.plotly_chart(fig1, use_container_width=True)
+            
+            fig2 = px.bar(disp, x="Strike", y=["CE OI Δ", "PE OI Δ"], barmode="group",
+                          color_discrete_map={"CE OI Δ": "#34d399", "PE OI Δ": "#f87171"})
+            fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
+            st.plotly_chart(fig2, use_container_width=True)
 
     # ── POSITIONS ──
     with st.expander(f"{idx} Trade Positions"):
