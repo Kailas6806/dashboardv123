@@ -28,11 +28,13 @@ class AngelOneDataFetcher:
         self.client_id = ANGEL_CLIENT_ID
         self.password = ANGEL_PASSWORD
         self.totp_secret = ANGEL_TOTP_SECRET
-        self.smartApi = SmartConnect(api_key=self.api_key)
+        self.smartApi = SmartConnect(api_key=self.api_key, timeout=25)
         self.session = None
         self._cache = TTLCache(default_ttl=1)
         self._perm_cache = {}
         self.ws_mgr = None
+        self._last_login_attempt = None
+        self._login_lock = threading.Lock()
         self.index_tokens = {
             "NIFTY": {"token": "26000", "symbol": "Nifty 50", "exch": "NSE"},
             "BANKNIFTY": {"token": "26009", "symbol": "Nifty Bank", "exch": "NSE"},
@@ -53,46 +55,75 @@ class AngelOneDataFetcher:
         self.consecutive_failures = 0
         self.last_fetch_times = {}
 
-        self.login()
+        self.login(max_retries=3, retry_delay=2.0)
         self._load_scrip_master()
 
-    def login(self):
+    def login(self, max_retries: int = 3, retry_delay: float = 2.0, force: bool = False) -> bool:
+        """Authenticate with Angel One SmartAPI with multi-attempt retry and clock drift correction."""
         if not self.client_id or not self.password or not self.totp_secret:
             self.login_status = "DEMO_MODE"
             self.login_message = "Angel One credentials missing in config or secrets.toml. Running in DEMO mode."
             log.warning(self.login_message)
             return False
-        try:
-            drift = 0.0
-            try:
-                res = urllib.request.urlopen('http://google.com', timeout=3.0)
-                dt = email.utils.parsedate_to_datetime(res.headers['Date'])
-                drift = dt.timestamp() - pytime.time()
-            except Exception:
-                drift = 0.0
-            totp = pyotp.TOTP(self.totp_secret).at(pytime.time() + drift)
-            
-            data = self.smartApi.generateSession(self.client_id, self.password, totp)
-            if data and data.get('status'):
-                self.session = data['data']
-                self.login_status = "CONNECTED"
-                self.last_login_time = datetime.datetime.now(IST)
-                masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else self.client_id
-                self.login_message = f"Authenticated successfully as {masked_id} (Session active)."
-                log.info("Angel One Login Successful: %s", self.login_message)
-                self._init_websocket()
-                return True
-            else:
-                self.login_status = "FAILED"
-                err_msg = data.get('message', 'Login error') if isinstance(data, dict) else str(data)
-                self.login_message = f"Angel One login failed: {err_msg}"
-                log.error("Angel One Login Failed: %s", data)
-                return False
-        except Exception as e:
+
+        with self._login_lock:
+            now = datetime.datetime.now(IST)
+            if not force and self._last_login_attempt:
+                elapsed = (now - self._last_login_attempt).total_seconds()
+                if elapsed < 8:
+                    return self.session is not None
+
+            self._last_login_attempt = now
+            last_err = None
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    drift = 0.0
+                    try:
+                        res = urllib.request.urlopen('http://google.com', timeout=3.0)
+                        dt = email.utils.parsedate_to_datetime(res.headers['Date'])
+                        drift = dt.timestamp() - pytime.time()
+                    except Exception:
+                        drift = 0.0
+                    totp = pyotp.TOTP(self.totp_secret).at(pytime.time() + drift)
+
+                    data = self.smartApi.generateSession(self.client_id, self.password, totp)
+                    if data and data.get('status'):
+                        self.session = data['data']
+                        self.login_status = "CONNECTED"
+                        self.last_login_time = datetime.datetime.now(IST)
+                        masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else self.client_id
+                        self.login_message = f"Authenticated successfully as {masked_id} (Session active)."
+                        log.info("Angel One Login Successful: %s", self.login_message)
+                        self._init_websocket()
+                        return True
+                    else:
+                        err_msg = data.get('message', 'Login error') if isinstance(data, dict) else str(data)
+                        last_err = err_msg
+                        log.warning("Angel One login attempt %d/%d failed: %s", attempt, max_retries, err_msg)
+                        if attempt < max_retries:
+                            pytime.sleep(retry_delay * attempt)
+                except Exception as e:
+                    last_err = str(e)
+                    log.warning("Angel One login attempt %d/%d exception (timeout/network): %s", attempt, max_retries, e)
+                    if attempt < max_retries:
+                        pytime.sleep(retry_delay * attempt)
+
             self.login_status = "ERROR"
-            self.login_message = f"Angel One login exception: {e}"
-            log.error("Angel One Login Exception: %s", e)
+            self.login_message = f"Angel One login exception: {last_err}"
+            log.error("Angel One Login Failed after %d attempts: %s", max_retries, last_err)
             return False
+
+    def ensure_session(self, force: bool = False) -> bool:
+        """Dynamically verify session health and re-authenticate if disconnected."""
+        if not force and self.session is not None and self.login_status == "CONNECTED":
+            return True
+        now = datetime.datetime.now(IST)
+        if not force and self._last_login_attempt:
+            if (now - self._last_login_attempt).total_seconds() < 12:
+                return False
+        log.info("Angel One session inactive. Triggering automatic re-login...")
+        return self.login(max_retries=2, retry_delay=1.5, force=force)
 
     def _init_websocket(self):
         """Initialize and start background SmartWebSocketManager for live ticks."""
@@ -260,6 +291,9 @@ class AngelOneDataFetcher:
                 except Exception:
                     pass
 
+        if not self.session:
+            self.ensure_session()
+
         if not self.session or not self.scrip_master:
             # Graceful fallback to perm/disk cache if session not ready
             if idx_name in self._perm_cache:
@@ -407,6 +441,9 @@ class AngelOneDataFetcher:
                 return False
 
             # Market is open: check if WebSocket needs to be started
+            if not self.session:
+                self.ensure_session()
+
             if self.ws_mgr is None or not self.ws_mgr._is_running or not (self.ws_mgr._thread and self.ws_mgr._thread.is_alive()):
                 self._init_websocket()
 
@@ -601,4 +638,7 @@ def get_fetcher():
         with _fetcher_lock:
             if _global_angel_fetcher is None:
                 _global_angel_fetcher = AngelOneDataFetcher()
+    else:
+        if not _global_angel_fetcher.session:
+            _global_angel_fetcher.ensure_session()
     return _global_angel_fetcher

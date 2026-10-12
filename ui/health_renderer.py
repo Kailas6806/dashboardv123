@@ -201,6 +201,16 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
     last_trade = trades[-1] if trades else None
     real_logs = get_real_activity_logs(limit=8)
 
+    if fetcher and (fetcher.login_status != "CONNECTED" or not fetcher.session):
+        warn_col, btn_col = st.columns([3, 1])
+        with warn_col:
+            st.error(f"⚠️ Angel One Broker Offline: {fetcher.login_message or 'Session inactive'}")
+        with btn_col:
+            if st.button("⚡ Reconnect Session", key="btn_reconnect_broker_ui", use_container_width=True):
+                with st.spinner("Re-authenticating with Angel One..."):
+                    fetcher.login(max_retries=3, retry_delay=2.0, force=True)
+                    st.rerun()
+
     # Market session calculation
     is_weekday = now_ist.weekday() < 5
     is_mkt_hours = is_weekday and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
