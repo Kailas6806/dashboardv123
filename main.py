@@ -152,11 +152,27 @@ journal       = st.session_state["_journal"]
 copilot       = st.session_state["_copilot"]
 fetcher       = get_fetcher()
 
+# ── BACKGROUND AUTONOMOUS 3-INDEX SCANNING DAEMON ──
+from core.background_engine import get_background_engine
+bg_engine = get_background_engine(
+    fetcher=fetcher,
+    signal_engine=signal_engine,
+    risk_mgr=risk_mgr,
+    trade_mgr=trade_mgr,
+    journal=journal,
+    copilot=copilot,
+)
+if getattr(config, "ENABLE_BACKGROUND_SCANNER", True) and not bg_engine.is_running():
+    bg_engine.start()
+
+if "ai_auto_trade" in st.session_state:
+    bg_engine.ai_auto_trade = st.session_state["ai_auto_trade"]
+
 # ── INITIALIZE PER-INDEX STATE (Loaded once into session state for instant sub-50ms tab switching) ──
 for idx in INDEX_CONFIG:
     init_state(idx)
     if not st.session_state.get(f"_trades_loaded_{idx}"):
-        st.session_state[sk(idx, "trade_log")] = load_log(idx)
+        st.session_state[sk(idx, "trade_log")] = bg_engine.get_trade_log(idx) if bg_engine else load_log(idx)
         st.session_state[f"_trades_loaded_{idx}"] = True
 
 
@@ -172,8 +188,13 @@ ticker_items = []
 import json
 for idx in INDEX_CONFIG:
     spot = None
-    # 1. Check live sub-50ms WebSocket spot tick first
-    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+    # 1. Check background engine evaluated spot first
+    if bg_engine:
+        bg_s = bg_engine.get_latest_state(idx)
+        if bg_s and bg_s.get("spot"):
+            spot = bg_s["spot"]
+    # 2. Check live sub-50ms WebSocket spot tick
+    if spot is None and fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
         tok = fetcher.index_tokens.get(idx, {}).get("token")
         if tok:
             ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
@@ -198,7 +219,7 @@ is_connected = any(it.get("spot") is not None for it in ticker_items)
 
 # ── RENDER HEADER & TICKER ──
 try:
-    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected), unsafe_allow_html=True)
+    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=bg_engine.is_running()), unsafe_allow_html=True)
 except TypeError:
     st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
@@ -276,15 +297,15 @@ def show_open_trades():
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_nifty():
-    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_banknifty():
-    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_finnifty():
-    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
 
 def show_analytics():
     render_analytics_tab(journal)
@@ -320,7 +341,7 @@ elif selected_tab == "ANALYTICS":
     show_analytics()
 elif "ACTIVITY" in selected_tab:
     from ui.health_renderer import render_health_dashboard
-    render_health_dashboard(fetcher, trade_mgr, copilot)
+    render_health_dashboard(fetcher, trade_mgr, copilot, bg_engine=bg_engine)
 elif selected_tab == "SETTINGS":
     render_settings_tab(trade_mgr, journal)
 

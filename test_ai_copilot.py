@@ -16,6 +16,8 @@ class TestAICopilot(unittest.TestCase):
         self.copilot = AICopilot()
         self.risk_mgr = RiskManager()
         self.trade_mgr = TradeManager(notifier=None, risk_mgr=self.risk_mgr)
+        import unittest.mock
+        self.trade_mgr.save_log = unittest.mock.MagicMock()
         self.test_journal_file = "test_ai_journal_tmp.json"
         self.journal = TradeJournal(self.test_journal_file)
 

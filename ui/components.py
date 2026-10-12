@@ -123,9 +123,11 @@ def render_app_header(
     """Renders compact terminal header with status indicators."""
     if "ws_connected" in kwargs:
         ws_connected = kwargs["ws_connected"]
+    scanner_active = kwargs.get("scanner_active", True)
     market_pill = '<span class="pill pill-on">MARKET OPEN</span>' if is_market_open else '<span class="pill pill-off">MARKET CLOSED</span>'
     live_pill = '<span class="pill pill-live">LIVE</span>' if is_connected else '<span class="pill pill-off">DATA DISCONNECTED</span>'
     ws_pill = '<span class="pill pill-live" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#10b981;font-weight:600;">⚡ WS: &lt;50ms</span>' if ws_connected else '<span class="pill pill-off" style="opacity:0.8;">⚡ WS: STANDBY</span>'
+    scanner_pill = '<span class="pill pill-live" style="background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.4);color:#38bdf8;font-weight:600;">🤖 AUTO-SCAN 3X</span>' if scanner_active else ''
 
     return f"""
 <div class="app-header">
@@ -138,6 +140,7 @@ def render_app_header(
       {market_pill}
       {live_pill}
       {ws_pill}
+      {scanner_pill}
     </div>
     <div class="num" style="font-size: 12px; color: var(--text-1); letter-spacing: 0.02em;">
       {datetime_str}

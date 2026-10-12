@@ -80,11 +80,11 @@ def load_log(idx):
     return []
 
 
-def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot=None):
+def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot=None, bg_engine=None):
     """
     Render a full index tab (NIFTY / BANKNIFTY / FINNIFTY).
     Fetches data, generates signals, manages trades, renders UI.
-    Core signal logic is UNTOUCHED — called via signal_engine.
+    Supports BackgroundTradingEngine for sub-5ms instant rendering and continuous multi-index scanning.
     """
     cfg = INDEX_CONFIG[idx]
     lot = cfg["lot"]
@@ -93,140 +93,154 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     tlog_key = sk(idx, "trade_log")
 
     # ── MARKET TIME CHECK ──
-    import json
-    import os
     now_ist = datetime.datetime.now(IST)
     now_time = now_ist.time()
     in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
-    cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
 
-    data = None
-    # 1. Fetch live data from SmartAPI / SmartWebSocket if available
-    if fetcher:
-        try:
-            data = fetcher.fetch_option_chain(idx)
-        except Exception as e:
-            logger.warning(f"Live fetch error for {idx}: {e}")
-
-    # 2. Fallback to off-market cache file if live fetch returned None
-    if data is None:
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "r") as f:
-                    data = json.load(f)
-                logger.info(f"Loaded off-market cache for {idx} from file")
-            except Exception as e:
-                logger.warning(f"Failed to load cache file for {idx}: {e}")
+    # ── CHECK BACKGROUND SCANNER FIRST (Instant sub-5ms render) ──
+    bg_state = bg_engine.get_latest_state(idx) if bg_engine else None
+    if bg_state:
+        st.session_state[tlog_key] = bg_engine.get_trade_log(idx)
+        records = bg_state["records"]
+        spot = bg_state["spot"]
+        data = {"records": {"data": records, "underlyingValue": spot}}
+        df = bg_state["df"]
+        md = bg_state["market_data"]
+        signal = bg_state["raw_signal"]
+        confidence = bg_state["raw_conf"]
+        filter_reason = bg_state["filter_reason"]
+        trap = bg_state["trap"]
+        final_signal = bg_state["final_signal"]
+        final_conf = bg_state["final_conf"]
+        updated_buf = bg_state["buffer"]
+        conf_score = bg_state["conf_score"]
+        sideways_info = bg_state["sideways_info"]
+        cooldown_info = bg_state["cooldown_info"]
+        daily_limits = bg_state["daily_limits"]
     else:
-        # Save cache file for off-market hours
+        # Fallback to local fetch if background engine hasn't scanned yet
+        import json
+        import os
+        cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
+
+        data = None
+        if fetcher:
+            try:
+                data = fetcher.fetch_option_chain(idx)
+            except Exception as e:
+                logger.warning(f"Live fetch error for {idx}: {e}")
+
+        if data is None:
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r") as f:
+                        data = json.load(f)
+                    logger.info(f"Loaded off-market cache for {idx} from file")
+                except Exception as e:
+                    logger.warning(f"Failed to load cache file for {idx}: {e}")
+        else:
+            try:
+                with open(cache_file, "w") as f:
+                    json.dump(data, f)
+            except Exception as e:
+                logger.warning(f"Failed to save cache file for {idx}: {e}")
+
+        if data is None:
+            st.error(f"❌ {idx} data unavailable. Retrying...")
+            return
+
+        records = data["records"]["data"]
+        spot = data["records"]["underlyingValue"]
+
+        if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+            tok = fetcher.index_tokens.get(idx, {}).get("token")
+            if tok:
+                ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
+                if ws_spot and ws_spot > 0:
+                    spot = ws_spot
+                    data["records"]["underlyingValue"] = ws_spot
+
+        # ── BUILD DATAFRAME ──
+        atm = round(spot / step) * step
+        rows = []
+        for item in records:
+            s = item.get("strikePrice", 0)
+            if abs(s - atm) <= rng:
+                ce = item.get("CE") or {}
+                pe = item.get("PE") or {}
+                rows.append({
+                    "Strike": s,
+                    "CE LTP": ce.get("lastPrice", 0),
+                    "CE OI": ce.get("openInterest", 0),
+                    "PE LTP": pe.get("lastPrice", 0),
+                    "PE OI": pe.get("openInterest", 0),
+                })
+        df = pd.DataFrame(rows).sort_values("Strike").reset_index(drop=True)
+        if df.empty:
+            st.warning(f"No {idx} data. Market may be closed.")
+            return
+
+        # ── COMPUTE MARKET DATA (via signal engine) ──
+        prev_df = st.session_state[sk(idx, "prev_df")]
+        oi_baseline = st.session_state[sk(idx, "oi_baseline")]
+        pcr_history = st.session_state[sk(idx, "pcr_history")]
+        spot_history = st.session_state[sk(idx, "spot_history")]
+
+        trend_15m_info = {}
+        if fetcher and hasattr(fetcher, "get_15m_trend"):
+            trend_15m_info = fetcher.get_15m_trend(idx, current_spot=spot)
+
         try:
-            with open(cache_file, "w") as f:
-                json.dump(data, f)
-        except Exception as e:
-            logger.warning(f"Failed to save cache file for {idx}: {e}")
+            md = signal_engine.compute_market_data(
+                df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline,
+                trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
+                trend_15m_ema=trend_15m_info.get("ema20", 0.0),
+            )
+        except TypeError:
+            md = signal_engine.compute_market_data(
+                df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline
+            )
+            if isinstance(md, dict):
+                md["trend_15m"] = trend_15m_info.get("trend", "NEUTRAL")
+                md["trend_15m_ema"] = trend_15m_info.get("ema20", 0.0)
 
-    if data is None:
-        st.error(f"❌ {idx} data unavailable. Retrying...")
-        return
+        # Save updated state
+        st.session_state[sk(idx, "prev_df")] = md["prev_df"]
+        st.session_state[sk(idx, "oi_baseline")] = md["oi_baseline"]
+        st.session_state[sk(idx, "pcr_history")] = md["pcr_history"]
+        st.session_state[sk(idx, "spot_history")] = md["spot_history"]
+        df = md["df"]
 
-    records = data["records"]["data"]
-    spot = data["records"]["underlyingValue"]
+        # ── GENERATE SIGNAL (VERBATIM core logic) ──
+        signal, confidence, filter_reason = signal_engine.generate_signal(md, in_window)
 
-    # 3. Always ensure underlying spot uses sub-50ms live tick if WebSocket connected
-    if fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
-        tok = fetcher.index_tokens.get(idx, {}).get("token")
-        if tok:
-            ws_spot = fetcher.ws_mgr.get_live_ltp(str(tok))
-            if ws_spot and ws_spot > 0:
-                spot = ws_spot
-                data["records"]["underlyingValue"] = ws_spot
-
-    # ── BUILD DATAFRAME ──
-    atm = round(spot / step) * step
-    rows = []
-    for item in records:
-        s = item.get("strikePrice", 0)
-        if abs(s - atm) <= rng:
-            ce = item.get("CE") or {}
-            pe = item.get("PE") or {}
-            rows.append({
-                "Strike": s,
-                "CE LTP": ce.get("lastPrice", 0),
-                "CE OI": ce.get("openInterest", 0),
-                "PE LTP": pe.get("lastPrice", 0),
-                "PE OI": pe.get("openInterest", 0),
-            })
-    df = pd.DataFrame(rows).sort_values("Strike").reset_index(drop=True)
-    if df.empty:
-        st.warning(f"No {idx} data. Market may be closed.")
-        return
-
-    # ── COMPUTE MARKET DATA (via signal engine) ──
-    prev_df = st.session_state[sk(idx, "prev_df")]
-    oi_baseline = st.session_state[sk(idx, "oi_baseline")]
-    pcr_history = st.session_state[sk(idx, "pcr_history")]
-    spot_history = st.session_state[sk(idx, "spot_history")]
-
-    trend_15m_info = {}
-    if fetcher and hasattr(fetcher, "get_15m_trend"):
-        trend_15m_info = fetcher.get_15m_trend(idx, current_spot=spot)
-
-    try:
-        md = signal_engine.compute_market_data(
-            df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline,
-            trend_15m=trend_15m_info.get("trend", "NEUTRAL"),
-            trend_15m_ema=trend_15m_info.get("ema20", 0.0),
+        # ── TRAP DETECTION (VERBATIM) ──
+        trap = signal_engine.detect_trap(
+            spot, md["support"], md["resistance"],
+            md["total_ce_delta"], md["total_pe_delta"]
         )
-    except TypeError:
-        md = signal_engine.compute_market_data(
-            df, spot, step, idx, spot_history, pcr_history, prev_df, oi_baseline
+
+        # ── SIGNAL BUFFER CONFIRMATION (VERBATIM) ──
+        buf = st.session_state[sk(idx, "signal_buffer")]
+        final_signal, final_conf, updated_buf = signal_engine.confirm_signal(
+            signal, confidence, buf
         )
-        if isinstance(md, dict):
-            md["trend_15m"] = trend_15m_info.get("trend", "NEUTRAL")
-            md["trend_15m_ema"] = trend_15m_info.get("ema20", 0.0)
+        st.session_state[sk(idx, "signal_buffer")] = updated_buf
 
-    # Save updated state
-    st.session_state[sk(idx, "prev_df")] = md["prev_df"]
-    st.session_state[sk(idx, "oi_baseline")] = md["oi_baseline"]
-    st.session_state[sk(idx, "pcr_history")] = md["pcr_history"]
-    st.session_state[sk(idx, "spot_history")] = md["spot_history"]
-    df = md["df"]
+        # ── DON'T ENTER IF TRADE ALREADY OPEN ──
+        open_exists = any(t.get("Status") == "OPEN" for t in st.session_state[tlog_key])
+        if open_exists and final_signal in ("BUY CE", "BUY PE"):
+            final_signal = "WAIT"
+            final_conf = "LOW"
 
-    # ── FILTERS ──
-    now_ist = datetime.datetime.now(IST)
-    now_time = now_ist.time()
-    in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
+        # ── CONFIDENCE SCORE (display only) ──
+        conf_score = signal_engine.compute_confidence_score(md, signal, trap)
 
-    # ── GENERATE SIGNAL (VERBATIM core logic) ──
-    signal, confidence, filter_reason = signal_engine.generate_signal(md, in_window)
-
-    # ── TRAP DETECTION (VERBATIM) ──
-    trap = signal_engine.detect_trap(
-        spot, md["support"], md["resistance"],
-        md["total_ce_delta"], md["total_pe_delta"]
-    )
-
-    # ── SIGNAL BUFFER CONFIRMATION (VERBATIM) ──
-    buf = st.session_state[sk(idx, "signal_buffer")]
-    final_signal, final_conf, updated_buf = signal_engine.confirm_signal(
-        signal, confidence, buf
-    )
-    st.session_state[sk(idx, "signal_buffer")] = updated_buf
-
-    # ── DON'T ENTER IF TRADE ALREADY OPEN ──
-    open_exists = any(t.get("Status") == "OPEN" for t in st.session_state[tlog_key])
-    if open_exists and final_signal in ("BUY CE", "BUY PE"):
-        final_signal = "WAIT"
-        final_conf = "LOW"
-
-    # ── CONFIDENCE SCORE (display only) ──
-    conf_score = signal_engine.compute_confidence_score(md, signal, trap)
-
-    # ── SIDEWAYS DETECTION (advisory) ──
-    sideways_is, sideways_strength = signal_engine.detect_sideways(
-        md["spot_history"], md["pcr"]
-    )
-    sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
+        # ── SIDEWAYS DETECTION (advisory) ──
+        sideways_is, sideways_strength = signal_engine.detect_sideways(
+            md["spot_history"], md["pcr"]
+        )
+        sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
     # ── PORTFOLIO-WIDE TODAY TRADES ──
     portfolio_today_trades = []
@@ -494,6 +508,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         except Exception:
             can_afford, afford_reason = True, ""
 
+        import config
+        min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 15)
         if daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
         elif not daily_allowed:
@@ -506,8 +522,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             st.warning("🚨 Unusual OI activity detected — holding off entry")
         elif not can_afford:
             st.warning(f"⚠️ {afford_reason}")
-        elif conf_score < 30:
-            st.warning(f"⚠️ Confidence score ({conf_score}) is too low to enter trade (Minimum: 30)")
+        elif conf_score < min_conf_score:
+            st.warning(f"⚠️ Confidence score ({conf_score}) is too low to enter trade (Minimum: {min_conf_score})")
         elif expiry_today and ep < MIN_ENTRY_PRICE:
             st.info(f"📅 Expiry day — cheap option ₹{ep} allowed (fast moves expected)")
 
@@ -515,7 +531,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             not too_late
             and not price_too_low
             and not oi_unusual
-            and conf_score >= 30
+            and conf_score >= min_conf_score
             and not daily_trades_exceeded
             and daily_allowed
             and can_afford

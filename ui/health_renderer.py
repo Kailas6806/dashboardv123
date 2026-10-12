@@ -180,10 +180,22 @@ def get_last_api_status(copilot, fetcher, trade_mgr):
         },
     }
 
-def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=None):
+def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=None, bg_engine=None):
     """Render the transparent, real-time Activity & Telemetry Monitor."""
     now_ist = datetime.datetime.now(IST)
     api_info = get_last_api_status(copilot, fetcher, trade_mgr)
+
+    if bg_engine:
+        bg_sum = bg_engine.get_status_summary()
+        api_info["bg_scanner"] = {
+            "name": "Autonomous 3-Index Background Scanner",
+            "time": bg_sum.get("last_scan") or "Scanning Active",
+            "desc": f"Continuous evaluation of NIFTY, BANKNIFTY & FINNIFTY ({bg_sum.get('total_scans', 0)} cycles completed)",
+            "status": "RUNNING" if bg_sum.get("running") else "STANDBY",
+            "color": "#10b981" if bg_sum.get("running") else "#f59e0b",
+            "lat": "Real-time (~3s pace)"
+        }
+
     trades = get_recent_trades()
     total_trades = len(trades)
     last_trade = trades[-1] if trades else None
