@@ -73,12 +73,58 @@ body, .stApp {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Hide Streamlit chrome ── */
+/* ── Prevent Streamlit Screen Dimming / Fading on Refresh & Reruns ── */
+[data-stale="true"],
+[data-stale="true"] *,
+[stale_data="true"],
+[stale_data="true"] * {
+  opacity: 1 !important;
+  filter: none !important;
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+.stApp [data-stale="true"],
+[data-testid="stAppViewContainer"] [data-stale="true"],
+[data-testid="stAppViewBlockContainer"] [data-stale="true"],
+[data-testid="stMain"] [data-stale="true"],
+[data-testid="stMainBlockContainer"] [data-stale="true"],
+[data-testid="stVerticalBlock"] [data-stale="true"],
+[data-testid="stVerticalBlockBorderWrapper"] [data-stale="true"],
+.element-container [data-stale="true"],
+div[data-stale="true"],
+.stMarkdown[data-stale="true"] {
+  opacity: 1 !important;
+  filter: none !important;
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+/* Ensure containers and fragment roots never drop opacity or trigger fade animations */
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+.block-container,
+[data-testid="stVerticalBlock"],
+div[data-testid="stVerticalBlock"] > div,
+[data-baseweb="tab-panel"] {
+  opacity: 1 !important;
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+/* ── Hide Streamlit chrome & running status indicators ── */
 header[data-testid="stHeader"],
 footer[data-testid="stFooter"],
 .stDeployButton,
-section[data-testid="stSidebar"] {
+section[data-testid="stSidebar"],
+[data-testid="stStatusWidget"],
+.stStatusWidget {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
 }
 
 /* ── Main Container Padding ── */

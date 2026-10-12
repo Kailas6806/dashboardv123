@@ -58,6 +58,7 @@ class SmartWebSocketManager:
 
         # Rate-limiting / deduplication for subscription calls
         self._pending_subscriptions: Dict[int, Set[str]] = {1: set(), 2: set()}
+        self._reconnect_attempts: int = 0
 
     @staticmethod
     def is_market_hours() -> bool:
@@ -69,7 +70,7 @@ class SmartWebSocketManager:
             now = datetime.datetime.now(ist)
         except Exception:
             import datetime
-            now = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+            now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
 
         # 5 = Saturday, 6 = Sunday
         if now.weekday() >= 5:
@@ -87,7 +88,7 @@ class SmartWebSocketManager:
 
         try:
             import config
-            if not getattr(config, "ENABLE_WEBSOCKET", False):
+            if not getattr(config, "ENABLE_WEBSOCKET", True):
                 log.info("SmartWebSocket is disabled via ENABLE_WEBSOCKET=False config.")
                 return False
         except Exception:
@@ -98,7 +99,7 @@ class SmartWebSocketManager:
             return False
 
         with self._lock:
-            if self._is_running:
+            if self._is_running and self._thread and self._thread.is_alive():
                 return True
 
             try:
@@ -118,6 +119,7 @@ class SmartWebSocketManager:
                 self.sws.on_close = self._on_close
 
                 self._is_running = True
+                self._reconnect_attempts = 0
                 self._thread = threading.Thread(
                     target=self._run_connection,
                     name="AngelOne_WS_Thread",
@@ -133,11 +135,13 @@ class SmartWebSocketManager:
 
     def _run_connection(self) -> None:
         """Worker thread executing sws.connect(). Halts immediately on off-market or repeated disconnects."""
-        reconnect_attempts = 0
+        self._reconnect_attempts = 0
         while self._is_running:
             if not self.is_market_hours():
                 log.info("Market is closed. Halting WebSocket background connection to protect account.")
-                self._is_running = False
+                with self._lock:
+                    self._is_running = False
+                    self._is_connected = False
                 break
 
             try:
@@ -147,24 +151,29 @@ class SmartWebSocketManager:
             except Exception as e:
                 log.warning("WebSocket connect error: %s", e)
 
-            reconnect_attempts += 1
+            # Check if market closed or manager stopped while connect() was blocking
             if not self._is_running or not self.is_market_hours():
-                self._is_running = False
+                with self._lock:
+                    self._is_running = False
+                    self._is_connected = False
                 break
 
-            # If connection was closed twice, STOP completely to protect account
-            if reconnect_attempts >= 2:
-                log.warning("WebSocket disconnected (%d attempts). Stopping background thread to prevent Angel One rate limiting.", reconnect_attempts)
-                self._is_running = False
-                break
-
-            time.sleep(10)
+            self._reconnect_attempts += 1
+            if self._reconnect_attempts >= 5:
+                log.warning("WebSocket disconnected (%d consecutive attempts). Cooling down for 30s before reconnecting...", self._reconnect_attempts)
+                time.sleep(30)
+                self._reconnect_attempts = 0
+            else:
+                backoff = min(5 * self._reconnect_attempts, 20)
+                log.info("Reconnecting WebSocket in %ds (attempt %d)...", backoff, self._reconnect_attempts)
+                time.sleep(backoff)
 
     def _on_open(self, wsapp: Any) -> None:
         """Handle successful connection."""
         log.info("WebSocket connected to Angel One server successfully")
         with self._lock:
             self._is_connected = True
+            self._reconnect_attempts = 0
             # Re-subscribe all active tokens upon connection
             self._resubscribe_all()
 

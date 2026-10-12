@@ -77,7 +77,8 @@ ATR_SL_MULTIPLIER        = 2.5   # SL = entry ∓ (multiplier × ATR)
 MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
 
 # ── SMART WEBSOCKET ──
-ENABLE_WEBSOCKET = False          # Master safety switch: Disabled to prevent any account rate limiting / lockout
+import os
+ENABLE_WEBSOCKET = os.environ.get("ENABLE_WEBSOCKET", "True").lower() in ("true", "1", "yes")  # Enabled for sub-50ms live ticks during market hours
 
 # ── CACHING ──
 CACHE_TTL_SECONDS = 1            # option chain cache TTL

@@ -165,6 +165,9 @@ now_ist = datetime.datetime.now(IST)
 market_open = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
 datetime_str = now_ist.strftime("%d %b %Y | %I:%M %p")
 
+# Check and ensure WebSocket streaming during trading hours
+ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
+
 ticker_items = []
 import json
 for idx in INDEX_CONFIG:
@@ -192,7 +195,6 @@ for idx in INDEX_CONFIG:
     ticker_items.append({"symbol": idx, "spot": spot})
 
 is_connected = any(it.get("spot") is not None for it in ticker_items)
-ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
 
 # ── RENDER HEADER & TICKER ──
 try:

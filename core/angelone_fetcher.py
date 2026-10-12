@@ -98,7 +98,7 @@ class AngelOneDataFetcher:
         """Initialize and start background SmartWebSocketManager for live ticks."""
         try:
             import config
-            if not getattr(config, "ENABLE_WEBSOCKET", False):
+            if not getattr(config, "ENABLE_WEBSOCKET", True):
                 self.ws_status = "DISABLED_BY_CONFIG"
                 self.ws_message = "Disabled via ENABLE_WEBSOCKET=False config (Account protection active)."
                 log.info("SmartWebSocket is disabled via ENABLE_WEBSOCKET=False config.")
@@ -129,6 +129,11 @@ class AngelOneDataFetcher:
                     client_code=self.client_id,
                     feed_token=feed_token,
                 )
+            else:
+                self.ws_mgr.auth_token = jwt_token
+                self.ws_mgr.feed_token = feed_token
+
+            if not self.ws_mgr._is_running or not (self.ws_mgr._thread and self.ws_mgr._thread.is_alive()):
                 if self.ws_mgr.start():
                     self.ws_status = "STREAMING"
                     self.ws_message = "SmartWebSocket running and streaming in background thread."
@@ -181,6 +186,7 @@ class AngelOneDataFetcher:
             log.error(f"Failed to load scrip master: {e}")
 
     def get_ltp(self, exchange, tradingsymbol, token):
+        self.ensure_websocket_running()
         # 1. Check ultra-fast live WebSocket tick cache (< 0.001ms)
         if self.ws_mgr and token:
             ws_ltp = self.ws_mgr.get_live_ltp(str(token))
@@ -213,6 +219,7 @@ class AngelOneDataFetcher:
         return 0.0
 
     def fetch_option_chain(self, idx_name: str) -> Optional[Dict[str, Any]]:
+        self.ensure_websocket_running()
         self.total_fetches += 1
         self.last_fetch_times[idx_name] = datetime.datetime.now(IST)
         now = datetime.datetime.now(IST)
@@ -381,8 +388,36 @@ class AngelOneDataFetcher:
                     return s.get('token'), s.get('symbol')
         return None, None
 
+    def ensure_websocket_running(self) -> bool:
+        """Dynamically ensure WebSocket is streaming during market hours and safely idled off-market."""
+        try:
+            import config
+            if not getattr(config, "ENABLE_WEBSOCKET", True):
+                self.ws_status = "DISABLED_BY_CONFIG"
+                self.ws_message = "Disabled via ENABLE_WEBSOCKET=False config (Account protection active)."
+                return False
+
+            from core.websocket_manager import SmartWebSocketManager
+            is_mkt = SmartWebSocketManager.is_market_hours()
+            if not is_mkt:
+                if self.ws_mgr and self.ws_mgr._is_running:
+                    self.ws_mgr.stop()
+                    self.ws_status = "OFF_MARKET_IDLE"
+                    self.ws_message = "Market is closed (Mon–Fri 09:00–15:35 IST only). Kept idle to prevent lockout."
+                return False
+
+            # Market is open: check if WebSocket needs to be started
+            if self.ws_mgr is None or not self.ws_mgr._is_running or not (self.ws_mgr._thread and self.ws_mgr._thread.is_alive()):
+                self._init_websocket()
+
+            return self.ws_mgr.is_connected() if self.ws_mgr else False
+        except Exception as e:
+            log.debug("ensure_websocket_running exception: %s", e)
+            return False
+
     def is_websocket_connected(self) -> bool:
         """Return True if WebSocket streaming is active."""
+        self.ensure_websocket_running()
         return self.ws_mgr.is_connected() if self.ws_mgr else False
 
     def get_websocket_stats(self) -> Dict[str, Any]:
@@ -434,6 +469,7 @@ class AngelOneDataFetcher:
         import config
         from core.websocket_manager import SmartWebSocketManager
 
+        self.ensure_websocket_running()
         masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else (self.client_id or "DEMO")
         
         ws_conn = self.ws_mgr.is_connected() if self.ws_mgr else False
@@ -445,7 +481,7 @@ class AngelOneDataFetcher:
         if ws_conn:
             ws_state_badge = "LIVE STREAMING"
             ws_color = "#10b981"
-        elif not getattr(config, "ENABLE_WEBSOCKET", False):
+        elif not getattr(config, "ENABLE_WEBSOCKET", True):
             ws_state_badge = "PAUSED (SAFETY LOCK)"
             ws_color = "#94a3b8"
         elif not is_mkt_open:
