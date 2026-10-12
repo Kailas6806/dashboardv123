@@ -242,6 +242,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         )
         sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
+    # ── OPEN TRADES CHECK ──
+    open_exists = any(t.get("Status") == "OPEN" for t in st.session_state.get(tlog_key, []))
+
     # ── PORTFOLIO-WIDE TODAY TRADES ──
     portfolio_today_trades = []
     for _idx in INDEX_CONFIG:
@@ -662,7 +665,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         # Reset last_signal when signal disappears (only if no open trade)
         if (final_signal == "WAIT"
                 and st.session_state[sk(idx, "last_signal")] not in ("WAIT",)):
-            if not open_exists:
+            has_open = any(t.get("Status") == "OPEN" for t in st.session_state.get(tlog_key, []))
+            if not has_open:
                 st.session_state[sk(idx, "last_signal")] = "WAIT"
                 st.session_state[sk(idx, "last_played")] = "WAIT"
 
