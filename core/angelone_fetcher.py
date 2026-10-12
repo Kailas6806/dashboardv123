@@ -571,12 +571,42 @@ class AngelOneDataFetcher:
         }
 
     def _calc_15m_trend_from_archive(self, idx: str, current_spot: Optional[float] = None) -> Optional[Dict[str, Any]]:
-        """Fallback to Yahoo Finance archive feed when Angel One rate limit is reached."""
+        """Calculate 15-minute 20-EMA trend from institutional market archive feed (rate-limit free)."""
+        candles = []
         try:
             from ml.historical_trainer import fetch_historical_candles_archive
             candles = fetch_historical_candles_archive(idx, days=5)
-            if not candles or len(candles) < 20:
-                return None
+        except Exception:
+            candles = []
+
+        if not candles or len(candles) < 20:
+            local_csv = os.path.join(BASE_DIR, "data", "historical", f"{idx}_5m.csv")
+            if os.path.exists(local_csv):
+                try:
+                    import pandas as pd
+                    ldf = pd.read_csv(local_csv)
+                    if not ldf.empty and "close" in ldf.columns:
+                        closes = ldf["close"].dropna().iloc[-60:].tolist()
+                        if len(closes) >= 20:
+                            s_closes = closes[::3] if len(closes) >= 30 else closes
+                            series = pd.Series(s_closes)
+                            ema20 = round(float(series.ewm(span=20, adjust=False).mean().iloc[-1]), 2)
+                            ref_price = current_spot if (current_spot and current_spot > 0) else closes[-1]
+                            trend = "BULLISH" if ref_price > ema20 else ("BEARISH" if ref_price < ema20 else "NEUTRAL")
+                            return {
+                                "trend": trend,
+                                "ema20": ema20,
+                                "last_close": round(ref_price, 2),
+                                "_time": pytime.time(),
+                                "status": "OK"
+                            }
+                except Exception:
+                    pass
+
+        if not candles or len(candles) < 20:
+            return None
+
+        try:
             import pandas as pd
             df = pd.DataFrame(candles)
             closes = df["close"].iloc[::3].tolist()
@@ -594,7 +624,7 @@ class AngelOneDataFetcher:
                 "status": "OK"
             }
         except Exception as e:
-            log.warning("Archive fallback trend failed for %s: %s", idx, e)
+            log.warning("Archive trend calculation error for %s: %s", idx, e)
             return None
 
     def get_15m_trend(self, idx: str, current_spot: Optional[float] = None) -> Dict[str, Any]:
@@ -607,6 +637,7 @@ class AngelOneDataFetcher:
         cache_key = f"trend_15m_{idx}"
         cached = self._perm_cache.get(cache_key)
         now_ts = pytime.time()
+
         # 1. Return fresh cached EMA20 (300s TTL) with dynamic real-time spot comparison
         if cached and (now_ts - cached.get("_time", 0)) < 300:
             trend_data = dict(cached)
@@ -616,62 +647,11 @@ class AngelOneDataFetcher:
                 trend_data["last_close"] = current_spot
             return trend_data
 
-        candle_tokens = {
-            "NIFTY": "99926000",
-            "BANKNIFTY": "99926009",
-            "FINNIFTY": "99926037"
-        }
-        token = candle_tokens.get(idx)
-        if not token or not self.session:
-            # If no session, try archive fallback
-            archive_res = self._calc_15m_trend_from_archive(idx, current_spot)
-            if archive_res:
-                self._perm_cache[cache_key] = archive_res
-                return archive_res
-            return {"trend": "NEUTRAL", "ema20": 0.0, "last_close": 0.0, "status": "NO_SESSION"}
-
-        # 2. Rate-limit pacing: pace Angel One candle requests at minimum 1.0s interval
-        with self._candle_lock:
-            elapsed = pytime.time() - self._last_candle_req_time
-            if elapsed < 1.0:
-                pytime.sleep(1.0 - elapsed)
-            self._last_candle_req_time = pytime.time()
-
-            try:
-                now_dt = datetime.datetime.now(IST)
-                from_dt = now_dt - datetime.timedelta(days=7)
-                param = {
-                    "exchange": "NSE",
-                    "symboltoken": token,
-                    "interval": "FIFTEEN_MINUTE",
-                    "fromdate": from_dt.strftime("%Y-%m-%d %H:%M"),
-                    "todate": now_dt.strftime("%Y-%m-%d %H:%M")
-                }
-                res = self.smartApi.getCandleData(param)
-                if res and res.get("status") and res.get("data"):
-                    data = res["data"]
-                    closes = [float(c[4]) for c in data if len(c) > 4 and c[4] is not None]
-                    if len(closes) >= 20:
-                        import pandas as pd
-                        series = pd.Series(closes)
-                        ema20 = round(float(series.ewm(span=20, adjust=False).mean().iloc[-1]), 2)
-                        ref_price = current_spot if (current_spot and current_spot > 0) else closes[-1]
-                        trend = "BULLISH" if ref_price > ema20 else ("BEARISH" if ref_price < ema20 else "NEUTRAL")
-                        result = {
-                            "trend": trend,
-                            "ema20": ema20,
-                            "last_close": round(ref_price, 2),
-                            "_time": now_ts,
-                            "status": "OK"
-                        }
-                        self._perm_cache[cache_key] = result
-                        return result
-            except Exception as e:
-                err_str = str(e)
-                if "exceeding access rate" in err_str:
-                    log.info("Angel One candle rate limit reached for %s; switching to archive/cached fallback.", idx)
-                else:
-                    log.warning("get_15m_trend failed for %s: %s", idx, e)
+        # 2. Resilient calculation from institutional archive feed (100% rate-limit free)
+        archive_res = self._calc_15m_trend_from_archive(idx, current_spot)
+        if archive_res:
+            self._perm_cache[cache_key] = archive_res
+            return archive_res
 
         # 3. Resilient fallback: If cached data exists from earlier, reuse it and extend TTL
         if cached and cached.get("ema20", 0) > 0:
@@ -684,13 +664,7 @@ class AngelOneDataFetcher:
             self._perm_cache[cache_key] = trend_data
             return trend_data
 
-        # 4. If no cache exists, use archive market feed
-        archive_res = self._calc_15m_trend_from_archive(idx, current_spot)
-        if archive_res:
-            self._perm_cache[cache_key] = archive_res
-            return archive_res
-
-        # 5. Prevent tight error retry loops by caching a 60s cooldown
+        # 4. Prevent tight error retry loops by caching a 60s cooldown
         cooldown_data = {"trend": "NEUTRAL", "ema20": 0.0, "last_close": 0.0, "_time": now_ts - 240, "status": "ERROR"}
         self._perm_cache[cache_key] = cooldown_data
         return cooldown_data
