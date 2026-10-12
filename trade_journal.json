@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "trade_id": "FINNIFTY_20261012_110822",
+    "Entry Time": "11:08:20 AM",
+    "Exit Time": "11:09:25 AM",
+    "Index": "FINNIFTY",
+    "Signal": "BUY PE",
+    "Spot": 24855.2,
+    "Strike": 24850.0,
+    "Entry Price": 318.95,
+    "Live Price": 311.0,
+    "Exit Price": 311.0,
+    "Stop Loss": 311.63,
+    "Target": 333.59,
+    "Qty": 60,
+    "Max Loss ₹": 439.2,
+    "Target P&L ₹": 878.4,
+    "Actual P&L ₹": -477.0,
+    "Status": "CLOSED",
+    "Result": "🔴 LOSS",
+    "Confidence Score": 80,
+    "_ai_generated": false,
+    "_ai_conviction": null,
+    "_ai_reasoning": "",
+    "recorded_at": "2026-10-12T11:08:22.236276+05:30",
+    "date": "2026-10-12",
+    "signal_metadata": {
+      "pcr": 0.94,
+      "vwap": 24909.2,
+      "oi_delta_ce": 360.0,
+      "oi_delta_pe": 60.0,
+      "confidence_score": 80,
+      "pcr_momentum": "FALLING",
+      "ai_generated": true,
+      "ai_reasoning": "Spot below VWAP (24855.15 < 24909.20) + PCR falling (0.94) = +30 points. Spot broke support (24900 broken, trading at 24855.15) with Call OI increasing (+360.0 vs +60.0) = +20 points. Additional bearish momentum from heavy Call writing = +30 points. Total Conviction: 80. Action: BUY PE."
+    }
+  }
+]

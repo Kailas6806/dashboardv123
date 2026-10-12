@@ -3,11 +3,7 @@ pandas>=2.0.0
 numpy
 plotly
 requests
-jugaad-data
-lxml
-brotli
 openai>=1.0.0
-kaleido
 smartapi-python
 pyotp
 logzero
