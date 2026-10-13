@@ -235,6 +235,8 @@ class TradeManager:
         """
         events: List[Dict[str, Any]] = []
         pending_notifications: List[str] = []
+        if now is None:
+            now = datetime.datetime.now(IST)
         now_str = now.strftime("%I:%M:%S %p")
         auto_sq = now.time() >= AUTO_SQUARE_OFF_TIME
 
