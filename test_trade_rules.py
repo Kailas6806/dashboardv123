@@ -213,11 +213,11 @@ class TestTradeRules(unittest.TestCase):
 
     def test_15m_trend_filter(self):
         """
-        Verify that 15m trend confluence blocks counter-trend trades:
-        - Bullish market data + 15m BEARISH -> Blocks BUY CE
-        - Bullish market data + 15m BULLISH -> Generates BUY CE
+        Verify that 15m trend filter does not block counter-trend trades when disabled:
+        - When USE_15M_TREND_FILTER is False, counter-trend trades are allowed.
         """
         from core.signal_engine import SignalEngine
+        import core.signal_engine as se_mod
         engine = SignalEngine()
 
         md_base = {
@@ -233,12 +233,12 @@ class TestTradeRules(unittest.TestCase):
             "oi_active": True,
         }
 
-        # Case 1: 15m Trend is BEARISH -> Counter-trend BUY CE must be blocked
+        # Case 1: Filter disabled -> Counter-trend BUY CE allowed even with BEARISH 15m trend
         md_bearish = dict(md_base)
         md_bearish["trend_15m"] = "BEARISH"
         sig, conf, reason = engine.generate_signal(md_bearish, in_window=True)
-        self.assertEqual(sig, "WAIT")
-        self.assertIn("15m Trend is BEARISH", reason)
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "HIGH")
 
         # Case 2: 15m Trend is BULLISH -> BUY CE allowed
         md_bullish = dict(md_base)

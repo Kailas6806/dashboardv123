@@ -50,7 +50,7 @@ LOG_COLS = [
 # ── SIGNAL QUALITY & FILTERING ──
 SIGNAL_BUFFER_SIZE      = 3       # number of refreshes to buffer
 SIGNAL_CONFIRM_COUNT    = 2       # confirmations needed (2-of-3)
-USE_15M_TREND_FILTER    = True    # Enforce 15m higher timeframe trend confluence (20-EMA)
+USE_15M_TREND_FILTER    = False   # Disabled: counter-trend signals are not blocked by 15m trend
 SIDEWAYS_PCR_LOW        = 0.85    # PCR below this + above high = sideways
 SIDEWAYS_PCR_HIGH      = 1.15
 SIDEWAYS_SPOT_STDEV_PCT = 0.001  # 0.1% stdev threshold for strong sideways
