@@ -500,26 +500,26 @@ def _send_weekly_report_if_friday():
 check_daily_report()
 
 # ── MOBILE SCREEN WAKE LOCK (Keeps screen alive during market hours) ──
-import streamlit.components.v1 as components
-components.html(
-    """
-    <script>
-    let wakeLock = null;
-    async function requestWakeLock() {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (err) {}
+_wake_lock_html = """
+<script>
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
     }
-    requestWakeLock();
-    document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState === 'visible') {
-        await requestWakeLock();
-      }
-    });
-    </script>
-    """,
-    height=0,
-    width=0,
-)
+  } catch (err) {}
+}
+requestWakeLock();
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    await requestWakeLock();
+  }
+});
+</script>
+"""
+if hasattr(st, "iframe"):
+    st.iframe(_wake_lock_html, height=1, width=1)
+else:
+    import streamlit.components.v1 as components
+    components.html(_wake_lock_html, height=0, width=0)
