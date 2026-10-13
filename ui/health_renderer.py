@@ -10,6 +10,23 @@ from config import (
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME
 )
 
+def format_age(ts):
+    """Format timestamp into human-readable elapsed age string."""
+    if not ts:
+        return "Idle"
+    try:
+        elapsed = max(0.0, time.time() - float(ts))
+        if elapsed < 1.0:
+            return "< 1s ago"
+        elif elapsed < 60.0:
+            return f"{int(elapsed)}s ago"
+        elif elapsed < 3600.0:
+            return f"{int(elapsed // 60)}m ago"
+        else:
+            return f"{int(elapsed // 3600)}h ago"
+    except Exception:
+        return "Idle"
+
 def get_recent_trades():
     """Load latest trade entries from the persistent Supabase DB or journal."""
     try:
@@ -211,6 +228,18 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
                     fetcher.login(max_retries=3, retry_delay=2.0, force=True)
                     st.rerun()
 
+    # Quick Telemetry Actions
+    btn_col1, btn_col2 = st.columns([1, 1])
+    with btn_col1:
+        if st.button("🔄 Refresh Telemetry Feed", key="btn_refresh_activity_tab", use_container_width=True):
+            st.rerun()
+    with btn_col2:
+        if st.button("⚡ Force WebSocket Reconnect", key="btn_reconnect_ws_feed", use_container_width=True):
+            if fetcher and hasattr(fetcher, "reconnect_websocket"):
+                with st.spinner("Reconnecting SmartWebSocket..."):
+                    fetcher.reconnect_websocket()
+                    st.rerun()
+
     # Market session calculation
     is_weekday = now_ist.weekday() < 5
     is_mkt_hours = is_weekday and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
@@ -301,6 +330,76 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
     min-width: 60px;
     text-align: center;
 }
+.ws-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.ws-stat-card {
+    background: #090d16;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 10px 14px;
+}
+.ws-stat-label {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+.ws-stat-val {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #f8fafc;
+    font-family: monospace;
+    margin-top: 3px;
+}
+.ws-spot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.ws-spot-card {
+    background: #090d16;
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+}
+.ws-wire-feed {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    background: #090d16;
+}
+.ws-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    font-family: monospace;
+}
+.ws-table th {
+    text-align: left;
+    padding: 8px 10px;
+    color: #94a3b8;
+    background: #0d121f;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-weight: 600;
+    font-size: 0.7rem;
+    position: sticky;
+    top: 0;
+}
+.ws-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: #cbd5e1;
+}
+.ws-table tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}
 @media (max-width: 768px) {
     .dash-card { padding: 0.9rem; }
     .item-row { font-size: 0.8rem; }
@@ -328,6 +427,212 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
 <span style="font-size:0.75rem; color:#10b981; font-weight:normal;">● Dynamic Verification</span>
 </div>
 {api_items}
+</div>"""
+
+    # Section 1.5: WebSocket Real-Time Market Wire & Live Incoming Tick Monitor
+    ws_data = fetcher.get_websocket_stream_data() if (fetcher and hasattr(fetcher, "get_websocket_stream_data")) else {}
+    ws_status = ws_data.get("status", "STOPPED")
+    ws_color = ws_data.get("color", "#64748b")
+    ws_msg = ws_data.get("message", "")
+    total_ticks = ws_data.get("total_ticks", 0)
+    cached_ticks = ws_data.get("cached_ticks_count", 0)
+    sub_total = ws_data.get("subscribed_tokens", 0)
+    sub_cm = ws_data.get("subscribed_cm", 0)
+    sub_fo = ws_data.get("subscribed_fo", 0)
+    last_ts = ws_data.get("last_tick_time")
+    last_tick_age = format_age(last_ts)
+    last_tick_clock = datetime.datetime.fromtimestamp(last_ts, tz=IST).strftime("%H:%M:%S") if last_ts else "No Ticks"
+
+    # Spot indices cards
+    spot_cards_html = ""
+    for idx_name in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
+        spot_info = ws_data.get("spot_indices", {}).get(idx_name, {})
+        ltp = spot_info.get("ltp", 0.0)
+        tok = spot_info.get("token", "")
+        sym = spot_info.get("symbol", idx_name)
+        oi = spot_info.get("oi", 0)
+        vol = spot_info.get("vol", 0)
+        up_ts = spot_info.get("updated_at")
+        is_live = spot_info.get("is_live", False)
+
+        ltp_str = f"₹{ltp:,.2f}" if ltp > 0 else "Waiting for tick..."
+        ltp_color = "#10b981" if ltp > 0 else "#94a3b8"
+        dot = "🟢" if is_live else "⚪"
+        age_str = format_age(up_ts)
+
+        oi_vol_str = ""
+        if oi > 0 or vol > 0:
+            oi_vol_str = f"""<div style="font-size:0.72rem; color:#64748b; margin-top:3px; display:flex; justify-content:space-between;">
+                <span>OI: {oi:,}</span>
+                <span>Vol: {vol:,}</span>
+            </div>"""
+
+        spot_cards_html += f"""<div class="ws-spot-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <b style="font-size:0.88rem; color:#ffffff;">{dot} {idx_name}</b>
+                <span class="pill" style="font-size:0.68rem; background:rgba(56,189,248,0.12); color:#38bdf8; border-color:rgba(56,189,248,0.25);">Token #{tok}</span>
+            </div>
+            <div style="font-size:1.25rem; font-weight:800; color:{ltp_color}; font-family:monospace; margin-bottom:3px;">
+                {ltp_str}
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:#94a3b8;">
+                <span>{sym}</span>
+                <span>{age_str}</span>
+            </div>
+            {oi_vol_str}
+        </div>"""
+
+    # Subscribed option contracts
+    opt_contracts = ws_data.get("option_contracts", [])
+    if opt_contracts:
+        opt_rows = ""
+        for opt in opt_contracts[:10]:
+            o_sym = opt.get("symbol", "")
+            o_tok = opt.get("token", "")
+            o_ltp = opt.get("ltp", 0.0)
+            o_oi = opt.get("oi", 0)
+            o_vol = opt.get("vol", 0)
+            o_ts = opt.get("updated_at")
+            o_age = format_age(o_ts)
+            ltp_disp = f"₹{o_ltp:,.2f}" if o_ltp > 0 else "—"
+            opt_rows += f"""<tr>
+                <td><b style="color:#ffffff;">{o_sym}</b></td>
+                <td><span style="color:#38bdf8;">#{o_tok}</span></td>
+                <td style="text-align:right; font-weight:700; color:#10b981;">{ltp_disp}</td>
+                <td style="text-align:right; color:#cbd5e1;">{f'{o_oi:,}' if o_oi > 0 else '—'}</td>
+                <td style="text-align:right; color:#cbd5e1;">{f'{o_vol:,}' if o_vol > 0 else '—'}</td>
+                <td style="text-align:right; color:#94a3b8;">{o_age}</td>
+            </tr>"""
+        opt_section_html = f"""<div style="margin-top:14px; margin-bottom:6px; font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">
+            📋 Subscribed Option Contracts (NSE_FO)
+        </div>
+        <div class="ws-wire-feed" style="max-height:160px;">
+            <table class="ws-table">
+                <thead>
+                    <tr>
+                        <th>OPTION CONTRACT</th>
+                        <th>TOKEN</th>
+                        <th style="text-align:right;">LTP (₹)</th>
+                        <th style="text-align:right;">OPEN INTEREST</th>
+                        <th style="text-align:right;">VOLUME</th>
+                        <th style="text-align:right;">LAST TICK</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {opt_rows}
+                </tbody>
+            </table>
+        </div>"""
+    else:
+        opt_section_html = """<div class="item-box" style="margin-top:10px; color:#94a3b8; font-size:0.8rem; display:flex; align-items:center; gap:8px;">
+            <span>ℹ️</span>
+            <span><b>Option Contracts Streaming:</b> Spot index tokens stream continuously. Strike option contracts auto-subscribe in real time when trades execute or option chains are scanned.</span>
+        </div>"""
+
+    # Live recent ticks wire
+    recent = ws_data.get("recent_ticks", [])
+    if recent:
+        wire_rows = ""
+        for r in recent[:20]:
+            r_ts = r.get("timestamp")
+            t_str = datetime.datetime.fromtimestamp(r_ts, tz=IST).strftime("%H:%M:%S.%f")[:-3] if r_ts else "—"
+            r_tok = r.get("token", "")
+            r_sym = r.get("symbol", "")
+            r_exch = r.get("exchange", "NSE_CM")
+            r_ltp = r.get("ltp", 0.0)
+            r_oi = r.get("oi", 0)
+            r_vol = r.get("vol", 0)
+            r_age = format_age(r_ts)
+            ltp_disp = f"₹{r_ltp:,.2f}" if r_ltp > 0 else "—"
+            exch_color = "#38bdf8" if r_exch == "NSE_CM" else "#a855f7"
+
+            wire_rows += f"""<tr>
+                <td><span style="color:#94a3b8; font-family:monospace;">{t_str}</span></td>
+                <td><b style="color:#ffffff;">{r_sym}</b></td>
+                <td><span style="color:#94a3b8;">#{r_tok}</span></td>
+                <td><span class="pill" style="font-size:0.65rem; color:{exch_color}; border-color:{exch_color}33; background:{exch_color}14;">{r_exch}</span></td>
+                <td style="text-align:right; font-weight:700; color:#10b981;">{ltp_disp}</td>
+                <td style="text-align:right; color:#cbd5e1;">{f'{r_oi:,}' if r_oi > 0 else '—'}</td>
+                <td style="text-align:right; color:#cbd5e1;">{f'{r_vol:,}' if r_vol > 0 else '—'}</td>
+                <td style="text-align:right; color:#94a3b8;">{r_age}</td>
+            </tr>"""
+        wire_section_html = f"""<div style="margin-top:14px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">
+                📡 Live Wire: Incoming Binary Ticks Stream
+            </span>
+            <span style="font-size:0.72rem; color:#10b981; font-family:monospace;">● {len(recent)} events captured</span>
+        </div>
+        <div class="ws-wire-feed">
+            <table class="ws-table">
+                <thead>
+                    <tr>
+                        <th>TIME (IST)</th>
+                        <th>INSTRUMENT</th>
+                        <th>TOKEN</th>
+                        <th>SEGMENT</th>
+                        <th style="text-align:right;">LTP (₹)</th>
+                        <th style="text-align:right;">OPEN INTEREST</th>
+                        <th style="text-align:right;">VOLUME</th>
+                        <th style="text-align:right;">LATENCY / AGE</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {wire_rows}
+                </tbody>
+            </table>
+        </div>"""
+    else:
+        msg_note = ws_msg or "Sub-50ms binary ticks will populate here dynamically as data arrives from Angel One SmartWebSocket."
+        wire_section_html = f"""<div style="margin-top:14px; margin-bottom:6px; font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">
+            📡 Live Wire: Incoming Binary Ticks Stream
+        </div>
+        <div class="item-box" style="text-align:center; padding:1.2rem; color:#94a3b8;">
+            <div style="font-size:0.95rem; font-weight:600; color:#cbd5e1; margin-bottom:4px;">
+                ⚪ Waiting for live incoming ticks...
+            </div>
+            <div style="font-size:0.8rem; color:#64748b;">
+                {msg_note}
+            </div>
+        </div>"""
+
+    sec_ws_html = f"""<div class="dash-card" style="border-color: rgba(56, 189, 248, 0.25);">
+<div class="dash-title">
+<span>⚡ Angel One SmartWebSocket 2.0 Live Feed Monitor</span>
+<span class="pill" style="color:{ws_color}; border-color:{ws_color}; background:{ws_color}18;">● {ws_status}</span>
+</div>
+<div class="ws-grid">
+    <div class="ws-stat-card">
+        <div class="ws-stat-label">Feed Engine</div>
+        <div class="ws-stat-val" style="color:{ws_color}; font-size:1.0rem;">{ws_status}</div>
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:3px;">SmartWebSocketV2 (sub-50ms)</div>
+    </div>
+    <div class="ws-stat-card">
+        <div class="ws-stat-label">Total Ticks Streamed</div>
+        <div class="ws-stat-val" style="color:#38bdf8;">{total_ticks:,}</div>
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:3px;">Cached in RAM: {cached_ticks}</div>
+    </div>
+    <div class="ws-stat-card">
+        <div class="ws-stat-label">Subscribed Tokens</div>
+        <div class="ws-stat-val" style="color:#a855f7;">{sub_total} Tokens</div>
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:3px;">{sub_cm} Spot + {sub_fo} Options</div>
+    </div>
+    <div class="ws-stat-card">
+        <div class="ws-stat-label">Last Incoming Tick</div>
+        <div class="ws-stat-val" style="color:{'#10b981' if last_ts else '#94a3b8'};">{last_tick_age}</div>
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:3px;">Clock: {last_tick_clock}</div>
+    </div>
+</div>
+
+<div style="margin-top:14px; margin-bottom:8px; font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.5px;">
+🎯 Spot Indices Streaming Tickers (NSE_CM)
+</div>
+<div class="ws-spot-grid">
+{spot_cards_html}
+</div>
+
+{opt_section_html}
+
+{wire_section_html}
 </div>"""
 
     # Section 2: Background Automation Telemetry (What is running in background)
@@ -427,6 +732,6 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
 </div>"""
 
     # Render clean HTML without markdown code-block triggers
-    full_html = css + "\n" + sec1_html + "\n" + sec2_html + "\n" + sec3_html + "\n" + sec4_html
+    full_html = css + "\n" + sec1_html + "\n" + sec_ws_html + "\n" + sec2_html + "\n" + sec3_html + "\n" + sec4_html
     clean_html = "\n".join([line.strip() for line in full_html.splitlines() if line.strip()])
     st.markdown(clean_html, unsafe_allow_html=True)

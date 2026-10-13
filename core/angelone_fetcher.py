@@ -52,6 +52,7 @@ class AngelOneDataFetcher:
         self.scrip_source = "NONE"
         self.scrip_count = 0
         self.scrip_load_time = None
+        self._token_symbol_map = {}
         self.total_fetches = 0
         self.total_errors = 0
         self.consecutive_failures = 0
@@ -182,6 +183,21 @@ class AngelOneDataFetcher:
             self.ws_message = f"WebSocket initialization error: {e}"
             log.warning("WebSocket initialization error: %s", e)
 
+    def _build_token_symbol_map(self):
+        """Construct high-speed in-memory token to symbol lookup dict."""
+        try:
+            if not self.scrip_master:
+                return
+            mapping = {}
+            for item in self.scrip_master:
+                t = str(item.get("token", "")).strip()
+                sym = item.get("symbol") or item.get("tradingsymbol") or item.get("name")
+                if t and sym:
+                    mapping[t] = str(sym)
+            self._token_symbol_map = mapping
+        except Exception as e:
+            log.debug("Error building token symbol map: %s", e)
+
     def _load_scrip_master(self):
         cache_file = os.path.join(BASE_DIR, "scrip_master_cache.json")
         if os.path.exists(cache_file):
@@ -194,6 +210,7 @@ class AngelOneDataFetcher:
                     self.scrip_load_status = "LOADED"
                     self.scrip_source = "DISK_CACHE"
                     self.scrip_load_time = datetime.datetime.fromtimestamp(mtime, tz=IST)
+                    self._build_token_symbol_map()
                     log.info(f"Loaded {self.scrip_count} scrips from local disk cache in <0.05s.")
                     return
             except Exception as e:
@@ -207,6 +224,7 @@ class AngelOneDataFetcher:
             self.scrip_load_status = "LOADED"
             self.scrip_source = "REMOTE_DOWNLOAD"
             self.scrip_load_time = datetime.datetime.now(IST)
+            self._build_token_symbol_map()
             log.info(f"Loaded {self.scrip_count} scrips from remote.")
             try:
                 with open(cache_file, "w", encoding="utf-8") as f:
@@ -459,9 +477,121 @@ class AngelOneDataFetcher:
         self.ensure_websocket_running()
         return self.ws_mgr.is_connected() if self.ws_mgr else False
 
+    def reconnect_websocket(self) -> bool:
+        """Force restart the SmartWebSocketManager connection."""
+        if self.ws_mgr:
+            self.ws_mgr.stop()
+        return self.ensure_websocket_running()
+
+    def get_symbol_for_token(self, token: str) -> str:
+        """Resolve token to human-readable symbol name."""
+        s_tok = str(token).strip()
+        for idx_name, idx_info in self.index_tokens.items():
+            if str(idx_info.get("token")) == s_tok:
+                return f"{idx_name} SPOT"
+        if not hasattr(self, "_token_symbol_map") or not self._token_symbol_map:
+            self._build_token_symbol_map()
+        sym = self._token_symbol_map.get(s_tok)
+        if sym:
+            return sym
+        return f"Token #{s_tok}"
+
     def get_websocket_stats(self) -> Dict[str, Any]:
         """Return diagnostic WebSocket streaming statistics."""
         return self.ws_mgr.get_stats() if self.ws_mgr else {"connected": False, "running": False}
+
+    def get_websocket_stream_data(self) -> Dict[str, Any]:
+        """Return enriched WebSocket live feed snapshot for UI display."""
+        diag = self.get_diagnostics()
+        ws_diag = diag.get("websocket", {})
+
+        if not self.ws_mgr:
+            return {
+                "status": ws_diag.get("status", "STOPPED"),
+                "color": ws_diag.get("color", "#64748b"),
+                "message": ws_diag.get("message", "WebSocket not initialized"),
+                "connected": False,
+                "running": False,
+                "total_ticks": 0,
+                "cached_ticks_count": 0,
+                "subscribed_tokens": 0,
+                "subscribed_cm": 0,
+                "subscribed_fo": 0,
+                "last_tick_time": None,
+                "spot_indices": {},
+                "option_contracts": [],
+                "recent_ticks": [],
+            }
+
+        stats = self.ws_mgr.get_stats()
+        all_ticks = self.ws_mgr.get_all_ticks()
+        recent = self.ws_mgr.get_recent_ticks_stream(limit=30)
+        subs = self.ws_mgr.get_subscriptions()
+
+        # 1. Spot Indices
+        spot_indices = {}
+        for idx_name, idx_data in self.index_tokens.items():
+            tok = str(idx_data["token"])
+            tick = all_ticks.get(tok)
+            spot_indices[idx_name] = {
+                "token": tok,
+                "symbol": idx_data.get("symbol", idx_name),
+                "ltp": tick.get("ltp", 0.0) if tick else 0.0,
+                "oi": tick.get("oi", 0) if tick else 0,
+                "vol": tick.get("vol", 0) if tick else 0,
+                "updated_at": tick.get("updated_at") if tick else None,
+                "is_live": bool(tick and tick.get("ltp", 0.0) > 0),
+            }
+
+        # 2. Subscribed Option Contracts (Exchange type 2)
+        fo_tokens = subs.get(2, set())
+        option_contracts = []
+        for tok in fo_tokens:
+            tok_str = str(tok)
+            tick = all_ticks.get(tok_str, {})
+            sym = self.get_symbol_for_token(tok_str)
+            option_contracts.append({
+                "token": tok_str,
+                "symbol": sym,
+                "ltp": tick.get("ltp", 0.0) if tick else 0.0,
+                "oi": tick.get("oi", 0) if tick else 0,
+                "vol": tick.get("vol", 0) if tick else 0,
+                "updated_at": tick.get("updated_at") if tick else None,
+            })
+        option_contracts.sort(key=lambda x: x.get("updated_at") or 0, reverse=True)
+
+        # 3. Enrich recent incoming ticks wire
+        enriched_recent = []
+        for r in recent:
+            tok_str = str(r.get("token", ""))
+            exch_type = r.get("exchange_type", 1)
+            exch_name = "NSE_CM" if exch_type == 1 else "NSE_FO"
+            enriched_recent.append({
+                "token": tok_str,
+                "symbol": self.get_symbol_for_token(tok_str),
+                "exchange": exch_name,
+                "ltp": r.get("ltp", 0.0),
+                "oi": r.get("oi", 0),
+                "vol": r.get("vol", 0),
+                "timestamp": r.get("timestamp"),
+            })
+
+        return {
+            "status": ws_diag.get("status", "STOPPED"),
+            "color": ws_diag.get("color", "#64748b"),
+            "message": ws_diag.get("message", ""),
+            "connected": stats.get("connected", False),
+            "running": stats.get("running", False),
+            "total_ticks": stats.get("total_ticks_received", 0),
+            "cached_ticks_count": stats.get("cached_ticks_count", 0),
+            "subscribed_tokens": stats.get("subscribed_cm", 0) + stats.get("subscribed_fo", 0),
+            "subscribed_cm": stats.get("subscribed_cm", 0),
+            "subscribed_fo": stats.get("subscribed_fo", 0),
+            "last_tick_time": stats.get("last_tick_time"),
+            "spot_indices": spot_indices,
+            "option_contracts": option_contracts,
+            "recent_ticks": enriched_recent,
+        }
 
     def get_strike_price(self, idx_name: str, strike: float, signal: str):
         data = self.fetch_option_chain(idx_name)

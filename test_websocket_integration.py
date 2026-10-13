@@ -147,6 +147,40 @@ class TestWebSocketIntegration(unittest.TestCase):
             self.assertEqual(ce_entry["openInterest"], 1500)
             print("Cached chain live WebSocket tick overlay verified successfully!")
 
+    def test_websocket_stream_data_and_symbols(self):
+        """Test symbol resolution, telemetry stream getters, and health dashboard renderer."""
+        fetcher = AngelOneDataFetcher()
+        self.assertEqual(fetcher.get_symbol_for_token("26000"), "NIFTY SPOT")
+        self.assertEqual(fetcher.get_symbol_for_token("26009"), "BANKNIFTY SPOT")
+        self.assertEqual(fetcher.get_symbol_for_token("26037"), "FINNIFTY SPOT")
+
+        # Simulate WS ticks
+        if fetcher.ws_mgr:
+            raw_tick = {
+                "token": "26000",
+                "last_traded_price": 2251050,  # 22510.50
+                "open_interest": 500000,
+                "volume_trade_for_the_day": 12000,
+                "exchange_type": 1,
+            }
+            fetcher.ws_mgr._on_data(None, raw_tick)
+
+            recent = fetcher.ws_mgr.get_recent_ticks_stream(10)
+            self.assertTrue(len(recent) >= 1)
+            self.assertEqual(recent[0]["token"], "26000")
+            self.assertEqual(recent[0]["ltp"], 22510.50)
+
+        # Verify get_websocket_stream_data
+        ws_data = fetcher.get_websocket_stream_data()
+        self.assertIn("spot_indices", ws_data)
+        self.assertIn("NIFTY", ws_data["spot_indices"])
+        self.assertIn("BANKNIFTY", ws_data["spot_indices"])
+        self.assertIn("FINNIFTY", ws_data["spot_indices"])
+        self.assertIn("recent_ticks", ws_data)
+        self.assertIn("option_contracts", ws_data)
+        print("WebSocket stream data telemetry test passed successfully!")
+
 if __name__ == "__main__":
     unittest.main()
+
 

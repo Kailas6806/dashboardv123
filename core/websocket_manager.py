@@ -60,6 +60,11 @@ class SmartWebSocketManager:
         self._pending_subscriptions: Dict[int, Set[str]] = {1: set(), 2: set()}
         self._reconnect_attempts: int = 0
 
+        # Live telemetry tracking
+        self._recent_ticks: List[Dict[str, Any]] = []
+        self._last_tick_time: Optional[float] = None
+        self._total_ticks_received: int = 0
+
     @staticmethod
     def is_market_hours() -> bool:
         """Return True only on weekdays between 09:00 and 15:35 IST."""
@@ -194,15 +199,31 @@ class SmartWebSocketManager:
             oi = int(raw_oi) if raw_oi is not None else 0
             vol = int(raw_vol) if raw_vol is not None else 0
 
+            now_ts = time.time()
             with self._lock:
+                self._last_tick_time = now_ts
+                self._total_ticks_received += 1
                 existing = self._ticks.get(token, {})
-                self._ticks[token] = {
+                tick_entry = {
+                    "token": token,
                     "ltp": ltp if ltp > 0 else existing.get("ltp", 0.0),
                     "oi": oi if oi > 0 else existing.get("oi", 0),
                     "vol": vol if vol > 0 else existing.get("vol", 0),
                     "exchange_type": exch_type,
-                    "updated_at": time.time(),
+                    "updated_at": now_ts,
                 }
+                self._ticks[token] = tick_entry
+
+                self._recent_ticks.insert(0, {
+                    "token": token,
+                    "ltp": ltp if ltp > 0 else existing.get("ltp", 0.0),
+                    "oi": oi if oi > 0 else existing.get("oi", 0),
+                    "vol": vol if vol > 0 else existing.get("vol", 0),
+                    "exchange_type": exch_type,
+                    "timestamp": now_ts,
+                })
+                if len(self._recent_ticks) > 50:
+                    self._recent_ticks = self._recent_ticks[:50]
         except Exception as e:
             log.debug("Error parsing live tick: %s", e)
 
@@ -330,9 +351,26 @@ class SmartWebSocketManager:
                 "connected": self._is_connected,
                 "running": self._is_running,
                 "cached_ticks_count": len(self._ticks),
+                "total_ticks_received": self._total_ticks_received,
+                "last_tick_time": self._last_tick_time,
                 "subscribed_cm": len(self._subscriptions.get(1, set())),
                 "subscribed_fo": len(self._subscriptions.get(2, set())),
             }
+
+    def get_all_ticks(self) -> Dict[str, Dict[str, Any]]:
+        """Return a snapshot copy of all current live ticks in memory."""
+        with self._lock:
+            return {tok: dict(data) for tok, data in self._ticks.items()}
+
+    def get_recent_ticks_stream(self, limit: int = 25) -> List[Dict[str, Any]]:
+        """Return the most recent incoming live ticks stream."""
+        with self._lock:
+            return [dict(t) for t in self._recent_ticks[:limit]]
+
+    def get_subscriptions(self) -> Dict[int, Set[str]]:
+        """Return subscribed tokens by exchange."""
+        with self._lock:
+            return {exch: set(tokens) for exch, tokens in self._subscriptions.items()}
 
     def stop(self) -> None:
         """Gracefully close the WebSocket connection."""
