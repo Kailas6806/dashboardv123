@@ -239,6 +239,7 @@ tab_options = [
     "🧠 XGBOOST ML",
     "🤖 AI COPILOT",
     "🦾 AUTONOMOUS AI",
+    "🎯 SIGNAL AUDIT",
     "TRADE HISTORY",
     "ANALYTICS",
     "⚡ ACTIVITY",
@@ -335,6 +336,9 @@ elif "AI COPILOT" in selected_tab:
     show_ai()
 elif "AUTONOMOUS AI" in selected_tab:
     show_autonomous()
+elif "SIGNAL AUDIT" in selected_tab:
+    from ui.audit_renderer import render_audit_tab
+    render_audit_tab(bg_engine, fetcher, copilot)
 elif selected_tab == "TRADE HISTORY":
     render_trade_history_tab(journal)
 elif selected_tab == "ANALYTICS":

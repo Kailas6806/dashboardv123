@@ -101,20 +101,19 @@ class SignalEngine:
         atm_actual = int(df.loc[df["dist"].idxmin(), "Strike"])
         atm_row = df[df["Strike"] == atm_actual].iloc[0]
 
-        # ── OI Delta (compare with previous snapshot / baseline) ──
-        updated_oi_baseline = oi_baseline
-        if prev_df is not None:
-            m = pd.merge(df, prev_df, on="Strike", how="left", suffixes=("", "_p"))
-            df["CE OI Δ"] = (m["CE OI"] - m["CE OI_p"]).fillna(0)
-            df["PE OI Δ"] = (m["PE OI"] - m["PE OI_p"]).fillna(0)
-        elif oi_baseline is not None:
-            m = pd.merge(df, oi_baseline, on="Strike", how="left", suffixes=("", "_b"))
+        # ── OI Delta (compare with session baseline or previous snapshot) ──
+        # Session baseline represents cumulative intraday buildup from market open.
+        # Fall back to previous snapshot if baseline is not established yet.
+        updated_oi_baseline = oi_baseline if (oi_baseline is not None and not oi_baseline.empty) else df[["Strike", "CE OI", "PE OI"]].copy()
+        baseline_to_use = oi_baseline if (oi_baseline is not None and not oi_baseline.empty) else prev_df
+
+        if baseline_to_use is not None and not baseline_to_use.empty:
+            m = pd.merge(df, baseline_to_use, on="Strike", how="left", suffixes=("", "_b"))
             df["CE OI Δ"] = (m["CE OI"] - m["CE OI_b"]).fillna(0)
             df["PE OI Δ"] = (m["PE OI"] - m["PE OI_b"]).fillna(0)
         else:
             df["CE OI Δ"] = 0
             df["PE OI Δ"] = 0
-            updated_oi_baseline = df[["Strike", "CE OI", "PE OI"]].copy()
 
         updated_prev_df = df[["Strike", "CE OI", "PE OI"]].copy()
 
@@ -211,6 +210,8 @@ class SignalEngine:
             "idx": idx,
             "atm_actual": atm_actual,
             "atm_row": atm_row,
+            "tot_ce": tot_ce,
+            "tot_pe": tot_pe,
             "pcr": pcr,
             "bias": bias,
             "support": support,

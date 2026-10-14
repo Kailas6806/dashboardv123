@@ -64,6 +64,13 @@ class BackgroundTradingEngine:
         self.ai_auto_trade = AI_AUTO_TRADE_DEFAULT
         self.min_confidence_score = 15  # Rule engine score minimum
 
+        # Signal audit & rejection log
+        self._audit_history: List[Dict[str, Any]] = []
+        self._audit_file = os.path.join(LOG_DIR, "signal_audit.jsonl")
+        self._last_audit_times: Dict[str, float] = {idx: 0.0 for idx in INDEX_CONFIG}
+        self._last_audit_signals: Dict[str, str] = {idx: "" for idx in INDEX_CONFIG}
+        self._load_initial_audit_log()
+
         # Stats
         self.total_scans = 0
         self.last_scan_timestamp = None
@@ -93,6 +100,136 @@ class BackgroundTradingEngine:
                 except Exception as e:
                     logger.warning(f"Error loading initial trades for {idx}: {e}")
                     self._trade_logs[idx] = []
+
+    def _load_initial_audit_log(self) -> None:
+        """Load recent audit records from disk on startup."""
+        if not os.path.exists(self._audit_file):
+            return
+        try:
+            import json
+            entries = []
+            with open(self._audit_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except Exception:
+                            continue
+            with self._lock:
+                self._audit_history = entries[-500:]
+        except Exception as e:
+            logger.warning(f"Error loading signal audit log: {e}")
+
+    def _log_audit_event(
+        self,
+        idx: str,
+        spot: float,
+        md: Dict[str, Any],
+        raw_signal: str,
+        final_signal: str,
+        final_conf: str,
+        conf_score: int,
+        ai_score: Optional[int],
+        ai_rec: str,
+        ai_reasoning: str,
+        status: str,
+        rejection_code: str,
+        rejection_detail: str,
+        now_ist: datetime.datetime,
+        force_log: bool = False,
+    ) -> None:
+        """Record an evaluated signal and rejection/execution details."""
+        import json
+        import time as _time
+        now_ts = _time.time()
+        last_t = self._last_audit_times.get(idx, 0.0)
+        last_sig = self._last_audit_signals.get(idx, "")
+
+        # Throttle: Log if signal changed, if executed, or if > 60s has elapsed
+        if not force_log and status != "EXECUTED":
+            if final_signal == last_sig and (now_ts - last_t) < 60.0:
+                return
+
+        self._last_audit_times[idx] = now_ts
+        self._last_audit_signals[idx] = final_signal
+
+        entry = {
+            "timestamp": now_ist.strftime("%Y-%m-%d %I:%M:%S %p"),
+            "time_str": now_ist.strftime("%I:%M:%S %p"),
+            "idx": idx,
+            "spot": round(float(spot), 2),
+            "atm": int(md.get("atm_actual", 0)),
+            "pcr": round(float(md.get("pcr", 1.0)), 2),
+            "pcr_mom": md.get("pcr_momentum", "FLAT"),
+            "spot_vs_vwap": md.get("spot_vs_vwap", ""),
+            "vwap": round(float(md.get("vwap_proxy", spot)), 2),
+            "support": int(md.get("support", 0)),
+            "resistance": int(md.get("resistance", 0)),
+            "ce_delta": int(md.get("total_ce_delta", 0)),
+            "pe_delta": int(md.get("total_pe_delta", 0)),
+            "tot_ce": int(md.get("tot_ce", 0)),
+            "tot_pe": int(md.get("tot_pe", 0)),
+            "raw_signal": raw_signal,
+            "final_signal": final_signal,
+            "final_conf": final_conf,
+            "rule_score": int(conf_score),
+            "ai_conviction": int(ai_score) if ai_score is not None else None,
+            "ai_rec": ai_rec,
+            "status": status,  # "EXECUTED" | "REJECTED" | "NEUTRAL_WAIT"
+            "rejection_code": rejection_code,
+            "rejection_detail": rejection_detail,
+            "ai_reasoning": ai_reasoning,
+        }
+
+        with self._lock:
+            self._audit_history.append(entry)
+            if len(self._audit_history) > 1000:
+                self._audit_history = self._audit_history[-1000:]
+
+        try:
+            os.makedirs(os.path.dirname(self._audit_file), exist_ok=True)
+            with open(self._audit_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            logger.warning(f"Error persisting signal audit entry: {e}")
+
+    def get_audit_log(
+        self,
+        limit: int = 100,
+        idx: Optional[str] = None,
+        filter_status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return thread-safe slice of audit log filtered by index or status."""
+        with self._lock:
+            records = list(self._audit_history)
+        if idx and idx != "ALL":
+            records = [r for r in records if r.get("idx") == idx]
+        if filter_status and filter_status != "ALL":
+            records = [r for r in records if r.get("status") == filter_status or r.get("rejection_code") == filter_status]
+        return records[-limit:][::-1]  # Most recent first
+
+    def get_audit_stats(self) -> Dict[str, Any]:
+        """Return summary statistics across the audit history."""
+        with self._lock:
+            records = list(self._audit_history)
+        total = len(records)
+        executed = sum(1 for r in records if r.get("status") == "EXECUTED")
+        rejected = sum(1 for r in records if r.get("status") == "REJECTED")
+        neutral = sum(1 for r in records if r.get("status") == "NEUTRAL_WAIT")
+
+        reasons: Dict[str, int] = {}
+        for r in records:
+            rc = r.get("rejection_code")
+            if rc and rc not in ("NONE", "NO_SETUP"):
+                reasons[rc] = reasons.get(rc, 0) + 1
+        return {
+            "total_setups": total,
+            "executed": executed,
+            "rejected": rejected,
+            "neutral_wait": neutral,
+            "rejection_breakdown": reasons,
+        }
 
     def start(self) -> bool:
         """Start background scanner loop in a daemon thread."""
@@ -393,6 +530,7 @@ class BackgroundTradingEngine:
             if can_enter and final_signal != last_sig:
                 ai_conviction_ok = True
                 ai_pre_score = conf_score
+                ai_pre_rec = "BUY"
                 ai_pre_summary = "Rule Engine Autonomous Signal"
 
                 # AI Pre-Trade Validation
@@ -483,10 +621,97 @@ class BackgroundTradingEngine:
                         f"[{idx}] AUTONOMOUS TRADE ENTERED: {final_signal} @ Strike {md['atm_actual']} | "
                         f"EP={ep} SL={sl_p} Tgt={tgt_p} Qty={qty} Score={ai_pre_score}"
                     )
+                    # Audit record: EXECUTED
+                    self._log_audit_event(
+                        idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                        final_conf=final_conf, conf_score=conf_score, ai_score=ai_pre_score,
+                        ai_rec=ai_pre_rec, ai_reasoning=ai_pre_summary, status="EXECUTED",
+                        rejection_code="NONE",
+                        rejection_detail=f"Executed {final_signal} at ₹{ep:.2f} (Rule: {conf_score}/100, AI: {ai_pre_score}/100)",
+                        now_ist=now_ist, force_log=True
+                    )
                 else:
                     with self._lock:
                         self._last_signals[idx] = final_signal
+                    # Audit record: REJECTED by AI
+                    rej_code = "AI_CONVICTION_LOW" if ai_pre_score < AI_MIN_CONVICTION else "AI_REC_NOT_BUY"
+                    rej_det = f"AI Conviction {ai_pre_score}/100 is below {AI_MIN_CONVICTION} target (Rec: {ai_pre_rec})."
+                    self._log_audit_event(
+                        idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                        final_conf=final_conf, conf_score=conf_score, ai_score=ai_pre_score,
+                        ai_rec=ai_pre_rec, ai_reasoning=ai_pre_summary, status="REJECTED",
+                        rejection_code=rej_code, rejection_detail=rej_det,
+                        now_ist=now_ist, force_log=True
+                    )
+            elif not can_enter:
+                # Audit record: REJECTED by Risk Guard
+                if open_exists:
+                    rej_code = "POSITION_ALREADY_OPEN"
+                    rej_det = f"Open trade already active on {idx}. Multiple positions blocked."
+                elif too_late:
+                    rej_code = "TIME_CUTOFF"
+                    rej_det = f"Time {now_ist.strftime('%I:%M %p')} is past {NO_NEW_TRADE_TIME.strftime('%I:%M %p')} cutoff."
+                elif price_too_low:
+                    rej_code = "PREMIUM_TOO_LOW"
+                    rej_det = f"Option premium ₹{ep:.2f} is below ₹{MIN_ENTRY_PRICE} minimum."
+                elif not trade_allowed:
+                    rej_code = "COOLDOWN_ACTIVE"
+                    rej_det = f"Cooldown active after recent stop loss ({cooldown_info[1]})."
+                elif not daily_allowed:
+                    rej_code = "DAILY_LIMIT_REACHED"
+                    rej_det = f"Daily portfolio limits reached ({daily_limits[1]})."
+                elif daily_trades_exceeded:
+                    rej_code = "MAX_DAILY_TRADES"
+                    rej_det = f"Maximum daily trades ({MAX_DAILY_TRADES}) reached for today."
+                elif oi_unusual:
+                    rej_code = "UNUSUAL_OI_SPIKE"
+                    rej_det = "Single strike holds >30% of total OI delta."
+                elif conf_score < self.min_confidence_score:
+                    rej_code = "RULE_SCORE_LOW"
+                    rej_det = f"Confidence score {conf_score}/100 is below minimum {self.min_confidence_score}."
+                elif not can_afford:
+                    rej_code = "INSUFFICIENT_MARGIN"
+                    rej_det = "Available account margin is insufficient for 1 lot."
+                else:
+                    rej_code = "GUARD_BLOCKED"
+                    rej_det = "Pre-trade risk guard blocked entry."
+
+                self._log_audit_event(
+                    idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                    final_conf=final_conf, conf_score=conf_score, ai_score=None,
+                    ai_rec="BLOCKED_BY_GUARD", ai_reasoning="", status="REJECTED",
+                    rejection_code=rej_code, rejection_detail=rej_det,
+                    now_ist=now_ist, force_log=True
+                )
         else:
+            if raw_signal == "⚠️ SIDEWAYS":
+                rej_code = "SIDEWAYS_CHOP"
+                rej_det = f"PCR at {md['pcr']:.2f} is in the sideways band (0.85–1.15). No directional edge."
+                self._log_audit_event(
+                    idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                    final_conf=final_conf, conf_score=conf_score, ai_score=None, ai_rec="AVOID",
+                    ai_reasoning=f"Sideways regime detected ({sideways_strength}).",
+                    status="REJECTED", rejection_code=rej_code, rejection_detail=rej_det,
+                    now_ist=now_ist
+                )
+            elif filter_reason:
+                rej_code = "FILTER_BLOCKED"
+                self._log_audit_event(
+                    idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                    final_conf=final_conf, conf_score=conf_score, ai_score=None, ai_rec="WAIT",
+                    ai_reasoning=filter_reason, status="REJECTED", rejection_code=rej_code,
+                    rejection_detail=filter_reason, now_ist=now_ist
+                )
+            else:
+                self._log_audit_event(
+                    idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                    final_conf=final_conf, conf_score=conf_score, ai_score=None, ai_rec="WAIT",
+                    ai_reasoning="Awaiting clear trend confirmation.", status="NEUTRAL_WAIT",
+                    rejection_code="NO_SETUP",
+                    rejection_detail=f"Spot {spot:.2f} vs VWAP {md['vwap_proxy']:.2f}, PCR {md['pcr']:.2f} ({md['pcr_momentum']}).",
+                    now_ist=now_ist
+                )
+
             if final_signal == "WAIT" and not open_exists:
                 with self._lock:
                     if self._last_signals.get(idx) not in ("WAIT",):

@@ -1898,6 +1898,12 @@ def _run_autonomous_pipeline(target_idx, fetcher, signal_engine, copilot):
         st.session_state.get(sk(target_idx, "oi_baseline"), None)
     )
 
+    if md:
+        st.session_state[sk(target_idx, "prev_df")] = md.get("prev_df")
+        st.session_state[sk(target_idx, "oi_baseline")] = md.get("oi_baseline")
+        st.session_state[sk(target_idx, "pcr_history")] = md.get("pcr_history")
+        st.session_state[sk(target_idx, "spot_history")] = md.get("spot_history")
+
     result = copilot.generate_autonomous_signal(target_idx, md)
     if not result or not isinstance(result, dict):
         result = {"signal": "WAIT", "conviction": 0, "reasoning": "AI did not return a valid decision.", "inference_time": "0.0s"}

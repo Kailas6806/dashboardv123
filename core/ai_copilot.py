@@ -194,6 +194,8 @@ class AICopilot:
         spot_vs_vwap = md.get("spot_vs_vwap", "AT VWAP")
         ce_delta = md.get("total_ce_delta", 0)
         pe_delta = md.get("total_pe_delta", 0)
+        tot_ce = md.get("tot_ce", 0)
+        tot_pe = md.get("tot_pe", 0)
         support = md.get("support", 0)
         resistance = md.get("resistance", 0)
         is_sideways = md.get("is_sideways", False)
@@ -226,8 +228,8 @@ INPUT DATA (LIVE):
 - ATM Options LTP: CE ₹{ce_ltp:.2f} | PE ₹{pe_ltp:.2f}
 - VWAP: {vwap:.2f} (Spot is {spot_vs_vwap})
 - Support: {support:.2f} | Resistance: {resistance:.2f}
-- PCR: {pcr:.2f} (Momentum: {pcr_mom})
-- OI Deltas: CE {ce_delta:+,} | PE {pe_delta:+,}
+- Total Open Interest: CE {tot_ce:,} | PE {tot_pe:,} | PCR: {pcr:.2f} (Momentum: {pcr_mom})
+- Session OI Deltas: CE {ce_delta:+,} | PE {pe_delta:+,}
 - Sideways Flag: {is_sideways} ({sideways_str})
 - Rule Signal: {raw_signal} (Score: {conf_score}/100)
 - Account Parameters: Lot Size: {lot} | Capital: ₹{cap_val} | Max Risk/Trade: ₹{max_risk_val} | Active Trades: {active_trades_count}
@@ -388,6 +390,8 @@ OUTPUT SCHEMA (strict JSON):
         spot_vs_vwap = md.get("spot_vs_vwap", "AT VWAP")
         ce_delta = md.get("total_ce_delta", 0)
         pe_delta = md.get("total_pe_delta", 0)
+        tot_ce = md.get("tot_ce", 0)
+        tot_pe = md.get("tot_pe", 0)
         support = md.get("support", 0)
         resistance = md.get("resistance", 0)
 
@@ -396,21 +400,23 @@ OUTPUT SCHEMA (strict JSON):
 LIVE DATA:
 - Spot: {spot:.2f} | ATM Strike: {atm}
 - VWAP: {vwap:.2f} (Spot is {spot_vs_vwap})
-- Support: {support} | Resistance: {resistance}
+- Support (Put Wall): {support} | Resistance (Call Wall): {resistance}
 - PCR: {pcr:.2f} (Trend: {pcr_mom})
-- Call OI Delta: {ce_delta:+,} | Put OI Delta: {pe_delta:+,}
+- Total OI: Call OI {tot_ce:,} | Put OI {tot_pe:,}
+- Session OI Deltas: Call OI Δ {ce_delta:+,} | Put OI Δ {pe_delta:+,}
 
 DECISION RULES (in order):
 1. Trend Context: Is spot above or below VWAP?
-2. Structure: Is spot near support (bullish) or resistance (bearish)?
-3. Positioning: Is PCR rising (bullish OI bias) or falling (bearish)?
-4. Confirmation: Are Call/Put OI deltas aligned with PCR trend?
+2. Structure: Is spot holding above support (bullish) or trading below resistance (bearish)?
+3. Positioning: Is PCR > 1.05 / rising (bullish bias) or PCR < 0.85 / falling (bearish bias)?
+4. Confirmation: Evaluate Total OI distribution (Put Wall vs Call Wall) and Call/Put OI deltas.
 
 CONVICTION SCORING:
-- Spot above VWAP + PCR rising = +30 points (bullish bias)
-- Spot below VWAP + PCR falling = +30 points (bearish bias)
-- Spot holds support + Call OI increasing = +20 points (bullish)
-- Spot breaks resistance + Put OI increasing = +20 points (bearish)
+- Spot above VWAP + Bullish PCR (PCR > 1.05 or rising) = +30 points (bullish bias)
+- Spot below VWAP + Bearish PCR (PCR < 0.85 or falling) = +30 points (bearish bias)
+- Bullish Structure: Spot holds above Support or Put OI writing dominance (Put OI > Call OI or PE Delta > CE Delta) = +20 points
+- Bearish Structure: Spot holds below Resistance or Call OI writing dominance (Call OI > Put OI or CE Delta > PE Delta) = +20 points
+- Range Breakout or Strong Momentum beyond S/R = +20 points
 - Conflicting signals = -10 points each
 
 OUTPUT (strict JSON):

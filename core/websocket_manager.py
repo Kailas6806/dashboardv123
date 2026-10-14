@@ -28,6 +28,9 @@ except ImportError:
 class SmartWebSocketManager:
     """Thread-safe WebSocket manager streaming live market ticks from Angel One."""
 
+    _active_instance: Optional["SmartWebSocketManager"] = None
+    _global_ws_lock = threading.RLock()
+
     def __init__(
         self,
         auth_token: str,
