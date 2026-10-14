@@ -7,6 +7,7 @@ and actionable insights to continuously refine trading strategies.
 import streamlit as st
 import pandas as pd
 import datetime
+import textwrap
 from typing import Any, Dict, List, Optional
 
 try:
@@ -42,43 +43,43 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
     with kpi1:
-        st.markdown(f"""
+        st.markdown(textwrap.dedent(f"""
         <div style="background:#111421; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Evaluated Setups</div>
             <div style="font-size:24px; font-weight:800; color:#38bdf8; margin-top:4px;">{tot_setups:,}</div>
             <div style="font-size:10px; color:#64748b;">Multi-index radar ticks</div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip(), unsafe_allow_html=True)
 
     with kpi2:
-        st.markdown(f"""
+        st.markdown(textwrap.dedent(f"""
         <div style="background:#111421; border:1px solid rgba(0,229,160,0.25); border-radius:10px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Executed Trades</div>
             <div style="font-size:24px; font-weight:800; color:#00e5a0; margin-top:4px;">{executed}</div>
             <div style="font-size:10px; color:#00e5a0;">All rules & AI approved</div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip(), unsafe_allow_html=True)
 
     with kpi3:
-        st.markdown(f"""
+        st.markdown(textwrap.dedent(f"""
         <div style="background:#111421; border:1px solid rgba(255,77,109,0.25); border-radius:10px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Filtered / Blocked</div>
             <div style="font-size:24px; font-weight:800; color:#ff4d6d; margin-top:4px;">{rejected}</div>
             <div style="font-size:10px; color:#ff4d6d;">{rejection_pct}% Rejection rate</div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip(), unsafe_allow_html=True)
 
     with kpi4:
         breakdown = stats.get("rejection_breakdown", {})
         top_reason = max(breakdown.items(), key=lambda x: x[1])[0] if breakdown else "None"
         clean_top_reason = top_reason.replace("_", " ")
-        st.markdown(f"""
+        st.markdown(textwrap.dedent(f"""
         <div style="background:#111421; border:1px solid rgba(245,158,11,0.25); border-radius:10px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Top Guard Blocker</div>
             <div style="font-size:16px; font-weight:800; color:#f59e0b; margin-top:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{clean_top_reason}">{clean_top_reason}</div>
             <div style="font-size:10px; color:#94a3b8;">Primary filter cause</div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip(), unsafe_allow_html=True)
 
     st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.07); margin:16px 0 12px 0;'>", unsafe_allow_html=True)
 
@@ -183,7 +184,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
         ai_score_label = f"{ai_score}/100" if ai_score is not None else "N/A"
         ai_score_color = "#00e5a0" if (ai_score or 0) >= AI_MIN_CONVICTION else ("#ff4d6d" if ai_score is not None else "#94a3b8")
 
-        st.markdown(f"""
+        card_html = textwrap.dedent(f"""
         <div style="background:#0f1322; border:{card_border}; border-radius:10px; padding:14px 18px; margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <div style="display:flex; align-items:center; gap:10px;">
@@ -198,24 +199,22 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
                     </span>
                 </div>
             </div>
-            
             <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin:12px 0 10px 0; background:#161b2e; padding:8px 12px; border-radius:6px; font-size:11px;">
                 <div>📊 <b>PCR:</b> <span style="color:#f8fafc;">{pcr:.2f} ({pcr_mom})</span></div>
                 <div>📍 <b>VWAP:</b> <span style="color:#f8fafc;">₹{vwap:,.2f} ({spot_vs_vwap})</span></div>
                 <div>🧱 <b>Walls:</b> <span style="color:#00e5a0;">S {support}</span> | <span style="color:#ff4d6d;">R {resistance}</span></div>
                 <div>📈 <b>OI Deltas:</b> CE {ce_delta:+,} | PE {pe_delta:+,}</div>
             </div>
-
             <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-bottom:8px;">
                 <span style="color:#cbd5e1;">Rule Engine Confidence: <b style="color:#38bdf8;">{rule_score}/100</b></span>
                 <span style="color:#cbd5e1;">AI Copilot Conviction: <b style="color:{ai_score_color};">{ai_score_label}</b> (Threshold: {AI_MIN_CONVICTION})</span>
             </div>
-
             <div style="background:#1a1f35; border-left:3px solid {badge_color}; padding:8px 12px; border-radius:4px; font-size:12px; color:#e2e8f0;">
                 <b>Why this outcome?</b> {rej_detail}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """).strip()
+        st.markdown(card_html, unsafe_allow_html=True)
 
         # Expandable AI Reasoning Inspector if available
         if ai_reason:
