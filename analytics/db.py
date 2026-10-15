@@ -51,10 +51,13 @@ if not SUPABASE_URI or "pooler.supabase.com" not in SUPABASE_URI:
 class TradeDB:
 
     """Thread-safe PostgreSQL database manager for trade history and journal entries."""
+    _db_initialized = False
 
     def __init__(self, db_path: Optional[str] = None) -> None:
         self._lock = threading.RLock()
-        self._init_db()
+        if not TradeDB._db_initialized:
+            self._init_db()
+            TradeDB._db_initialized = True
 
     def _get_connection(self):
         conn = psycopg2.connect(SUPABASE_URI)

@@ -62,7 +62,7 @@ class AngelOneDataFetcher:
         self.login(max_retries=3, retry_delay=2.0)
         self._load_scrip_master()
 
-    def login(self, max_retries: int = 3, retry_delay: float = 2.0, force: bool = False) -> bool:
+    def login(self, max_retries: int = 3, retry_delay: float = 2.0, force: bool = False, init_ws: bool = True) -> bool:
         """Authenticate with Angel One SmartAPI with multi-attempt retry and clock drift correction."""
         if not self.client_id or not self.password or not self.totp_secret:
             self.login_status = "DEMO_MODE"
@@ -99,7 +99,8 @@ class AngelOneDataFetcher:
                         masked_id = f"{self.client_id[:2]}***{self.client_id[-2:]}" if len(self.client_id) > 4 else self.client_id
                         self.login_message = f"Authenticated successfully as {masked_id} (Session active)."
                         log.info("Angel One Login Successful: %s", self.login_message)
-                        self._init_websocket()
+                        if init_ws:
+                            self._init_websocket()
                         return True
                     else:
                         err_msg = data.get('message', 'Login error') if isinstance(data, dict) else str(data)
@@ -132,7 +133,7 @@ class AngelOneDataFetcher:
     def refresh_tokens(self) -> Tuple[Optional[str], Optional[str]]:
         """Force re-login with Angel One and return fresh (jwtToken, feedToken)."""
         try:
-            ok = self.login(max_retries=2, retry_delay=1.5, force=True)
+            ok = self.login(max_retries=2, retry_delay=1.5, force=True, init_ws=False)
             if ok and self.session:
                 jwt_token = self.session.get("jwtToken")
                 feed_token = self.session.get("feedToken")

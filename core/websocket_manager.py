@@ -192,6 +192,7 @@ class SmartWebSocketManager:
                             self.auth_token = new_auth
                             self.feed_token = new_feed
                         log.info("Fresh Angel One tokens acquired for WebSocket.")
+                        self._reconnect_attempts = 0
                 except Exception as ex:
                     log.warning("Failed to refresh Angel One WebSocket tokens: %s", ex)
 
