@@ -23,6 +23,7 @@ from config import (
 )
 from utils.logger import get_logger
 from core.signal_audit import get_signal_auditor
+from core.ai_copilot import build_ai_trade_metadata
 
 logger = get_logger("foreground_scanner")
 
@@ -44,10 +45,10 @@ def _validate_ai_entry(
     conf_score: int,
     ai_auto_trade: bool,
     active_trades_count: int,
-) -> Tuple[bool, int, str, str]:
+) -> Tuple[bool, int, str, str, Dict[str, Any]]:
     """Validate automatic entries with AI; never treat a validation failure as approval."""
     if not ai_auto_trade:
-        return True, conf_score, "BUY", "Rule Engine Autonomous Signal"
+        return True, conf_score, "BUY", "Rule Engine Autonomous Signal", {}
 
     try:
         if not copilot or not copilot.is_configured():
@@ -58,12 +59,17 @@ def _validate_ai_entry(
         )
         score = int(result.get("conviction_score", 0))
         recommendation = str(result.get("recommendation", "AVOID_WAIT"))
-        summary = result.get("reasoning_summary") or result.get("detailed_reasoning", "")
+        analysis = dict(result)
+        summary = build_ai_trade_metadata(analysis)["ai_reasoning"]
         approved = score >= AI_MIN_CONVICTION and "BUY" in recommendation
-        return approved, score, recommendation, str(summary)
+        return approved, score, recommendation, str(summary), analysis
     except Exception as exc:
         logger.warning("[%s] AI validation failed; blocking entry: %s", idx, exc)
-        return False, 0, "AI_VALIDATION_FAILED", f"AI validation failed: {exc}"
+        failure = {
+            "recommendation": "AI_VALIDATION_FAILED",
+            "reasoning_summary": f"AI validation failed: {exc}",
+        }
+        return False, 0, "AI_VALIDATION_FAILED", failure["reasoning_summary"], failure
 
 
 # Module-level state cache across foreground refreshes
@@ -468,7 +474,7 @@ def _scan_single_index(
         last_sig = _scanner_state["last_signals"].get(idx)
 
         if can_enter and final_signal != last_sig:
-            ai_conviction_ok, ai_pre_score, ai_pre_rec, ai_pre_summary = _validate_ai_entry(
+            ai_conviction_ok, ai_pre_score, ai_pre_rec, ai_pre_summary, ai_analysis = _validate_ai_entry(
                 copilot=copilot,
                 idx=idx,
                 market_data=md,
@@ -482,6 +488,7 @@ def _scan_single_index(
                     "conviction_score": ai_pre_score,
                     "recommendation": ai_pre_rec,
                     "reasoning_summary": ai_pre_summary,
+                    **ai_analysis,
                 }
             if ai_auto_trade and not ai_conviction_ok:
                 logger.info("[%s] AI blocked trade: conviction %d/%d, rec=%s", idx, ai_pre_score, AI_MIN_CONVICTION, ai_pre_rec)
@@ -511,6 +518,14 @@ def _scan_single_index(
                     "_ai_conviction": ai_pre_score,
                     "_ai_reasoning": ai_pre_summary,
                 }
+                ai_metadata = build_ai_trade_metadata(
+                    ai_analysis,
+                    ai_pre_summary,
+                    "AUTONOMOUS_AI" if ai_auto_trade else "RULE_ENGINE",
+                )
+                trade_entry["_ai_reasoning"] = ai_metadata["ai_reasoning"]
+                trade_entry["_ai_conviction"] = ai_metadata["ai_conviction"] if ai_metadata["ai_conviction"] is not None else ai_pre_score
+                trade_entry["_ai_generated"] = ai_auto_trade
 
                 journal_id = ""
                 try:
@@ -523,7 +538,7 @@ def _scan_single_index(
                             "pcr_momentum": md["pcr_momentum"],
                             "trap": trap, "buffer_state": updated_buf[-3:],
                             "ai_validated": ai_auto_trade,
-                            "ai_reasoning": ai_pre_summary if ai_auto_trade else "",
+                            **ai_metadata,
                         }, require_no_open=True)
                 except Exception as e:
                     logger.error("Atomic position reservation failed for %s: %s", idx, e)

@@ -1355,7 +1355,12 @@ def render_trade_history_tab(journal):
         # Search filter
         if search_query:
             q = search_query.strip().lower()
-            match_txt = f"{t_date} {t['instrument']} {t['signal']} {t['strike']} {t['raw'].get('Result', '')}".lower()
+            metadata = t["raw"].get("signal_metadata") or {}
+            match_txt = (
+                f"{t_date} {t['instrument']} {t['signal']} {t['strike']} "
+                f"{t['raw'].get('Result', '')} {t['raw'].get('_ai_reasoning', '')} "
+                f"{metadata.get('ai_reasoning_summary', '')}"
+            ).lower()
             if q not in match_txt:
                 continue
 
@@ -1495,6 +1500,51 @@ def render_trade_history_tab(journal):
         use_container_width=True,
         hide_index=True,
     )
+
+    rationale_trades = [
+        trade for trade in filtered
+        if trade["raw"].get("_ai_reasoning")
+        or (trade["raw"].get("signal_metadata") or {}).get("ai_reasoning_summary")
+    ]
+    if rationale_trades:
+        st.markdown("#### 🧠 AI trade rationale")
+
+        def _rationale_label(position):
+            trade = rationale_trades[position]
+            raw = trade["raw"]
+            score = raw.get("_ai_conviction") or raw.get("Confidence Score")
+            score_text = f" · {score}/100" if score is not None else ""
+            return (
+                f"{trade['date']} · {trade['instrument']} {trade['signal']} "
+                f"{trade['strike']}{score_text}"
+            )
+
+        selected_rationale = st.selectbox(
+            "Select an executed trade",
+            options=range(len(rationale_trades)),
+            format_func=_rationale_label,
+            key="hist_ai_rationale_trade",
+        )
+        selected_trade = rationale_trades[selected_rationale]["raw"]
+        metadata = selected_trade.get("signal_metadata") or {}
+        st.caption(
+            f"Recommendation: {metadata.get('ai_recommendation') or 'Not recorded'} · "
+            f"Bias: {metadata.get('ai_market_bias') or 'Not recorded'} · "
+            f"Execution: {metadata.get('ai_execution_mode') or 'Legacy trade'}"
+        )
+        summary = metadata.get("ai_reasoning_summary")
+        if summary:
+            st.write(f"**Summary:** {summary}")
+        detailed_reasoning = selected_trade.get("_ai_reasoning") or metadata.get("ai_reasoning")
+        if detailed_reasoning:
+            with st.expander("View detailed reasoning", expanded=False):
+                st.text(str(detailed_reasoning))
+        for title, key in (("Key factors", "ai_key_factors"), ("Risk notes", "ai_risk_flags")):
+            values = metadata.get(key) or []
+            if values:
+                st.write(f"**{title}:**")
+                for value in values:
+                    st.write(f"- {value}")
 
 
 # ──────────────────────────────────────────────────
@@ -1785,7 +1835,9 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                             selected_idx, exec_sig, md, trade_mgr, risk_mgr, journal,
                             st.session_state.get(sk(selected_idx, "trade_log"), []),
                             ai_conviction=auto_conv,
-                            ai_reasoning=analysis.get("reasoning_summary", "Auto-Trade: High Conviction"),
+                            ai_reasoning=analysis.get("detailed_reasoning") or analysis.get("reasoning_content") or analysis.get("reasoning_summary", ""),
+                            ai_analysis=analysis,
+                            execution_mode="AI_AUTO_TRADE",
                         )
                         st.session_state[sk(selected_idx, "ai_auto_trade_msg")] = (
                             "ok" if ok else "err", msg
@@ -1903,7 +1955,11 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             if st.button(btn_label, key=f"btn_take_trade_{selected_idx}", use_container_width=True):
                 ok, trade_entry, msg = copilot.take_trade(
                     selected_idx, exec_signal, md, trade_mgr, risk_mgr, journal, tlog,
-                    ai_conviction=conviction, ai_reasoning=summary, force=True
+                    ai_conviction=conviction,
+                    ai_reasoning=analysis.get("detailed_reasoning") or analysis.get("reasoning_content") or summary,
+                    ai_analysis=analysis,
+                    execution_mode="AI_RECOMMENDATION",
+                    force=True,
                 )
                 if ok:
                     st.success(msg)
@@ -1918,7 +1974,11 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                 if st.button("BUY ATM CE", key=f"btn_force_ce_{selected_idx}", use_container_width=True):
                     ok, trade_entry, msg = copilot.take_trade(
                         selected_idx, "BUY CE", md, trade_mgr, risk_mgr, journal, tlog,
-                        ai_conviction=conviction, ai_reasoning="Manual 1-Click Execution", force=True
+                        ai_conviction=conviction,
+                        ai_reasoning=analysis.get("detailed_reasoning") or analysis.get("reasoning_content") or summary,
+                        ai_analysis=analysis,
+                        execution_mode="MANUAL_OVERRIDE_CE",
+                        force=True,
                     )
                     if ok:
                         st.success(msg)
@@ -1929,7 +1989,11 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                 if st.button("BUY ATM PE", key=f"btn_force_pe_{selected_idx}", use_container_width=True):
                     ok, trade_entry, msg = copilot.take_trade(
                         selected_idx, "BUY PE", md, trade_mgr, risk_mgr, journal, tlog,
-                        ai_conviction=conviction, ai_reasoning="Manual 1-Click Execution", force=True
+                        ai_conviction=conviction,
+                        ai_reasoning=analysis.get("detailed_reasoning") or analysis.get("reasoning_content") or summary,
+                        ai_analysis=analysis,
+                        execution_mode="MANUAL_OVERRIDE_PE",
+                        force=True,
                     )
                     if ok:
                         st.success(msg)
@@ -2288,7 +2352,11 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                     tlog = st.session_state.get(sk(idx, "trade_log"), [])
                     ok, trade_entry, msg = copilot.take_trade(
                         idx, signal, md, trade_mgr, risk_mgr, journal, tlog,
-                        ai_conviction=conv, ai_reasoning=logic, force=True
+                        ai_conviction=conv,
+                        ai_reasoning=logic,
+                        ai_analysis=res,
+                        execution_mode="AUTONOMOUS_AI",
+                        force=True,
                     )
                     if ok:
                         st.toast(f"🎯 Order Sent: {idx} {signal} @ ₹{ep:.2f}!", icon="⚡")
@@ -2302,7 +2370,5 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                         st.error(f"❌ Execution Blocked: {msg}")
             else:
                 st.button(f"🔒 Check Box Above to Arm & Fire Order", disabled=True, use_container_width=True)
-
-
 
 

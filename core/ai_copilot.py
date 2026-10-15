@@ -59,6 +59,58 @@ except ImportError:
 log = get_logger("ai_copilot")
 
 
+def build_ai_trade_metadata(
+    analysis: Optional[Dict[str, Any]],
+    fallback_reasoning: str = "",
+    execution_mode: str = "AI",
+) -> Dict[str, Any]:
+    """Normalize user-facing AI rationale for durable trade records."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    summary = str(analysis.get("reasoning_summary") or "").strip()
+    detailed_reasoning = str(
+        analysis.get("detailed_reasoning")
+        or analysis.get("reasoning_content")
+        or fallback_reasoning
+        or summary
+        or "AI rationale was not provided."
+    ).strip()
+    key_factors = analysis.get("key_factors")
+    risk_flags = analysis.get("risk_flags") or analysis.get("risk_warning")
+
+    if isinstance(key_factors, str):
+        key_factors = [key_factors]
+    elif not isinstance(key_factors, list):
+        key_factors = []
+    if isinstance(risk_flags, str):
+        risk_flags = [risk_flags] if risk_flags.strip() else []
+    elif not isinstance(risk_flags, list):
+        risk_flags = []
+
+    conviction = analysis.get("conviction_score", analysis.get("conviction"))
+    try:
+        conviction = int(conviction) if conviction is not None else None
+    except (TypeError, ValueError):
+        conviction = None
+
+    return {
+        "ai_reasoning": detailed_reasoning,
+        "ai_reasoning_summary": summary or detailed_reasoning,
+        "ai_recommendation": str(
+            analysis.get("recommendation") or analysis.get("signal") or ""
+        ),
+        "ai_market_bias": str(
+            analysis.get("market_bias") or analysis.get("trend_bias") or ""
+        ),
+        "ai_conviction": conviction,
+        "ai_key_factors": [str(factor) for factor in key_factors if factor],
+        "ai_risk_flags": [str(flag) for flag in risk_flags if flag],
+        "ai_provider": str(analysis.get("provider") or ""),
+        "ai_timestamp": str(analysis.get("timestamp") or ""),
+        "ai_inference_time": str(analysis.get("inference_time") or ""),
+        "ai_execution_mode": execution_mode,
+    }
+
+
 class AICopilot:
     """Intelligent trading analyst and execution manager powered by NVIDIA NIM with Google Gemini fallback."""
 
@@ -612,6 +664,8 @@ DECISION RULE:
         tlog: List[Dict[str, Any]],
         ai_conviction: int = 80,
         ai_reasoning: str = "AI Confirmed Setup",
+        ai_analysis: Optional[Dict[str, Any]] = None,
+        execution_mode: str = "AI",
         force: bool = False,
     ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         """Execute a trade into the active trade log and journal with risk controls.
@@ -631,6 +685,10 @@ DECISION RULE:
             Active session trade log for this index
         ai_conviction : int
         ai_reasoning : str
+        ai_analysis : dict, optional
+            Full AI response used to approve or inform this execution.
+        execution_mode : str
+            Whether execution followed the AI recommendation or overrode it.
         force : bool
             If True, skips non-critical warnings (like low price or minor cooldown)
 
@@ -679,6 +737,11 @@ DECISION RULE:
         qty, sl_p, tgt_p, ml, tp = risk_mgr.calc_trade_with_atr(ep, lot, spot_history)
 
         now_str = now.strftime("%I:%M:%S %p")
+        ai_metadata = build_ai_trade_metadata(ai_analysis, ai_reasoning, execution_mode)
+        recorded_reasoning = ai_metadata["ai_reasoning"]
+        recorded_conviction = ai_metadata["ai_conviction"]
+        if recorded_conviction is None:
+            recorded_conviction = ai_conviction
 
         # 4. Construct Trade Entry
         trade_entry = {
@@ -699,10 +762,10 @@ DECISION RULE:
             "Actual P&L ₹": None,
             "Status": "OPEN",
             "Result": "⏳ OPEN",
-            "Confidence Score": ai_conviction,
+            "Confidence Score": recorded_conviction,
             "_ai_generated": True,
-            "_ai_conviction": ai_conviction,
-            "_ai_reasoning": ai_reasoning,
+            "_ai_conviction": recorded_conviction,
+            "_ai_reasoning": recorded_reasoning,
             "_profit_locked": False,
             "_locked_profit": 0,
             "_peak_price": ep,
@@ -722,10 +785,10 @@ DECISION RULE:
                         "vwap": md.get("vwap_proxy"),
                         "oi_delta_ce": md.get("total_ce_delta"),
                         "oi_delta_pe": md.get("total_pe_delta"),
-                        "confidence_score": ai_conviction,
+                        "confidence_score": recorded_conviction,
                         "pcr_momentum": md.get("pcr_momentum"),
                         "ai_generated": True,
-                        "ai_reasoning": ai_reasoning,
+                        **ai_metadata,
                     },
                 )
                 trade_entry["_journal_id"] = journal_id

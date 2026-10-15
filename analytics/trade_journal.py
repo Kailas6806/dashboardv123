@@ -163,6 +163,23 @@ class TradeJournal:
                 entry[field] = value
 
             entry["signal_metadata"] = dict(signal_metadata) if signal_metadata else {}
+            ai_metadata = entry["signal_metadata"]
+            entry["_ai_generated"] = bool(
+                trade.get("_ai_generated")
+                or trade.get("ai_generated")
+                or ai_metadata.get("ai_generated")
+            )
+            entry["_ai_conviction"] = (
+                trade.get("_ai_conviction")
+                or trade.get("ai_conviction")
+                or ai_metadata.get("ai_conviction")
+            )
+            entry["_ai_reasoning"] = (
+                trade.get("_ai_reasoning")
+                or trade.get("ai_reasoning")
+                or ai_metadata.get("ai_reasoning")
+                or ""
+            )
             entry["recorded_at"] = now.isoformat()
 
             if require_no_open:

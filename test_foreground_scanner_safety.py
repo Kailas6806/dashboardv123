@@ -11,6 +11,7 @@ os.environ.setdefault(
 
 import config
 from analytics.db import TradeDB
+from core.ai_copilot import build_ai_trade_metadata
 from core.angelone_fetcher import AngelOneDataFetcher
 from core import foreground_scanner
 
@@ -43,6 +44,30 @@ class _FakeConnection:
 
 
 class TestForegroundScannerSafety(unittest.TestCase):
+    def test_ai_trade_metadata_preserves_detailed_rationale(self):
+        metadata = build_ai_trade_metadata({
+            "reasoning_summary": "Institutional flow favors calls.",
+            "detailed_reasoning": "PCR rose from 0.92 to 1.18 as put OI expanded.",
+            "recommendation": "EXECUTE_BUY_CE",
+            "market_bias": "BULLISH",
+            "conviction_score": 82,
+            "key_factors": ["PCR rising", "Put writing"],
+            "risk_warning": "Resistance near the next strike.",
+            "provider": "Gemini",
+            "timestamp": "10:15 AM",
+            "inference_time": "1.2s",
+        }, execution_mode="AI_RECOMMENDATION")
+
+        self.assertEqual(
+            "PCR rose from 0.92 to 1.18 as put OI expanded.",
+            metadata["ai_reasoning"],
+        )
+        self.assertEqual("Institutional flow favors calls.", metadata["ai_reasoning_summary"])
+        self.assertEqual(82, metadata["ai_conviction"])
+        self.assertEqual(["PCR rising", "Put writing"], metadata["ai_key_factors"])
+        self.assertEqual(["Resistance near the next strike."], metadata["ai_risk_flags"])
+        self.assertEqual("AI_RECOMMENDATION", metadata["ai_execution_mode"])
+
     def test_option_scrip_index_avoids_repeated_master_searches(self):
         fetcher = AngelOneDataFetcher.__new__(AngelOneDataFetcher)
         fetcher.scrip_master = [
@@ -95,7 +120,7 @@ class TestForegroundScannerSafety(unittest.TestCase):
         self.assertIs(result, foreground_scanner._scanner_state["latest_states"])
 
     def test_ai_autotrade_requires_configured_successful_approval(self):
-        approved, _, _, _ = foreground_scanner._validate_ai_entry(
+        approved, _, _, _, _ = foreground_scanner._validate_ai_entry(
             None, "NIFTY", {}, "BUY CE", 80, True, 0
         )
         self.assertFalse(approved)
@@ -103,7 +128,7 @@ class TestForegroundScannerSafety(unittest.TestCase):
         copilot = Mock()
         copilot.is_configured.return_value = True
         copilot.analyze_market_and_signals.side_effect = RuntimeError("provider unavailable")
-        approved, _, recommendation, _ = foreground_scanner._validate_ai_entry(
+        approved, _, recommendation, _, _ = foreground_scanner._validate_ai_entry(
             copilot, "NIFTY", {}, "BUY CE", 80, True, 0
         )
         self.assertFalse(approved)
@@ -115,7 +140,7 @@ class TestForegroundScannerSafety(unittest.TestCase):
             "recommendation": "EXECUTE_BUY_CE",
             "reasoning_summary": "Approved",
         }
-        approved, _, _, _ = foreground_scanner._validate_ai_entry(
+        approved, _, _, _, _ = foreground_scanner._validate_ai_entry(
             copilot, "NIFTY", {}, "BUY CE", 80, True, 0
         )
         self.assertTrue(approved)

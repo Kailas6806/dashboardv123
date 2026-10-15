@@ -4,6 +4,7 @@ Unit tests for AI Copilot module.
 import unittest
 import os
 import sys
+from unittest.mock import Mock
 
 from core.ai_copilot import AICopilot
 from core.risk_manager import RiskManager
@@ -39,6 +40,7 @@ class TestAICopilot(unittest.TestCase):
         self.assertEqual(parsed.get("conviction_score"), 85)
 
     def test_take_trade_execution(self):
+        self.journal.db = Mock()
         mock_md = {
             "spot": 24500.0,
             "atm_actual": 24500,
@@ -61,6 +63,16 @@ class TestAICopilot(unittest.TestCase):
             tlog=tlog,
             ai_conviction=88,
             ai_reasoning="Strong Put writing at 24500",
+            ai_analysis={
+                "reasoning_summary": "Put writing supports a bullish setup.",
+                "detailed_reasoning": "PCR climbed while put OI increased near ATM.",
+                "recommendation": "EXECUTE_BUY_CE",
+                "market_bias": "BULLISH",
+                "conviction_score": 88,
+                "key_factors": ["PCR rising", "Put writing"],
+                "risk_warning": "Nearby call resistance.",
+                "provider": "Gemini",
+            },
             force=True,
         )
         self.assertTrue(ok)
@@ -70,8 +82,26 @@ class TestAICopilot(unittest.TestCase):
         self.assertEqual(trade["Strike"], 24500)
         self.assertEqual(trade["Entry Price"], 120.0)
         self.assertEqual(trade["_ai_conviction"], 88)
+        self.assertEqual(trade["_ai_reasoning"], "PCR climbed while put OI increased near ATM.")
         self.assertTrue(trade["_ai_generated"])
         self.assertEqual(len(tlog), 1)
+        self.assertEqual(
+            "PCR climbed while put OI increased near ATM.",
+            self.journal.trades[0]["_ai_reasoning"],
+        )
+        saved_metadata = self.journal.trades[0]["signal_metadata"]
+        self.assertEqual("EXECUTE_BUY_CE", saved_metadata["ai_recommendation"])
+        self.assertEqual(["PCR rising", "Put writing"], saved_metadata["ai_key_factors"])
+        self.assertEqual("Nearby call resistance.", saved_metadata["ai_risk_flags"][0])
+        persisted_trade, persisted_metadata = self.journal.db.upsert_trade.call_args.args
+        self.assertEqual(
+            "PCR climbed while put OI increased near ATM.",
+            persisted_trade["_ai_reasoning"],
+        )
+        self.assertEqual(
+            "EXECUTE_BUY_CE",
+            persisted_metadata["ai_recommendation"],
+        )
 
 
 if __name__ == "__main__":
