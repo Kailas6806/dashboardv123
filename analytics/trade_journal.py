@@ -726,6 +726,22 @@ class TradeJournal:
             except Exception:
                 pass
 
+    def reset_capital(self, base_capital: float = 60000.0, account_id: str = "DEFAULT") -> Dict[str, Any]:
+        """Reset wallet capital to base_capital and zero cumulative P&L."""
+        with self._lock:
+            if self.db and not self.is_custom_path:
+                try:
+                    return self.db.reset_capital(base_capital=base_capital, account_id=account_id)
+                except Exception as e:
+                    logger.warning("TradeDB reset_capital error: %s", e)
+            return {
+                "account_id": account_id,
+                "base_capital": float(base_capital),
+                "cumulative_realized_pnl": 0.0,
+                "current_balance": float(base_capital),
+                "updated_at": datetime.now(tz=IST).isoformat(),
+            }
+
     def export_to_json(self) -> str:
         """Export all trades to a formatted JSON string."""
         with self._lock:

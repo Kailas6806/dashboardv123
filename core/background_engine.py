@@ -13,12 +13,13 @@ import logging
 import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
 
+import config
 from config import (
     INDEX_CONFIG, IST, MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, MAX_DAILY_TRADES,
     MAX_DAILY_LOSSES, COOLDOWN_SECONDS, ATR_PERIOD, ATR_SL_MULTIPLIER,
     is_expiry_day, CAPITAL, AI_AUTO_TRADE_DEFAULT, AI_MIN_CONVICTION,
-    LOG_DIR, LOG_COLS, BASE_DIR
+    LOG_DIR, LOG_COLS, BASE_DIR, MIN_CONFIDENCE_SCORE
 )
 from utils.logger import get_logger
 

@@ -246,6 +246,49 @@ class TradeDB:
             self._save_local_capital_cache(local)
             return local
 
+    def reset_capital(self, base_capital: float = 60000.0, account_id: str = "DEFAULT") -> Dict[str, Any]:
+        """Reset wallet capital to base_capital and clear cumulative P&L."""
+        with self._lock:
+            now_str = datetime.datetime.now(IST).isoformat()
+            base = float(base_capital)
+            result = {
+                "account_id": account_id,
+                "base_capital": base,
+                "cumulative_realized_pnl": 0.0,
+                "current_balance": base,
+                "updated_at": now_str,
+            }
+            try:
+                conn = self._get_connection()
+                try:
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("""
+                        INSERT INTO account_capital (account_id, base_capital, cumulative_realized_pnl, current_balance, updated_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (account_id) DO UPDATE
+                        SET base_capital = EXCLUDED.base_capital,
+                            cumulative_realized_pnl = 0.0,
+                            current_balance = EXCLUDED.base_capital,
+                            updated_at = EXCLUDED.updated_at
+                        RETURNING *
+                    """, (account_id, base, 0.0, base, now_str))
+                    row = cursor.fetchone()
+                    conn.commit()
+                    if row:
+                        d_row = dict(row)
+                        for k in ("base_capital", "cumulative_realized_pnl", "current_balance"):
+                            if k in d_row and d_row[k] is not None:
+                                d_row[k] = float(d_row[k])
+                        result = d_row
+                finally:
+                    conn.close()
+            except Exception as e:
+                log.warning("Supabase reset_capital failed, updating local cache: %s", e)
+
+            self._save_local_capital_cache(result)
+            log.info("Wallet capital reset to: %s", result)
+            return result
+
     @staticmethod
     def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
         if val is None or val == "" or str(val).strip() == "":
