@@ -49,6 +49,14 @@ class RiskManager:
     position sizing. SL is fixed at ₹1,500 (MAX_LOSS). No trailing stop.
     """
 
+    def __init__(self) -> None:
+        self._reset_time: Optional[datetime.datetime] = None
+
+    def reset_daily_limits(self) -> None:
+        """Manually reset consecutive losses count and cooldown timer."""
+        self._reset_time = datetime.datetime.now(IST)
+        log.info("RiskManager daily limits and cooldown manually reset.")
+
     # ──────────────────────────────────────────────
     # 1. CALC TRADE (basic, fixed SL)
     # ──────────────────────────────────────────────
@@ -270,17 +278,32 @@ class RiskManager:
 
         # 2. Consecutive loss limit
         consecutive_losses = 0
+        try:
+            import config
+            max_losses = getattr(config, "MAX_DAILY_LOSSES", 5)
+        except Exception:
+            max_losses = 5
+
         for t in closed:
+            if getattr(self, "_reset_time", None) and t.get("Exit Time"):
+                try:
+                    exit_dt = datetime.datetime.strptime(str(t["Exit Time"]), "%I:%M:%S %p").replace(
+                        year=self._reset_time.year, month=self._reset_time.month, day=self._reset_time.day, tzinfo=IST
+                    )
+                    if exit_dt <= self._reset_time:
+                        break  # Streak reset by user
+                except Exception:
+                    pass
             result = str(t.get("Result", ""))
             if "LOSS" in result:
                 consecutive_losses += 1
             else:
                 break  # streak broken
 
-        if consecutive_losses >= MAX_DAILY_LOSSES:
+        if consecutive_losses >= max_losses:
             return False, (
                 f"🛑 Daily loss limit reached — {consecutive_losses} consecutive "
-                f"losses (max {MAX_DAILY_LOSSES}). Trading paused."
+                f"losses (max {max_losses}). Trading paused."
             )
 
         # 3. Max daily loss limit in ₹ (₹6,000 portfolio total across 3 indices)

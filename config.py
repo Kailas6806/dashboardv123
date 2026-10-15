@@ -74,7 +74,7 @@ MIN_ENTRY_PRICE         = 5.0    # reject options cheaper than ₹5 (illiquid/wo
 ATR_PERIOD               = 14    # periods for ATR calculation
 ATR_SL_MULTIPLIER        = 2.5   # SL = entry ∓ (multiplier × ATR)
 
-MAX_DAILY_LOSSES         = 3     # stop trading after N consecutive losses
+MAX_DAILY_LOSSES         = 5     # stop trading after N consecutive losses
 
 # ── SMART WEBSOCKET ──
 import os

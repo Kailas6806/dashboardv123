@@ -421,46 +421,64 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     consec_losses = 0
     closed_trades = [t for t in portfolio_today_trades if t.get("Status") == "CLOSED"]
     for t in closed_trades:
+        if getattr(risk_mgr, "_reset_time", None) and t.get("Exit Time"):
+            try:
+                exit_dt = datetime.datetime.strptime(str(t["Exit Time"]), "%I:%M:%S %p").replace(
+                    year=risk_mgr._reset_time.year, month=risk_mgr._reset_time.month, day=risk_mgr._reset_time.day, tzinfo=IST
+                )
+                if exit_dt <= risk_mgr._reset_time:
+                    break
+            except Exception:
+                pass
         if "LOSS" in str(t.get("Result", "")):
             consec_losses += 1
         else:
             break
 
     cooldown_remaining = 0
-    closed_trades_idx = [t for t in st.session_state[tlog_key] if t.get("Status") == "CLOSED" and t.get("Result", "")]
-    if closed_trades_idx:
-        last_closed = closed_trades_idx[0]
-        if "LOSS" in str(last_closed.get("Result", "")):
-            exit_time_str = last_closed.get("Exit Time", "")
-            if exit_time_str:
-                try:
-                    exit_time = datetime.datetime.strptime(
-                        exit_time_str, "%I:%M:%S %p"
-                    ).replace(
-                        year=now_ist.year,
-                        month=now_ist.month,
-                        day=now_ist.day,
-                        tzinfo=IST,
-                    )
-                    # Handle midnight rollover
-                    if exit_time > now_ist:
-                        exit_time -= datetime.timedelta(days=1)
-                    elapsed = (now_ist - exit_time).total_seconds()
-                    if elapsed < COOLDOWN_SECONDS:
-                        cooldown_remaining = int(COOLDOWN_SECONDS - elapsed)
-                except Exception:
-                    pass
+    if not getattr(risk_mgr, "_reset_time", None):
+        closed_trades_idx = [t for t in st.session_state[tlog_key] if t.get("Status") == "CLOSED" and t.get("Result", "")]
+        if closed_trades_idx:
+            last_closed = closed_trades_idx[0]
+            if "LOSS" in str(last_closed.get("Result", "")):
+                exit_time_str = last_closed.get("Exit Time", "")
+                if exit_time_str:
+                    try:
+                        exit_time = datetime.datetime.strptime(
+                            exit_time_str, "%I:%M:%S %p"
+                        ).replace(
+                            year=now_ist.year,
+                            month=now_ist.month,
+                            day=now_ist.day,
+                            tzinfo=IST,
+                        )
+                        # Handle midnight rollover
+                        if exit_time > now_ist:
+                            exit_time -= datetime.timedelta(days=1)
+                        elapsed = (now_ist - exit_time).total_seconds()
+                        if elapsed < COOLDOWN_SECONDS:
+                            cooldown_remaining = int(COOLDOWN_SECONDS - elapsed)
+                    except Exception:
+                        pass
 
+    max_daily_losses_cfg = getattr(config, "MAX_DAILY_LOSSES", 5)
     risk_html = render_risk_card(
         atr_sl=atr_sl_display,
         cooldown_remaining=cooldown_remaining,
         daily_losses=consec_losses,
-        max_daily_losses=MAX_DAILY_LOSSES,
+        max_daily_losses=max_daily_losses_cfg,
         trades_today=trades_today_count,
         max_trades_today=MAX_DAILY_TRADES,
     )
     if risk_html:
         st.markdown(risk_html, unsafe_allow_html=True)
+        if not daily_limits[0] or not cooldown_info[0] or consec_losses > 0:
+            c_hud_sp, c_hud_btn = st.columns([5, 1])
+            with c_hud_btn:
+                if st.button("🔄 Reset Limits", key=f"btn_reset_limits_{idx}", help="Reset loss streak and cooldown timer"):
+                    risk_mgr.reset_daily_limits()
+                    st.toast("Daily loss streak and cooldown successfully reset!", icon="✅")
+                    st.rerun()
 
     # ── LOG SIGNAL (ENTER TRADE) ──
     if final_signal in ("BUY CE", "BUY PE") and final_conf in ("HIGH", "MEDIUM"):
