@@ -249,7 +249,7 @@ open_count = sum(
     len([t for t in st.session_state.get(sk(idx, "trade_log"), []) if t.get("Status") == "OPEN"])
     for idx in INDEX_CONFIG
 )
-open_tab_label = f"● OPEN TRADES {open_count}" if open_count > 0 else "OPEN TRADES"
+open_tab_label = "OPEN TRADES"
 
 tab_options = [
     open_tab_label,
@@ -265,6 +265,18 @@ tab_options = [
     "⚡ ACTIVITY",
     "SETTINGS",
 ]
+
+# Keep the widget value stable while formatting its visible label with the live count.
+def _format_nav_label(tab):
+    if tab == open_tab_label and open_count > 0:
+        return f"● OPEN TRADES {open_count}"
+    return tab
+
+
+# Normalize values saved by versions that included the live count in the option itself.
+saved_nav_value = st.session_state.get("main_nav_pills")
+if isinstance(saved_nav_value, str) and "OPEN TRADES" in saved_nav_value:
+    st.session_state["main_nav_pills"] = open_tab_label
 
 # Track active tab across reruns and open_count badge updates
 if "active_nav_tab" not in st.session_state:
@@ -294,6 +306,7 @@ selected_tab = st.pills(
     label_visibility="collapsed",
     key="main_nav_pills",
     on_change=_on_nav_change,
+    format_func=_format_nav_label,
 )
 
 if not selected_tab:

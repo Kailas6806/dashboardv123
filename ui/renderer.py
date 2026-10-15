@@ -36,6 +36,25 @@ def sk(idx, key):
     return f"{idx}_{key}"
 
 
+def _merge_trade_records(
+    idx,
+    db_trades,
+    foreground_trades,
+    session_trades,
+):
+    """Merge trade sources, preferring the session log used by the UI badge."""
+    trades_by_id = {}
+    for trades in (db_trades, foreground_trades, session_trades):
+        for trade in trades:
+            trade_id = (
+                trade.get("trade_id")
+                or trade.get("_journal_id")
+                or f"{idx}_{trade.get('Entry Time')}_{trade.get('Strike')}"
+            )
+            trades_by_id[trade_id] = trade
+    return list(trades_by_id.values())
+
+
 def init_state(idx):
     """Initialize per-index session state keys."""
     defaults = [
@@ -875,24 +894,16 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     # 2. Sync and merge trades across DB, foreground scanner, and session state
     from core.foreground_scanner import get_index_trade_log
     for idx in INDEX_CONFIG:
-        idx_trades_map = {}
-        for t in db_today_trades:
-            if str(t.get("Index") or "").upper() == idx:
-                tid = t.get("trade_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
-                idx_trades_map[tid] = t
-
-        fg_trades = get_index_trade_log(idx)
-        if fg_trades:
-            for t in fg_trades:
-                tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
-                idx_trades_map[tid] = t
-
-        for t in st.session_state.get(sk(idx, "trade_log"), []):
-            tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
-            if tid not in idx_trades_map:
-                idx_trades_map[tid] = t
-
-        merged_list = list(idx_trades_map.values())
+        index_db_trades = [
+            trade for trade in db_today_trades
+            if str(trade.get("Index") or "").upper() == idx
+        ]
+        merged_list = _merge_trade_records(
+            idx,
+            index_db_trades,
+            get_index_trade_log(idx),
+            st.session_state.get(sk(idx, "trade_log"), []),
+        )
         merged_list.sort(key=lambda x: str(x.get("recorded_at") or x.get("Entry Time") or ""), reverse=True)
         st.session_state[sk(idx, "trade_log")] = merged_list
 
@@ -2370,5 +2381,4 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                         st.error(f"❌ Execution Blocked: {msg}")
             else:
                 st.button(f"🔒 Check Box Above to Arm & Fire Order", disabled=True, use_container_width=True)
-
 
