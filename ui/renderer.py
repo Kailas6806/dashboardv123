@@ -85,7 +85,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     """
     Render a full index tab (NIFTY / BANKNIFTY / FINNIFTY).
     Fetches data, generates signals, manages trades, renders UI.
-    Supports BackgroundTradingEngine for sub-5ms instant rendering and continuous multi-index scanning.
+    Supports Foreground multi-index scanner for sub-5ms instant rendering.
     """
     cfg = INDEX_CONFIG[idx]
     lot = cfg["lot"]
@@ -98,26 +98,31 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     now_time = now_ist.time()
     in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
 
-    # ── CHECK BACKGROUND SCANNER FIRST (Instant sub-5ms render) ──
-    bg_state = bg_engine.get_latest_state(idx) if bg_engine else None
-    if bg_state:
-        st.session_state[tlog_key] = bg_engine.get_trade_log(idx)
-        records = bg_state["records"]
-        spot = bg_state["spot"]
+    # ── CHECK PRECOMPUTED FOREGROUND SCANNER STATE FIRST (Instant sub-5ms render) ──
+    latest_state = st.session_state.get(sk(idx, "latest_state"))
+    if not latest_state:
+        from core.foreground_scanner import get_latest_index_state
+        latest_state = get_latest_index_state(idx)
+
+    if latest_state:
+        if latest_state.get("tlog"):
+            st.session_state[tlog_key] = latest_state["tlog"]
+        records = latest_state["records"]
+        spot = latest_state["spot"]
         data = {"records": {"data": records, "underlyingValue": spot}}
-        df = bg_state["df"]
-        md = bg_state["market_data"]
-        signal = bg_state["raw_signal"]
-        confidence = bg_state["raw_conf"]
-        filter_reason = bg_state["filter_reason"]
-        trap = bg_state["trap"]
-        final_signal = bg_state["final_signal"]
-        final_conf = bg_state["final_conf"]
-        updated_buf = bg_state["buffer"]
-        conf_score = bg_state["conf_score"]
-        sideways_info = bg_state["sideways_info"]
-        cooldown_info = bg_state["cooldown_info"]
-        daily_limits = bg_state["daily_limits"]
+        df = latest_state["df"]
+        md = latest_state["market_data"]
+        signal = latest_state["raw_signal"]
+        confidence = latest_state["raw_conf"]
+        filter_reason = latest_state["filter_reason"]
+        trap = latest_state["trap"]
+        final_signal = latest_state["final_signal"]
+        final_conf = latest_state["final_conf"]
+        updated_buf = latest_state["buffer"]
+        conf_score = latest_state["conf_score"]
+        sideways_info = latest_state["sideways_info"]
+        cooldown_info = latest_state["cooldown_info"]
+        daily_limits = latest_state["daily_limits"]
     else:
         # Fallback to local fetch if background engine hasn't scanned yet
         import json
@@ -243,10 +248,10 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         )
         sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
-    # ── OPEN TRADES CHECK (Strict 1 open trade per index) ──
     open_exists = any(t.get("Status") == "OPEN" for t in st.session_state.get(tlog_key, []))
-    if not open_exists and bg_engine:
-        open_exists = any(t.get("Status") == "OPEN" for t in bg_engine.get_trade_log(idx))
+    if not open_exists:
+        from core.foreground_scanner import get_index_trade_log
+        open_exists = any(t.get("Status") == "OPEN" for t in get_index_trade_log(idx))
     if not open_exists and journal:
         try:
             open_exists = any(t.get("Status") == "OPEN" and str(t.get("Index") or "").upper() == idx for t in journal.get_all_trades())
@@ -571,10 +576,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             and can_afford
         )
 
-        # Single Engine Authority: If background engine is running, it autonomously executes trades.
-        # UI renderer defers to background engine to eliminate duplicate execution race conditions.
-        if bg_engine and hasattr(bg_engine, "is_running") and bg_engine.is_running():
-            can_enter = False
+        # Single Engine Authority: The Foreground Scanner handles autonomous trade entries on every UI refresh.
+        # UI renderer defers autonomous entries to the scanner to eliminate duplicate execution race conditions.
+        can_enter = False
 
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):
@@ -868,7 +872,8 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     except Exception as e:
         logger.warning(f"TradeDB query in render_open_trades_tab: {e}")
 
-    # 2. Sync and merge trades across DB, background engine, and session state
+    # 2. Sync and merge trades across DB, foreground scanner, and session state
+    from core.foreground_scanner import get_index_trade_log
     for idx in INDEX_CONFIG:
         idx_trades_map = {}
         for t in db_today_trades:
@@ -876,12 +881,11 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                 tid = t.get("trade_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
                 idx_trades_map[tid] = t
 
-        if bg_engine:
-            bg_trades = bg_engine.get_trade_log(idx)
-            if bg_trades:
-                for t in bg_trades:
-                    tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
-                    idx_trades_map[tid] = t
+        fg_trades = get_index_trade_log(idx)
+        if fg_trades:
+            for t in fg_trades:
+                tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
+                idx_trades_map[tid] = t
 
         for t in st.session_state.get(sk(idx, "trade_log"), []):
             tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
@@ -940,8 +944,8 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                     
                     # Record exit in journal
                     journal = st.session_state.get("_journal")
+                    trade = ev["trade"]
                     if journal:
-                        trade = ev["trade"]
                         journal.update_trade(
                             trade.get("_journal_id", ""),
                             {
@@ -953,6 +957,24 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                             },
                             trade
                         )
+                    # Send Telegram exit alert
+                    try:
+                        if trade_mgr and hasattr(trade_mgr, "notifier") and trade_mgr.notifier:
+                            res_str = str(trade.get("Result", "CLOSED"))
+                            emoji = "🟢" if "WIN" in res_str else ("🔴" if "LOSS" in res_str or "SL" in res_str else "🛡️")
+                            trade_mgr.notifier.send_exit_alert(
+                                idx=idx,
+                                signal=trade.get("Signal", ""),
+                                result_emoji=emoji,
+                                result_text=res_str,
+                                strike=str(trade.get("Strike", "")),
+                                entry=str(trade.get("Entry Price", "")),
+                                exit_price=str(trade.get("Exit Price", "")),
+                                pnl=str(trade.get("Actual P&L ₹", "")),
+                                time_str=str(trade.get("Exit Time") or now.strftime("%I:%M:%S %p")),
+                            )
+                    except Exception as e_ntf:
+                        logger.warning(f"Error sending exit alert from open trades tab: {e_ntf}")
         except Exception as e:
             logger.warning(f"Open trades update error for {idx}: {e}")
 

@@ -29,7 +29,8 @@ def main():
         from core.trade_manager import TradeManager
         from analytics.trade_journal import TradeJournal
         from core.ai_copilot import AICopilot
-        from core.background_engine import get_background_engine
+        from core.foreground_scanner import run_foreground_market_scan, get_scanner_status
+        from core.signal_audit import get_signal_auditor
 
         print("[*] Initializing core modules & Angel One API...")
         fetcher = get_fetcher()
@@ -38,50 +39,48 @@ def main():
         trade_mgr = TradeManager(notifier=None, risk_mgr=risk_mgr)
         journal = TradeJournal()
         copilot = AICopilot()
+        auditor = get_signal_auditor()
 
-        bg_engine = get_background_engine(
-            fetcher=fetcher,
-            signal_engine=signal_engine,
-            risk_mgr=risk_mgr,
-            trade_mgr=trade_mgr,
-            journal=journal,
-            copilot=copilot,
-        )
-
-        bg_engine.ai_auto_trade = True
-        print("[*] Starting background scanner daemon thread...")
-        bg_engine.start()
-        print("[+] Background Trading Engine is ACTIVE and monitoring all indices.")
+        print("[*] Starting sequential multi-index market scanning loop...")
+        print("[+] Scanner is ACTIVE and monitoring all indices (NIFTY, BANKNIFTY, FINNIFTY).")
         print("[+] Logs are recorded to logs/v12.log and logs/signal_audit.jsonl")
         print("[+] Press Ctrl+C at any time to stop.\n")
 
         last_report_ts = 0.0
         while True:
-            time.sleep(5)
+            run_foreground_market_scan(
+                fetcher=fetcher,
+                signal_engine=signal_engine,
+                risk_mgr=risk_mgr,
+                trade_mgr=trade_mgr,
+                journal=journal,
+                copilot=copilot,
+                ai_auto_trade=True,
+                force=True,
+            )
+            time.sleep(3)
             now_ist = datetime.datetime.now(IST)
             now_ts = time.time()
 
             # Print a clean 30-second heartbeat in terminal
             if now_ts - last_report_ts >= 30.0:
                 last_report_ts = now_ts
-                scans = bg_engine.total_scans
-                stats = bg_engine.get_audit_stats()
+                status = get_scanner_status()
+                stats = auditor.get_audit_stats()
                 tot = stats.get("total_setups", 0)
                 exec_count = stats.get("executed", 0)
                 rej_count = stats.get("rejected", 0)
 
                 print(
                     f"[{now_ist.strftime('%I:%M:%S %p')}] "
-                    f"Scans: {scans:,} | Setups Evaluated: {tot} | "
+                    f"Scans: {status.get('total_scans', 0):,} | Setups Evaluated: {tot} | "
                     f"Executed: {exec_count} | Filtered: {rej_count} | "
-                    f"Status: {bg_engine.engine_status}"
+                    f"Status: {status.get('status', 'RUNNING')}"
                 )
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping background daemon...")
-        if 'bg_engine' in locals():
-            bg_engine.stop()
-        print("[+] Daemon safely stopped.")
+        print("\n[*] Stopping scanner...")
+        print("[+] Safely stopped.")
     except Exception as e:
         log.error(f"Fatal error in background daemon: {e}", exc_info=True)
         print(f"\n[!] Error: {e}")

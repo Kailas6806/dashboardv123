@@ -18,16 +18,16 @@ except ImportError:
     AI_MIN_CONVICTION = 60
 
 
-def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
+def render_audit_tab(auditor: Any = None, fetcher: Any = None, copilot: Any = None) -> None:
     st.markdown("<h3 style='color:#38bdf8; margin-bottom:4px;'>🎯 Signal Audit & Rejection Intelligence</h3>", unsafe_allow_html=True)
     st.caption("Live timeline of all scanned setups, rule scores, AI conviction ratings, and exact rejection rationale.")
 
-    if not bg_engine:
-        st.warning("⚠️ Background Scanner Engine is not initialized.")
-        return
+    if not auditor:
+        from core.signal_audit import get_signal_auditor
+        auditor = get_signal_auditor()
 
     # Fetch audit recent log (up to 2000 entries across sessions)
-    raw_logs = bg_engine.get_audit_log(limit=2000)
+    raw_logs = auditor.get_audit_log(limit=2000)
 
     # Discover available dates (YYYY-MM-DD)
     available_dates = []
@@ -41,7 +41,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     # Active date from session state (allows reactive KPI calculation)
     active_date = st.session_state.get("audit_date_filter", "ALL DATES")
     date_param = active_date if active_date != "ALL DATES" else None
-    stats = bg_engine.get_audit_stats(date_str=date_param)
+    stats = auditor.get_audit_stats(date_str=date_param)
 
     # ─────────────────────────────────────────────────────────────
     # 1. TOP KPI DASHBOARD

@@ -53,6 +53,7 @@ for _k, _default in [
     ("MAX_DAILY_LOSS", 9000),
     ("DAILY_TGT", 3000),
     ("PROFIT_LOCK_START", 1500),
+    ("ENABLE_WEBSOCKET", False),
     ("ML_ENABLED", False),
     ("GEMINI_API_KEY", ""),
     ("GEMINI_MODEL", "gemini-3.5-flash-lite"),
@@ -78,6 +79,8 @@ for _k, _default in [
                 _val = int(_val)
             except Exception:
                 pass
+        elif _k == "ENABLE_WEBSOCKET":
+            _val = _val.lower() in ("true", "1", "yes")
     setattr(config, _k, _val)
 
 # Core constants exported for main.py
@@ -153,48 +156,60 @@ journal       = st.session_state["_journal"]
 copilot       = st.session_state["_copilot"]
 fetcher       = get_fetcher()
 
-# ── BACKGROUND AUTONOMOUS 3-INDEX SCANNING DAEMON ──
-from core.background_engine import get_background_engine
-bg_engine = get_background_engine(
+# ── 100% FOREGROUND MULTI-INDEX SCANNER & AUDITOR ──
+from core.foreground_scanner import (
+    run_foreground_market_scan, get_scanner_status,
+    get_latest_index_state, get_index_trade_log
+)
+from core.signal_audit import get_signal_auditor
+auditor = get_signal_auditor()
+
+# ── INITIALIZE PER-INDEX STATE (Loaded once into session state for instant sub-50ms tab switching) ──
+for idx in INDEX_CONFIG:
+    init_state(idx)
+    if not st.session_state.get(f"_trades_loaded_{idx}"):
+        initial_trades = []
+        if hasattr(journal, "db") and journal.db:
+            try:
+                now_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+                db_t = journal.db.get_all_trades(instrument=idx)
+                if db_t:
+                    initial_trades = [t for t in db_t if str(t.get("date") or "")[:10] == now_date]
+            except Exception:
+                initial_trades = []
+        if not initial_trades:
+            initial_trades = load_log(idx)
+        st.session_state[sk(idx, "trade_log")] = initial_trades
+        st.session_state[f"_trades_loaded_{idx}"] = True
+
+# Initial foreground multi-index scan (NIFTY -> BANKNIFTY -> FINNIFTY)
+latest_scan_results = run_foreground_market_scan(
     fetcher=fetcher,
     signal_engine=signal_engine,
     risk_mgr=risk_mgr,
     trade_mgr=trade_mgr,
     journal=journal,
     copilot=copilot,
+    ai_auto_trade=st.session_state.get("ai_auto_trade", True),
 )
-if getattr(config, "ENABLE_BACKGROUND_SCANNER", True) and not bg_engine.is_running():
-    bg_engine.start()
-
-if "ai_auto_trade" in st.session_state:
-    bg_engine.ai_auto_trade = st.session_state["ai_auto_trade"]
-
-# ── INITIALIZE PER-INDEX STATE (Loaded once into session state for instant sub-50ms tab switching) ──
-for idx in INDEX_CONFIG:
-    init_state(idx)
-    if not st.session_state.get(f"_trades_loaded_{idx}"):
-        st.session_state[sk(idx, "trade_log")] = bg_engine.get_trade_log(idx) if bg_engine else load_log(idx)
-        st.session_state[f"_trades_loaded_{idx}"] = True
-
 
 # ── COMPUTE TICKER & MARKET STATUS ──
 now_ist = datetime.datetime.now(IST)
 market_open = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
 datetime_str = now_ist.strftime("%d %b %Y | %I:%M %p")
 
-# Check and ensure WebSocket streaming during trading hours
+# Check and ensure WebSocket streaming during trading hours (if ENABLE_WEBSOCKET is True)
 ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
 
 ticker_items = []
 import json
 for idx in INDEX_CONFIG:
     spot = None
-    # 1. Check background engine evaluated spot first
-    if bg_engine:
-        bg_s = bg_engine.get_latest_state(idx)
-        if bg_s and bg_s.get("spot"):
-            spot = bg_s["spot"]
-    # 2. Check live sub-50ms WebSocket spot tick
+    # 1. Check latest foreground evaluated spot
+    latest_st = latest_scan_results.get(idx) or st.session_state.get(sk(idx, "latest_state"))
+    if latest_st and latest_st.get("spot"):
+        spot = latest_st["spot"]
+    # 2. Check live sub-50ms WebSocket spot tick (if active)
     if spot is None and fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
         tok = fetcher.index_tokens.get(idx, {}).get("token")
         if tok:
@@ -220,7 +235,7 @@ is_connected = any(it.get("spot") is not None for it in ticker_items)
 
 # ── RENDER HEADER & TICKER ──
 try:
-    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=bg_engine.is_running()), unsafe_allow_html=True)
+    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=True), unsafe_allow_html=True)
 except TypeError:
     st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
@@ -280,34 +295,35 @@ if not selected_tab:
 else:
     st.session_state["active_nav_tab"] = selected_tab
 
-# ── BACKGROUND OPEN TRADES MONITOR ──
-# Ensure stop loss / target monitoring continues even when viewing other tabs
-for _bg_idx in INDEX_CONFIG:
-    if selected_tab == _bg_idx or ("OPEN TRADES" in selected_tab):
-        continue
-    _bg_tlog = st.session_state.get(sk(_bg_idx, "trade_log"), [])
-    if any(t.get("Status") == "OPEN" for t in _bg_tlog):
-        try:
-            trade_mgr.update_live_prices(_bg_idx, _bg_tlog, {}, now_ist, fetcher=fetcher)
-        except Exception:
-            pass
+# ── FOREGROUND MULTI-INDEX SCANNER & TAB FRAGMENTS ──
+# On every UI refresh cycle (run_every=FRAGMENT_REFRESH_SECONDS = 3s):
+# The foreground loop scans NIFTY, BANKNIFTY, FINNIFTY sequentially, evaluates signals,
+# checks SL/TP exits, executes autonomous entries (max 1 open trade per index), and persists state.
 
-# ── FRAGMENTS (Only active tab runs its refresh timer!) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_open_trades():
-    render_open_trades_tab(trade_mgr, fetcher, bg_engine=bg_engine)
+    run_foreground_market_scan(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_open_trades_tab(trade_mgr, fetcher)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_nifty():
-    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
+    run_foreground_market_scan(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_banknifty():
-    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
+    run_foreground_market_scan(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_finnifty():
-    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot, bg_engine=bg_engine)
+    run_foreground_market_scan(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+    render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
+
+@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
+def foreground_scanner_daemon_worker():
+    """Keeps the multi-index foreground scan loop active when viewing non-index tabs."""
+    run_foreground_market_scan(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 def show_analytics():
     render_analytics_tab(journal)
@@ -321,7 +337,11 @@ def show_autonomous():
     from ui.renderer import render_autonomous_tab
     render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
-# ── PURE LAZY TAB RENDERING (Only active tab executes) ──
+# When on non-index tabs, keep foreground scanning alive every FRAGMENT_REFRESH_SECONDS
+if selected_tab not in ("NIFTY", "BANKNIFTY", "FINNIFTY") and "OPEN TRADES" not in selected_tab:
+    foreground_scanner_daemon_worker()
+
+# ── PURE LAZY TAB RENDERING ──
 if "OPEN TRADES" in selected_tab:
     show_open_trades()
 elif selected_tab == "NIFTY":
@@ -339,14 +359,14 @@ elif "AUTONOMOUS AI" in selected_tab:
     show_autonomous()
 elif "SIGNAL AUDIT" in selected_tab:
     from ui.audit_renderer import render_audit_tab
-    render_audit_tab(bg_engine, fetcher, copilot)
+    render_audit_tab(auditor, fetcher, copilot)
 elif selected_tab == "TRADE HISTORY":
     render_trade_history_tab(journal)
 elif selected_tab == "ANALYTICS":
     show_analytics()
 elif "ACTIVITY" in selected_tab:
     from ui.health_renderer import render_health_dashboard
-    render_health_dashboard(fetcher, trade_mgr, copilot, bg_engine=bg_engine)
+    render_health_dashboard(fetcher, trade_mgr, copilot)
 elif selected_tab == "SETTINGS":
     render_settings_tab(trade_mgr, journal)
 
