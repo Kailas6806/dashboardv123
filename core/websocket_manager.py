@@ -181,9 +181,9 @@ class SmartWebSocketManager:
 
             self._reconnect_attempts += 1
 
-            # Auto-refresh session tokens on persistent disconnects:
-            # If socket fails 2 consecutive times, re-authenticate with Angel One to fetch a fresh feedToken
-            if self._reconnect_attempts >= 2 and self._token_refresher:
+            # Refresh once per retry cycle, without clearing failures when refreshed
+            # credentials still fail to establish a connection.
+            if self._reconnect_attempts == 2 and self._token_refresher:
                 log.warning("WebSocket disconnected (%d consecutive attempts). Re-authenticating with Angel One for fresh feedToken...", self._reconnect_attempts)
                 try:
                     new_auth, new_feed = self._token_refresher()
@@ -192,7 +192,6 @@ class SmartWebSocketManager:
                             self.auth_token = new_auth
                             self.feed_token = new_feed
                         log.info("Fresh Angel One tokens acquired for WebSocket.")
-                        self._reconnect_attempts = 0
                 except Exception as ex:
                     log.warning("Failed to refresh Angel One WebSocket tokens: %s", ex)
 
