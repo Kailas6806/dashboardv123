@@ -182,8 +182,8 @@ class SmartWebSocketManager:
             self._reconnect_attempts += 1
 
             # Auto-refresh session tokens on persistent disconnects:
-            # If socket fails 3 consecutive times, re-authenticate with Angel One to fetch a fresh feedToken
-            if self._reconnect_attempts >= 3 and self._token_refresher:
+            # If socket fails 2 consecutive times, re-authenticate with Angel One to fetch a fresh feedToken
+            if self._reconnect_attempts >= 2 and self._token_refresher:
                 log.warning("WebSocket disconnected (%d consecutive attempts). Re-authenticating with Angel One for fresh feedToken...", self._reconnect_attempts)
                 try:
                     new_auth, new_feed = self._token_refresher()
@@ -191,22 +191,28 @@ class SmartWebSocketManager:
                         with self._lock:
                             self.auth_token = new_auth
                             self.feed_token = new_feed
-                            self.sws = SmartWebSocketV2(
-                                auth_token=self.auth_token,
-                                api_key=self.api_key,
-                                client_code=self.client_code,
-                                feed_token=self.feed_token,
-                                max_retry_attempt=2,
-                                retry_strategy=1,
-                                retry_delay=5,
-                            )
-                            self.sws.on_open = self._on_open
-                            self.sws.on_data = self._on_data
-                            self.sws.on_error = self._on_error
-                            self.sws.on_close = self._on_close
-                        log.info("SmartWebSocket client re-initialized with fresh Angel One tokens.")
+                        log.info("Fresh Angel One tokens acquired for WebSocket.")
                 except Exception as ex:
                     log.warning("Failed to refresh Angel One WebSocket tokens: %s", ex)
+
+            # Always re-instantiate a clean SmartWebSocketV2 client to reset internal retry counters
+            with self._lock:
+                try:
+                    self.sws = SmartWebSocketV2(
+                        auth_token=self.auth_token,
+                        api_key=self.api_key,
+                        client_code=self.client_code,
+                        feed_token=self.feed_token,
+                        max_retry_attempt=2,
+                        retry_strategy=1,
+                        retry_delay=5,
+                    )
+                    self.sws.on_open = self._on_open
+                    self.sws.on_data = self._on_data
+                    self.sws.on_error = self._on_error
+                    self.sws.on_close = self._on_close
+                except Exception as ws_ex:
+                    log.warning("Failed to re-instantiate SmartWebSocketV2: %s", ws_ex)
 
             if self._reconnect_attempts >= 5:
                 log.warning("WebSocket disconnected (%d consecutive attempts). Cooling down for 30s before reconnecting...", self._reconnect_attempts)
