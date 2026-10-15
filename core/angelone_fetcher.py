@@ -9,6 +9,7 @@ import threading
 import urllib.request, email.utils
 from typing import Optional, Tuple, Dict, Any, List
 from SmartApi import SmartConnect
+import config
 from config import ANGEL_API_KEY, ANGEL_CLIENT_ID, ANGEL_PASSWORD, ANGEL_TOTP_SECRET, INDEX_CONFIG, BASE_DIR, IST
 from utils.cache import TTLCache
 import datetime

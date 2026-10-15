@@ -7,6 +7,7 @@ import time
 import threading
 import logging
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+import config
 
 try:
     from utils.logger import get_logger

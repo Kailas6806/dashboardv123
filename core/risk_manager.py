@@ -7,6 +7,7 @@ import datetime
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+import config
 from config import (
     MAX_LOSS,
     MAX_INDEX_DAILY_LOSS,
@@ -278,11 +279,7 @@ class RiskManager:
 
         # 2. Consecutive loss limit
         consecutive_losses = 0
-        try:
-            import config
-            max_losses = getattr(config, "MAX_DAILY_LOSSES", 5)
-        except Exception:
-            max_losses = 5
+        max_losses = getattr(config, "MAX_DAILY_LOSSES", 5)
 
         for t in closed:
             if getattr(self, "_reset_time", None) and t.get("Exit Time"):

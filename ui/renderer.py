@@ -11,13 +11,14 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import config
 from config import (
     INDEX_CONFIG, CAPITAL, DAILY_TGT, IST, LOG_COLS,
     MARKET_OPEN_TIME, MARKET_CLOSE_TIME, AUTO_SQUARE_OFF_TIME,
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, is_expiry_day,
     MAX_LOSS, MAX_DAILY_LOSS, MAX_DAILY_LOSSES, MAX_DAILY_TRADES, COOLDOWN_SECONDS,
     BASE_DIR, LOG_DIR, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-    AI_AUTO_TRADE_DEFAULT, AI_MIN_CONVICTION,
+    AI_AUTO_TRADE_DEFAULT, AI_MIN_CONVICTION, MIN_CONFIDENCE_SCORE,
 )
 from ui.components import (
     render_kpi_grid, render_filter_grid, render_signal_card,
@@ -529,7 +530,6 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         except Exception:
             can_afford, afford_reason = True, ""
 
-        import config
         min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 30)
         if daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
@@ -599,7 +599,6 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
 
             # ── XGBOOST ML VALIDATION (ADVISORY & DISABLED CHECK) ──
-            import config
             ML_ENABLED = getattr(config, "ML_ENABLED", False)
             xgb_ok = True
             xgb_prob = 0.0
@@ -1441,7 +1440,6 @@ def render_settings_tab(trade_mgr, journal):
     - Telegram connection status
     """
     import os
-    import config
     from config import (
         CAPITAL, MAX_LOSS, MAX_DAILY_LOSS, DAILY_TGT,
         COOLDOWN_SECONDS, MARKET_OPEN_TIME, MARKET_CLOSE_TIME,
