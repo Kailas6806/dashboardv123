@@ -249,7 +249,7 @@ class RiskManager:
         self, trade_log: List[Dict[str, Any]]
     ) -> Tuple[bool, str]:
         """Check daily limits across all indices:
-        1. Max trades per day total (MAX_DAILY_TRADES = 10).
+        1. Max trades per day total (MAX_DAILY_TRADES = 30).
         2. Consecutive loss limit.
         3. Max daily portfolio loss limit (₹9,000).
 

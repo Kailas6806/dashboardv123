@@ -577,7 +577,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         price_too_low = ep < MIN_ENTRY_PRICE and not expiry_today
         # 3. Block if unusual OI spike detected (manipulation risk)
         oi_unusual = md.get("oi_unusual_activity", False)
-        # 4. Strict daily trade limit: max 3 trades per day across portfolio
+        # 4. Strict daily trade limit across portfolio
         daily_trades_exceeded = trades_today_count >= MAX_DAILY_TRADES
 
         # 5. Margin Check: Ensure account has enough cash to buy option

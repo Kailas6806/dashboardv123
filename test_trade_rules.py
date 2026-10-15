@@ -2,7 +2,7 @@
 Unit test suite verifying:
 1. Stop loss strictly capped at <= MAX_LOSS (₹1,500) under all conditions (including large ATR).
 2. Profit target set based on DAILY_TGT (₹3,000 / 1:2 R:R).
-3. Max daily trades limit across the portfolio (MAX_DAILY_TRADES = 10).
+3. Max daily trades limit across the portfolio (MAX_DAILY_TRADES = 30).
 4. Cumulative daily loss limit across the portfolio (MAX_DAILY_LOSS = ₹9,000).
 5. Dynamic R-Multiple Trailing Profit Lock:
    - When trade reaches 1:2 R or higher, SL is moved to lock guaranteed profit.
@@ -58,8 +58,9 @@ class TestTradeRules(unittest.TestCase):
 
     def test_max_daily_trades_limit(self):
         """Portfolio should block new trades when MAX_DAILY_TRADES limit is reached."""
+        self.assertEqual(30, MAX_DAILY_TRADES)
         now = datetime.datetime.now(IST)
-        # 9 trades: allowed
+        # One fewer than the limit: allowed
         trades = [
             {"Entry Time": f"09:{i:02d}:00 AM", "Status": "CLOSED", "Actual P&L ₹": 100, "Result": "🟢 WIN"}
             for i in range(MAX_DAILY_TRADES - 1)
@@ -67,7 +68,7 @@ class TestTradeRules(unittest.TestCase):
         allowed, _ = self.risk_mgr.check_daily_limits(trades)
         self.assertTrue(allowed)
 
-        # 10 trades: blocked!
+        # At the limit: blocked
         trades.append(
             {"Entry Time": "11:00:00 AM", "Status": "CLOSED", "Actual P&L ₹": 100, "Result": "🟢 WIN"}
         )
