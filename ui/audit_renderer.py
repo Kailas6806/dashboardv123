@@ -26,9 +26,22 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
         st.warning("⚠️ Background Scanner Engine is not initialized.")
         return
 
-    # Fetch audit statistics & recent log
-    stats = bg_engine.get_audit_stats()
-    raw_logs = bg_engine.get_audit_log(limit=300)
+    # Fetch audit recent log (up to 2000 entries across sessions)
+    raw_logs = bg_engine.get_audit_log(limit=2000)
+
+    # Discover available dates (YYYY-MM-DD)
+    available_dates = []
+    for r in raw_logs:
+        d = r.get("date") or (str(r.get("timestamp", ""))[:10] if r.get("timestamp") else "")
+        if d and len(d) == 10 and d not in available_dates:
+            available_dates.append(d)
+    available_dates.sort(reverse=True)
+    date_options = ["ALL DATES"] + available_dates
+
+    # Active date from session state (allows reactive KPI calculation)
+    active_date = st.session_state.get("audit_date_filter", "ALL DATES")
+    date_param = active_date if active_date != "ALL DATES" else None
+    stats = bg_engine.get_audit_stats(date_str=date_param)
 
     # ─────────────────────────────────────────────────────────────
     # 1. TOP KPI DASHBOARD
@@ -39,6 +52,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     neutral = stats.get("neutral_wait", 0)
 
     rejection_pct = round((rejected / tot_setups * 100), 1) if tot_setups > 0 else 0.0
+    date_subtext = f"Date: {active_date}" if active_date != "ALL DATES" else "All recorded history"
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
@@ -47,7 +61,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
         <div style="background:#111421; border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Evaluated Setups</div>
             <div style="font-size:24px; font-weight:800; color:#38bdf8; margin-top:4px;">{tot_setups:,}</div>
-            <div style="font-size:10px; color:#64748b;">Multi-index radar ticks</div>
+            <div style="font-size:10px; color:#64748b;">{date_subtext}</div>
         </div>
         """).strip(), unsafe_allow_html=True)
 
@@ -86,20 +100,27 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     # ─────────────────────────────────────────────────────────────
     # 2. FILTER & SEARCH CONTROLS
     # ─────────────────────────────────────────────────────────────
-    f1, f2, f3 = st.columns([1.5, 2, 2])
-    with f1:
+    f_date, f_idx, f_status, f_search = st.columns([1.6, 1.3, 1.5, 2.4])
+    with f_date:
+        cur_date_idx = 0
+        if active_date in date_options:
+            cur_date_idx = date_options.index(active_date)
+        selected_date = st.selectbox("📅 Filter Date", date_options, index=cur_date_idx, key="audit_date_filter")
+    with f_idx:
         selected_idx = st.selectbox("Filter Index", ["ALL", "NIFTY", "BANKNIFTY", "FINNIFTY"], key="audit_idx_filter")
-    with f2:
+    with f_status:
         selected_status = st.selectbox(
             "Filter Outcome",
             ["ALL", "EXECUTED", "REJECTED", "NEUTRAL_WAIT"],
             key="audit_status_filter"
         )
-    with f3:
+    with f_search:
         search_query = st.text_input("🔍 Search Keyword / Strike / Reason", placeholder="e.g. 24500, conviction, sideways", key="audit_search_box")
 
     # Apply filters
     filtered_logs = list(raw_logs)
+    if selected_date != "ALL DATES":
+        filtered_logs = [r for r in filtered_logs if (r.get("date") or str(r.get("timestamp", ""))[:10]) == selected_date]
     if selected_idx != "ALL":
         filtered_logs = [r for r in filtered_logs if r.get("idx") == selected_idx]
     if selected_status != "ALL":
@@ -113,6 +134,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
             or sq in str(r.get("ai_reasoning", "")).lower()
             or sq in str(r.get("atm", "")).lower()
             or sq in str(r.get("idx", "")).lower()
+            or sq in str(r.get("date", "")).lower()
         ]
 
     # ─────────────────────────────────────────────────────────────
@@ -121,10 +143,11 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     if filtered_logs:
         export_df = pd.DataFrame(filtered_logs)
         csv_data = export_df.to_csv(index=False).encode("utf-8")
+        date_slug = selected_date.replace("-", "") if selected_date != "ALL DATES" else "all_dates"
         st.download_button(
-            label="📥 Export Signal Audit Log to CSV",
+            label=f"📥 Export Signal Audit Log to CSV ({len(filtered_logs)} records)",
             data=csv_data,
-            file_name=f"signal_audit_log_{datetime.datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"signal_audit_{date_slug}_{datetime.datetime.now(IST).strftime('%H%M%S')}.csv",
             mime="text/csv",
             use_container_width=True,
         )
@@ -137,9 +160,14 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
     # ─────────────────────────────────────────────────────────────
     # 4. SIGNAL AUDIT TIMELINE CARDS
     # ─────────────────────────────────────────────────────────────
-    for item in filtered_logs[:60]:
+    for item in filtered_logs[:100]:
         idx_name = item.get("idx", "")
-        time_str = item.get("time_str", "") or item.get("timestamp", "")
+        entry_date = item.get("date") or (str(item.get("timestamp", ""))[:10] if item.get("timestamp") else "")
+        time_part = item.get("time_str", "") or item.get("timestamp", "")
+        if entry_date and entry_date not in time_part:
+            display_time = f"{entry_date} {time_part}"
+        else:
+            display_time = time_part or item.get("timestamp", "")
         spot = item.get("spot", 0.0)
         atm = item.get("atm", 0)
         pcr = item.get("pcr", 1.0)
@@ -193,7 +221,7 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
                     <span style="font-size:11px; color:#64748b;">(ATM {atm})</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:11px; color:#94a3b8;">⏰ {time_str}</span>
+                    <span style="font-size:11px; color:#94a3b8;">⏰ {display_time}</span>
                     <span style="color:{badge_color}; background:{badge_bg}; padding:3px 9px; border-radius:5px; font-weight:700; font-size:11px;">
                         {badge_icon} {badge_text}
                     </span>
@@ -218,5 +246,5 @@ def render_audit_tab(bg_engine: Any, fetcher: Any, copilot: Any) -> None:
 
         # Expandable AI Reasoning Inspector if available
         if ai_reason:
-            with st.expander(f"🧠 Detailed AI Synthesized Reasoning for {idx_name} @ {time_str}"):
+            with st.expander(f"🧠 Detailed AI Synthesized Reasoning for {idx_name} @ {display_time}"):
                 st.markdown(f"<div style='font-size:12px; color:#cbd5e1; line-height:1.5;'>{ai_reason}</div>", unsafe_allow_html=True)

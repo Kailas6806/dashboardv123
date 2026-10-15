@@ -117,7 +117,7 @@ class BackgroundTradingEngine:
                         except Exception:
                             continue
             with self._lock:
-                self._audit_history = entries[-500:]
+                self._audit_history = entries[-2000:]
         except Exception as e:
             logger.warning(f"Error loading signal audit log: {e}")
 
@@ -156,6 +156,7 @@ class BackgroundTradingEngine:
 
         entry = {
             "timestamp": now_ist.strftime("%Y-%m-%d %I:%M:%S %p"),
+            "date": now_ist.strftime("%Y-%m-%d"),
             "time_str": now_ist.strftime("%I:%M:%S %p"),
             "idx": idx,
             "spot": round(float(spot), 2),
@@ -184,8 +185,8 @@ class BackgroundTradingEngine:
 
         with self._lock:
             self._audit_history.append(entry)
-            if len(self._audit_history) > 1000:
-                self._audit_history = self._audit_history[-1000:]
+            if len(self._audit_history) > 2000:
+                self._audit_history = self._audit_history[-2000:]
 
         try:
             os.makedirs(os.path.dirname(self._audit_file), exist_ok=True)
@@ -196,23 +197,28 @@ class BackgroundTradingEngine:
 
     def get_audit_log(
         self,
-        limit: int = 100,
+        limit: int = 1000,
         idx: Optional[str] = None,
         filter_status: Optional[str] = None,
+        date_str: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Return thread-safe slice of audit log filtered by index or status."""
+        """Return thread-safe slice of audit log filtered by date, index, or status."""
         with self._lock:
             records = list(self._audit_history)
+        if date_str and date_str != "ALL":
+            records = [r for r in records if (r.get("date") or str(r.get("timestamp", ""))[:10]) == date_str]
         if idx and idx != "ALL":
             records = [r for r in records if r.get("idx") == idx]
         if filter_status and filter_status != "ALL":
             records = [r for r in records if r.get("status") == filter_status or r.get("rejection_code") == filter_status]
         return records[-limit:][::-1]  # Most recent first
 
-    def get_audit_stats(self) -> Dict[str, Any]:
-        """Return summary statistics across the audit history."""
+    def get_audit_stats(self, date_str: Optional[str] = None) -> Dict[str, Any]:
+        """Return summary statistics across the audit history, optionally filtered by date."""
         with self._lock:
             records = list(self._audit_history)
+        if date_str and date_str != "ALL":
+            records = [r for r in records if (r.get("date") or str(r.get("timestamp", ""))[:10]) == date_str]
         total = len(records)
         executed = sum(1 for r in records if r.get("status") == "EXECUTED")
         rejected = sum(1 for r in records if r.get("status") == "REJECTED")
