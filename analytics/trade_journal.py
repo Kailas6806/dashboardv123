@@ -105,6 +105,7 @@ class TradeJournal:
         self,
         trade: Dict[str, Any],
         signal_metadata: Optional[Dict[str, Any]] = None,
+        require_no_open: bool = False,
     ) -> str:
         """Append a new trade entry and persist immediately.
 
@@ -142,11 +143,13 @@ class TradeJournal:
                             and self._normalize_strike(entry.get("Strike")) == self._normalize_strike(strike)
                             and entry.get("Signal") == signal
                             and (not rec_date or rec_date == today_str)):
+                        if require_no_open:
+                            return ""
                         existing_id = entry.get("trade_id", "")
                         logger.debug("Trade already exists: %s — skipping duplicate", existing_id)
                         return existing_id
 
-            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
             trade_id = f"{idx}_{timestamp}"
 
             entry: Dict[str, Any] = {"trade_id": trade_id}
@@ -162,9 +165,24 @@ class TradeJournal:
             entry["signal_metadata"] = dict(signal_metadata) if signal_metadata else {}
             entry["recorded_at"] = now.isoformat()
 
+            if require_no_open:
+                if not self.db or self.is_custom_path:
+                    logger.error("Cannot atomically record %s without an available trade database", idx)
+                    return ""
+                try:
+                    trade_id = self.db.upsert_trade(entry, signal_metadata, reject_if_open=True)
+                except Exception as e:
+                    logger.error("Atomic open-position check failed for %s: %s", idx, e)
+                    raise
+                if not trade_id:
+                    return ""
+                entry["trade_id"] = trade_id
+            else:
+                trade_id = entry["trade_id"]
+
             self.trades.append(entry)
             self._save()
-            if self.db:
+            if self.db and not require_no_open:
                 try:
                     self.db.upsert_trade(entry, signal_metadata)
                 except Exception as e:

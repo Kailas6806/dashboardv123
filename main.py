@@ -234,11 +234,20 @@ for idx in INDEX_CONFIG:
 is_connected = any(it.get("spot") is not None for it in ticker_items)
 
 # ── RENDER HEADER & TICKER ──
+scanner_enabled = bool(getattr(config, "ENABLE_BACKGROUND_SCANNER", True))
 try:
-    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=True), unsafe_allow_html=True)
+    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=scanner_enabled), unsafe_allow_html=True)
 except TypeError:
     st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
 st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
+scanner_status = get_scanner_status()
+if scanner_enabled:
+    st.caption(
+        f"Auto-scan active · {scanner_status['total_scans']:,} cycles · "
+        f"Last cycle: {scanner_status['last_scan']}"
+    )
+else:
+    st.caption("Auto-scan disabled · Automatic entries are paused.")
 
 # ── DYNAMIC NAVIGATION (FAST LAZY-LOADED TABS) ──
 open_count = sum(
@@ -338,7 +347,7 @@ def show_autonomous():
     render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 # When on non-index tabs, keep foreground scanning alive every FRAGMENT_REFRESH_SECONDS
-if selected_tab not in ("NIFTY", "BANKNIFTY", "FINNIFTY") and "OPEN TRADES" not in selected_tab:
+if scanner_enabled and selected_tab not in ("NIFTY", "BANKNIFTY", "FINNIFTY") and "OPEN TRADES" not in selected_tab:
     foreground_scanner_daemon_worker()
 
 # ── PURE LAZY TAB RENDERING ──

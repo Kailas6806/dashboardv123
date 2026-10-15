@@ -13,11 +13,15 @@ import datetime
 import logging
 
 from utils.logger import get_logger
-from config import IST, MARKET_OPEN_TIME, MARKET_CLOSE_TIME, INDEX_CONFIG
+from config import IST, MARKET_OPEN_TIME, MARKET_CLOSE_TIME, INDEX_CONFIG, ENABLE_BACKGROUND_SCANNER
 
 log = get_logger("background_daemon")
 
 def main():
+    if not ENABLE_BACKGROUND_SCANNER:
+        print("[!] Automatic multi-index scanner is disabled by ENABLE_BACKGROUND_SCANNER.")
+        return
+
     print("=" * 65)
     print("  V12 PRO MAX — Autonomous Background Scanner & Audit Engine  ")
     print("=" * 65)

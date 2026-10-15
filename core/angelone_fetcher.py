@@ -54,6 +54,8 @@ class AngelOneDataFetcher:
         self.scrip_count = 0
         self.scrip_load_time = None
         self._token_symbol_map = {}
+        self._option_scrips_by_expiry = {}
+        self._option_expiries_by_index = {}
         self.total_fetches = 0
         self.total_errors = 0
         self.consecutive_failures = 0
@@ -201,19 +203,41 @@ class AngelOneDataFetcher:
             log.warning("WebSocket initialization error: %s", e)
 
     def _build_token_symbol_map(self):
-        """Construct high-speed in-memory token to symbol lookup dict."""
+        """Build in-memory token and expiry indexes from the scrip master."""
         try:
             if not self.scrip_master:
                 return
             mapping = {}
+            option_scrips_by_expiry = {}
             for item in self.scrip_master:
                 t = str(item.get("token", "")).strip()
                 sym = item.get("symbol") or item.get("tradingsymbol") or item.get("name")
                 if t and sym:
                     mapping[t] = str(sym)
+                if item.get("instrumenttype") == "OPTIDX":
+                    idx_name = item.get("name")
+                    expiry = item.get("expiry")
+                    if idx_name in INDEX_CONFIG and expiry:
+                        option_scrips_by_expiry.setdefault(idx_name, {}).setdefault(expiry, []).append(item)
+
             self._token_symbol_map = mapping
+            self._option_scrips_by_expiry = option_scrips_by_expiry
+            self._option_expiries_by_index = {
+                idx_name: sorted(
+                    expiries,
+                    key=lambda expiry: self._parse_option_expiry(expiry),
+                )
+                for idx_name, expiries in option_scrips_by_expiry.items()
+            }
         except Exception as e:
-            log.debug("Error building token symbol map: %s", e)
+            log.warning("Error building scrip master indexes: %s", e)
+
+    @staticmethod
+    def _parse_option_expiry(expiry):
+        try:
+            return datetime.datetime.strptime(expiry, "%d%b%Y")
+        except (TypeError, ValueError):
+            return datetime.datetime.max
 
     def _load_scrip_master(self):
         cache_file = os.path.join(BASE_DIR, "scrip_master_cache.json")
@@ -346,17 +370,10 @@ class AngelOneDataFetcher:
         strikes = [atm + (i * step) for i in range(-10, 11)]
         
         # 2. Find closest expiry for this index
-        opt_scrips = [s for s in self.scrip_master if s['name'] == idx_name and s['instrumenttype'] == 'OPTIDX']
-        if not opt_scrips: return None
-        
-        # Sort expiries (format DDMMMYYYY e.g. 06OCT2026)
-        def parse_expiry(exp_str):
-            try: return datetime.datetime.strptime(exp_str, '%d%b%Y')
-            except: return datetime.datetime.max
-            
-        expiries = sorted(list(set(s['expiry'] for s in opt_scrips)), key=parse_expiry)
+        expiries = self._option_expiries_by_index.get(idx_name, [])
         if not expiries: return None
         current_expiry = expiries[0]
+        opt_scrips = self._option_scrips_by_expiry[idx_name][current_expiry]
         
         # 3. Collect tokens for strikes
         tokens_to_fetch = []
@@ -424,6 +441,7 @@ class AngelOneDataFetcher:
             records_data.append(record)
             
         result = {
+            "_fetched_at": time.time(),
             "records": {
                 "underlyingValue": spot,
                 "data": records_data
@@ -436,18 +454,11 @@ class AngelOneDataFetcher:
     def get_option_token(self, idx_name: str, strike: float, signal: str) -> Tuple[Optional[str], Optional[str]]:
         """Look up symbolToken and tradingSymbol for an option contract."""
         opt_type = "CE" if "CE" in signal else "PE"
-        opt_scrips = [s for s in self.scrip_master if s.get('name') == idx_name and s.get('instrumenttype') == 'OPTIDX']
-        if not opt_scrips:
-            return None, None
-        
-        # Closest expiry
-        expiries = sorted(
-            list(set(s['expiry'] for s in opt_scrips)),
-            key=lambda exp: datetime.datetime.strptime(exp, '%d%b%Y') if exp else datetime.datetime.max
-        )
+        expiries = self._option_expiries_by_index.get(idx_name, [])
         if not expiries:
             return None, None
         current_expiry = expiries[0]
+        opt_scrips = self._option_scrips_by_expiry[idx_name][current_expiry]
 
         for s in opt_scrips:
             if s.get('expiry') == current_expiry:

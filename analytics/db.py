@@ -320,7 +320,8 @@ class TradeDB:
         self,
         trade: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
+        reject_if_open: bool = False,
+    ) -> Optional[str]:
         """Insert or update a trade record atomically."""
         with self._lock:
             # Clean Pandas NaNs before processing
@@ -376,6 +377,15 @@ class TradeDB:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
+                if reject_if_open:
+                    cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (idx,))
+                    cursor.execute(
+                        "SELECT 1 FROM trades WHERE instrument = %s AND status = 'OPEN' LIMIT 1",
+                        (idx,),
+                    )
+                    if cursor.fetchone():
+                        conn.rollback()
+                        return None
                 cursor.execute("""
                     INSERT INTO trades (
                         trade_id, trade_date, entry_time, exit_time, instrument, signal,

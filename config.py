@@ -125,8 +125,9 @@ CONF_WEIGHT_PCR_MOM   = 15   # max points from PCR momentum streak
 CONF_WEIGHT_SR_PROX   = 10   # max points from S/R proximity
 CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 
-# ── BACKGROUND AUTONOMOUS MULTI-INDEX SCANNER ──
-ENABLE_BACKGROUND_SCANNER = True  # Continuously evaluate all 3 indices in background daemon
+# ── AUTONOMOUS MULTI-INDEX SCANNER ──
+ENABLE_BACKGROUND_SCANNER = True  # Enable automatic multi-index scanning and entries
+MAX_OPTION_CHAIN_AGE_SECONDS = 15
 MIN_CONFIDENCE_SCORE      = 30    # Minimum rule engine score (0-100) to allow trade entry
 
 # ── STREAMLIT REFRESH ──

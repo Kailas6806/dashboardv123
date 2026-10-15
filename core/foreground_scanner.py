@@ -18,12 +18,53 @@ from config import (
     NO_NEW_TRADE_TIME, MIN_ENTRY_PRICE, MAX_DAILY_TRADES,
     MAX_DAILY_LOSSES, COOLDOWN_SECONDS, ATR_PERIOD, ATR_SL_MULTIPLIER,
     is_expiry_day, CAPITAL, AI_AUTO_TRADE_DEFAULT, AI_MIN_CONVICTION,
-    LOG_DIR, LOG_COLS, BASE_DIR, MIN_CONFIDENCE_SCORE
+    LOG_DIR, LOG_COLS, BASE_DIR, MIN_CONFIDENCE_SCORE,
+    MAX_OPTION_CHAIN_AGE_SECONDS,
 )
 from utils.logger import get_logger
 from core.signal_audit import get_signal_auditor
 
 logger = get_logger("foreground_scanner")
+
+
+def _is_fresh_option_chain(data: Dict[str, Any], now_ts: Optional[float] = None) -> bool:
+    """Only allow automatic entries using a timestamped, recent option-chain snapshot."""
+    try:
+        age = (time.time() if now_ts is None else now_ts) - float(data["_fetched_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return 0 <= age <= MAX_OPTION_CHAIN_AGE_SECONDS
+
+
+def _validate_ai_entry(
+    copilot: Optional[Any],
+    idx: str,
+    market_data: Dict[str, Any],
+    signal: str,
+    conf_score: int,
+    ai_auto_trade: bool,
+    active_trades_count: int,
+) -> Tuple[bool, int, str, str]:
+    """Validate automatic entries with AI; never treat a validation failure as approval."""
+    if not ai_auto_trade:
+        return True, conf_score, "BUY", "Rule Engine Autonomous Signal"
+
+    try:
+        if not copilot or not copilot.is_configured():
+            raise RuntimeError("AI validator is not configured")
+        result = copilot.analyze_market_and_signals(
+            idx, market_data, signal, conf_score,
+            active_trades_count=active_trades_count,
+        )
+        score = int(result.get("conviction_score", 0))
+        recommendation = str(result.get("recommendation", "AVOID_WAIT"))
+        summary = result.get("reasoning_summary") or result.get("detailed_reasoning", "")
+        approved = score >= AI_MIN_CONVICTION and "BUY" in recommendation
+        return approved, score, recommendation, str(summary)
+    except Exception as exc:
+        logger.warning("[%s] AI validation failed; blocking entry: %s", idx, exc)
+        return False, 0, "AI_VALIDATION_FAILED", f"AI validation failed: {exc}"
+
 
 # Module-level state cache across foreground refreshes
 _scanner_state: Dict[str, Any] = {
@@ -46,9 +87,10 @@ _scanner_state: Dict[str, Any] = {
 
 def get_scanner_status() -> Dict[str, Any]:
     """Return diagnostic telemetry for Activity/Health tab and app header."""
+    enabled = bool(getattr(config, "ENABLE_BACKGROUND_SCANNER", True))
     return {
-        "running": True,
-        "status": "RUNNING (100% Foreground Loop)",
+        "running": enabled,
+        "status": "RUNNING (100% Foreground Loop)" if enabled else "DISABLED",
         "total_scans": _scanner_state["total_scans"],
         "last_scan": _scanner_state["last_scan_time"] or "Awaiting first cycle",
         "indices": list(INDEX_CONFIG.keys()),
@@ -85,6 +127,10 @@ def run_foreground_market_scan(
     Run sequential foreground scan across NIFTY, BANKNIFTY, and FINNIFTY.
     Throttled by min_interval (default 1.5s) to prevent redundant API spam.
     """
+    if not getattr(config, "ENABLE_BACKGROUND_SCANNER", True):
+        _scanner_state["status"] = "DISABLED"
+        return _scanner_state["latest_states"]
+
     now_ts = time.time()
     if not force and (now_ts - _scanner_state["last_scan_ts"]) < min_interval:
         return _scanner_state["latest_states"]
@@ -204,6 +250,8 @@ def _scan_single_index(
 
     if not data or "records" not in data:
         return
+
+    market_data_fresh = _is_fresh_option_chain(data)
 
     records = data["records"]["data"]
     spot = float(data["records"]["underlyingValue"])
@@ -389,7 +437,8 @@ def _scan_single_index(
         daily_allowed = daily_limits[0]
 
         # Margin check
-        can_afford = True
+        can_afford = False
+        margin_check_error = False
         try:
             cap_info = {"base_capital": CAPITAL, "current_balance": CAPITAL}
             if hasattr(journal, "db") and journal.db:
@@ -401,10 +450,11 @@ def _scan_single_index(
             )
             can_afford, _ = risk_mgr.can_afford_trade(ep, qty, portfolio_stats.get("available_margin", CAPITAL))
         except Exception:
-            can_afford = True
+            margin_check_error = True
 
         can_enter = (
             not open_exists
+            and market_data_fresh
             and not too_late
             and not price_too_low
             and not oi_unusual
@@ -418,29 +468,23 @@ def _scan_single_index(
         last_sig = _scanner_state["last_signals"].get(idx)
 
         if can_enter and final_signal != last_sig:
-            ai_conviction_ok = True
-            ai_pre_score = conf_score
-            ai_pre_rec = "BUY"
-            ai_pre_summary = "Rule Engine Autonomous Signal"
-
-            # AI Pre-Trade Validation
-            if copilot and copilot.is_configured():
-                try:
-                    ai_res = copilot.analyze_market_and_signals(
-                        idx, md, final_signal, conf_score,
-                        active_trades_count=len([t for t in tlog if t.get("Status") == "OPEN"])
-                    )
-                    _scanner_state["ai_analyses"][idx] = ai_res
-                    ai_pre_score = ai_res.get("conviction_score", 0)
-                    ai_pre_rec = ai_res.get("recommendation", "AVOID_WAIT")
-                    ai_pre_summary = ai_res.get("reasoning_summary") or ai_res.get("detailed_reasoning", "")
-
-                    if ai_auto_trade:
-                        if ai_pre_score < AI_MIN_CONVICTION or "BUY" not in ai_pre_rec:
-                            ai_conviction_ok = False
-                            logger.info("[%s] AI blocked trade: conviction %d/%d, rec=%s", idx, ai_pre_score, AI_MIN_CONVICTION, ai_pre_rec)
-                except Exception as e:
-                    logger.warning("[%s] AI validation exception: %s", idx, e)
+            ai_conviction_ok, ai_pre_score, ai_pre_rec, ai_pre_summary = _validate_ai_entry(
+                copilot=copilot,
+                idx=idx,
+                market_data=md,
+                signal=final_signal,
+                conf_score=conf_score,
+                ai_auto_trade=ai_auto_trade,
+                active_trades_count=len([t for t in tlog if t.get("Status") == "OPEN"]),
+            )
+            if ai_auto_trade and ai_conviction_ok:
+                _scanner_state["ai_analyses"][idx] = {
+                    "conviction_score": ai_pre_score,
+                    "recommendation": ai_pre_rec,
+                    "reasoning_summary": ai_pre_summary,
+                }
+            if ai_auto_trade and not ai_conviction_ok:
+                logger.info("[%s] AI blocked trade: conviction %d/%d, rec=%s", idx, ai_pre_score, AI_MIN_CONVICTION, ai_pre_rec)
 
             if ai_conviction_ok:
                 now_str = now_ist.strftime("%I:%M:%S %p")
@@ -468,15 +512,9 @@ def _scan_single_index(
                     "_ai_reasoning": ai_pre_summary,
                 }
 
-                tlog.insert(0, trade_entry)
-                _scanner_state["trade_logs"][idx] = tlog
-                trade_mgr.save_log(idx, tlog)
-                _scanner_state["last_signals"][idx] = final_signal
-
-                # Record in Journal & Supabase
                 journal_id = ""
-                if journal:
-                    try:
+                try:
+                    if journal:
                         journal_id = journal.record_trade(trade_entry, {
                             "pcr": md["pcr"], "vwap": md["vwap_proxy"],
                             "oi_delta_ce": md["total_ce_delta"],
@@ -486,37 +524,53 @@ def _scan_single_index(
                             "trap": trap, "buffer_state": updated_buf[-3:],
                             "ai_validated": ai_auto_trade,
                             "ai_reasoning": ai_pre_summary if ai_auto_trade else "",
-                        })
-                        trade_entry["_journal_id"] = journal_id
-                    except Exception as e:
-                        logger.error("Error journaling trade for %s: %s", idx, e)
-
-                # Telegram alert
-                try:
-                    signal_label = f"🤖 [AUTONOMOUS AI✅] {final_signal}" if ai_auto_trade else f"⚡ [AUTO-BOT] {final_signal}"
-                    trade_mgr.notifier.send_signal_alert(
-                        idx=idx, signal=signal_label,
-                        strike=md["atm_actual"], spot=round(spot, 2),
-                        entry=ep, sl=sl_p, tgt=tgt_p,
-                        qty=qty, ml=ml, tp=tp,
-                        conf=final_conf, score=ai_pre_score if ai_auto_trade else conf_score,
-                        time_str=now_str,
-                    )
+                        }, require_no_open=True)
                 except Exception as e:
-                    logger.warning("Telegram alert error: %s", e)
+                    logger.error("Atomic position reservation failed for %s: %s", idx, e)
 
-                logger.info(
-                    "[%s] FOREGROUND AUTONOMOUS TRADE ENTERED: %s @ Strike %s | EP=%s SL=%s Tgt=%s Qty=%s Score=%s",
-                    idx, final_signal, md["atm_actual"], ep, sl_p, tgt_p, qty, ai_pre_score
-                )
-                auditor.log_event(
-                    idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
-                    final_conf=final_conf, conf_score=conf_score, ai_score=ai_pre_score,
-                    ai_rec=ai_pre_rec, ai_reasoning=ai_pre_summary, status="EXECUTED",
-                    rejection_code="NONE",
-                    rejection_detail=f"Executed {final_signal} at ₹{ep:.2f} (Rule: {conf_score}/100, AI: {ai_pre_score}/100)",
-                    now_ist=now_ist, force_log=True
-                )
+                if not journal_id:
+                    _scanner_state["last_signals"][idx] = final_signal
+                    auditor.log_event(
+                        idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                        final_conf=final_conf, conf_score=conf_score, ai_score=ai_pre_score,
+                        ai_rec="POSITION_GUARD_BLOCKED", ai_reasoning="Atomic open-position reservation failed or another scanner already opened a position.",
+                        status="REJECTED", rejection_code="POSITION_RESERVATION_FAILED",
+                        rejection_detail="No trade was opened because the atomic open-position guard did not approve the reservation.",
+                        now_ist=now_ist, force_log=True
+                    )
+                else:
+                    trade_entry["_journal_id"] = journal_id
+                    tlog.insert(0, trade_entry)
+                    _scanner_state["trade_logs"][idx] = tlog
+                    trade_mgr.save_log(idx, tlog)
+                    _scanner_state["last_signals"][idx] = final_signal
+
+                    # Telegram alert
+                    try:
+                        signal_label = f"🤖 [AUTONOMOUS AI✅] {final_signal}" if ai_auto_trade else f"⚡ [AUTO-BOT] {final_signal}"
+                        trade_mgr.notifier.send_signal_alert(
+                            idx=idx, signal=signal_label,
+                            strike=md["atm_actual"], spot=round(spot, 2),
+                            entry=ep, sl=sl_p, tgt=tgt_p,
+                            qty=qty, ml=ml, tp=tp,
+                            conf=final_conf, score=ai_pre_score if ai_auto_trade else conf_score,
+                            time_str=now_str,
+                        )
+                    except Exception as e:
+                        logger.warning("Telegram alert error: %s", e)
+
+                    logger.info(
+                        "[%s] FOREGROUND AUTONOMOUS TRADE ENTERED: %s @ Strike %s | EP=%s SL=%s Tgt=%s Qty=%s Score=%s",
+                        idx, final_signal, md["atm_actual"], ep, sl_p, tgt_p, qty, ai_pre_score
+                    )
+                    auditor.log_event(
+                        idx=idx, spot=spot, md=md, raw_signal=raw_signal, final_signal=final_signal,
+                        final_conf=final_conf, conf_score=conf_score, ai_score=ai_pre_score,
+                        ai_rec=ai_pre_rec, ai_reasoning=ai_pre_summary, status="EXECUTED",
+                        rejection_code="NONE",
+                        rejection_detail=f"Executed {final_signal} at ₹{ep:.2f} (Rule: {conf_score}/100, AI: {ai_pre_score}/100)",
+                        now_ist=now_ist, force_log=True
+                    )
             else:
                 _scanner_state["last_signals"][idx] = final_signal
                 rej_code = "AI_CONVICTION_LOW" if ai_pre_score < AI_MIN_CONVICTION else "AI_REC_NOT_BUY"
@@ -538,6 +592,9 @@ def _scan_single_index(
             elif price_too_low:
                 rej_code = "PREMIUM_TOO_LOW"
                 rej_det = f"Option premium ₹{ep:.2f} is below ₹{MIN_ENTRY_PRICE} minimum."
+            elif not market_data_fresh:
+                rej_code = "STALE_MARKET_DATA"
+                rej_det = f"Option-chain data is missing a fresh timestamp or is older than {MAX_OPTION_CHAIN_AGE_SECONDS} seconds."
             elif not trade_allowed:
                 rej_code = "COOLDOWN_ACTIVE"
                 rej_det = f"Cooldown active after recent stop loss ({cooldown_info[1]})."
@@ -554,8 +611,12 @@ def _scan_single_index(
                 rej_code = "RULE_SCORE_LOW"
                 rej_det = f"Confidence score {conf_score}/100 is below minimum {min_conf_score}."
             elif not can_afford:
-                rej_code = "INSUFFICIENT_MARGIN"
-                rej_det = "Available account margin is insufficient for 1 lot."
+                if margin_check_error:
+                    rej_code = "MARGIN_CHECK_FAILED"
+                    rej_det = "Account margin could not be verified; entry blocked."
+                else:
+                    rej_code = "INSUFFICIENT_MARGIN"
+                    rej_det = "Available account margin is insufficient for 1 lot."
             else:
                 rej_code = "GUARD_BLOCKED"
                 rej_det = "Pre-trade risk guard blocked entry."
