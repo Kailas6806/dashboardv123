@@ -6,7 +6,7 @@ Provides high-frequency live pricing and Open Interest to the SignalEngine and T
 import time
 import threading
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 try:
     from utils.logger import get_logger
@@ -38,12 +38,14 @@ class SmartWebSocketManager:
         client_code: str,
         feed_token: str,
         max_retries: int = 5,
+        token_refresher: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]] = None,
     ) -> None:
         self.auth_token = auth_token
         self.api_key = api_key
         self.client_code = client_code
         self.feed_token = feed_token
         self.max_retries = max_retries
+        self._token_refresher = token_refresher
 
         self._lock = threading.RLock()
         self._is_connected = False
@@ -106,6 +108,16 @@ class SmartWebSocketManager:
             log.info("Market is closed. SmartWebSocket streaming halted to protect Angel One account from lockout.")
             return False
 
+        with SmartWebSocketManager._global_ws_lock:
+            # Enforce strict process-level singleton: stop any existing active instance
+            if SmartWebSocketManager._active_instance is not None and SmartWebSocketManager._active_instance is not self:
+                try:
+                    log.info("Halting previous SmartWebSocketManager instance to prevent socket collision...")
+                    SmartWebSocketManager._active_instance.stop()
+                except Exception as ex:
+                    log.debug("Error stopping previous WebSocket instance: %s", ex)
+            SmartWebSocketManager._active_instance = self
+
         with self._lock:
             if self._is_running and self._thread and self._thread.is_alive():
                 return True
@@ -167,6 +179,34 @@ class SmartWebSocketManager:
                 break
 
             self._reconnect_attempts += 1
+
+            # Auto-refresh session tokens on persistent disconnects:
+            # If socket fails 3 consecutive times, re-authenticate with Angel One to fetch a fresh feedToken
+            if self._reconnect_attempts >= 3 and self._token_refresher:
+                log.warning("WebSocket disconnected (%d consecutive attempts). Re-authenticating with Angel One for fresh feedToken...", self._reconnect_attempts)
+                try:
+                    new_auth, new_feed = self._token_refresher()
+                    if new_auth and new_feed:
+                        with self._lock:
+                            self.auth_token = new_auth
+                            self.feed_token = new_feed
+                            self.sws = SmartWebSocketV2(
+                                auth_token=self.auth_token,
+                                api_key=self.api_key,
+                                client_code=self.client_code,
+                                feed_token=self.feed_token,
+                                max_retry_attempt=2,
+                                retry_strategy=1,
+                                retry_delay=5,
+                            )
+                            self.sws.on_open = self._on_open
+                            self.sws.on_data = self._on_data
+                            self.sws.on_error = self._on_error
+                            self.sws.on_close = self._on_close
+                        log.info("SmartWebSocket client re-initialized with fresh Angel One tokens.")
+                except Exception as ex:
+                    log.warning("Failed to refresh Angel One WebSocket tokens: %s", ex)
+
             if self._reconnect_attempts >= 5:
                 log.warning("WebSocket disconnected (%d consecutive attempts). Cooling down for 30s before reconnecting...", self._reconnect_attempts)
                 time.sleep(30)
@@ -385,4 +425,7 @@ class SmartWebSocketManager:
                 except Exception:
                     pass
             self._is_connected = False
+        with SmartWebSocketManager._global_ws_lock:
+            if SmartWebSocketManager._active_instance is self:
+                SmartWebSocketManager._active_instance = None
         log.info("SmartWebSocketManager stopped")

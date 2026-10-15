@@ -128,6 +128,19 @@ class AngelOneDataFetcher:
         log.info("Angel One session inactive. Triggering automatic re-login...")
         return self.login(max_retries=2, retry_delay=1.5, force=force)
 
+    def refresh_tokens(self) -> Tuple[Optional[str], Optional[str]]:
+        """Force re-login with Angel One and return fresh (jwtToken, feedToken)."""
+        try:
+            ok = self.login(max_retries=2, retry_delay=1.5, force=True)
+            if ok and self.session:
+                jwt_token = self.session.get("jwtToken")
+                feed_token = self.session.get("feedToken")
+                log.info("Angel One tokens successfully refreshed for WebSocket.")
+                return jwt_token, feed_token
+        except Exception as e:
+            log.warning("Error refreshing Angel One tokens for WebSocket: %s", e)
+        return None, None
+
     def _init_websocket(self):
         """Initialize and start background SmartWebSocketManager for live ticks."""
         try:
@@ -162,10 +175,12 @@ class AngelOneDataFetcher:
                     api_key=self.api_key,
                     client_code=self.client_id,
                     feed_token=feed_token,
+                    token_refresher=self.refresh_tokens,
                 )
             else:
                 self.ws_mgr.auth_token = jwt_token
                 self.ws_mgr.feed_token = feed_token
+                self.ws_mgr._token_refresher = self.refresh_tokens
 
             if not self.ws_mgr._is_running or not (self.ws_mgr._thread and self.ws_mgr._thread.is_alive()):
                 if self.ws_mgr.start():
