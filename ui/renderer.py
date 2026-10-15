@@ -243,8 +243,18 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         )
         sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
-    # ── OPEN TRADES CHECK ──
+    # ── OPEN TRADES CHECK (Strict 1 open trade per index) ──
     open_exists = any(t.get("Status") == "OPEN" for t in st.session_state.get(tlog_key, []))
+    if not open_exists and bg_engine:
+        open_exists = any(t.get("Status") == "OPEN" for t in bg_engine.get_trade_log(idx))
+    if not open_exists and journal:
+        try:
+            open_exists = any(t.get("Status") == "OPEN" and str(t.get("Index") or "").upper() == idx for t in journal.get_all_trades())
+        except Exception:
+            pass
+    if open_exists and final_signal in ("BUY CE", "BUY PE"):
+        final_signal = "WAIT"
+        final_conf = "LOW"
 
     # ── PORTFOLIO-WIDE TODAY TRADES ──
     portfolio_today_trades = []
@@ -531,7 +541,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             can_afford, afford_reason = True, ""
 
         min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 30)
-        if daily_trades_exceeded:
+        if open_exists:
+            st.info(f"⏳ **Active trade already open for {idx}** — New entries for {idx} are locked until current trade exits.")
+        elif daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
         elif not daily_allowed:
             st.warning(f"🛑 {daily_limits[1]}")
@@ -549,7 +561,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             st.info(f"📅 Expiry day — cheap option ₹{ep} allowed (fast moves expected)")
 
         can_enter = (
-            not too_late
+            not open_exists
+            and not too_late
             and not price_too_low
             and not oi_unusual
             and conf_score >= min_conf_score

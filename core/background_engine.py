@@ -477,8 +477,13 @@ class BackgroundTradingEngine:
                 except Exception as e_exit_ntf:
                     logger.warning(f"Error sending background exit alert for {idx}: {e_exit_ntf}")
 
-        # 7. Don't enter if trade already open
+        # 7. Don't enter if trade already open for this index (Strict: 1 open trade per index)
         open_exists = any(t.get("Status") == "OPEN" for t in tlog)
+        if not open_exists and hasattr(self.journal, "get_all_trades"):
+            try:
+                open_exists = any(t.get("Status") == "OPEN" and str(t.get("Index") or "").upper() == idx for t in self.journal.get_all_trades())
+            except Exception:
+                pass
         if open_exists and final_signal in ("BUY CE", "BUY PE"):
             final_signal = "WAIT"
             final_conf = "LOW"
@@ -538,7 +543,8 @@ class BackgroundTradingEngine:
                 can_afford = True
 
             can_enter = (
-                not too_late
+                not open_exists
+                and not too_late
                 and not price_too_low
                 and not oi_unusual
                 and conf_score >= self.min_confidence_score
