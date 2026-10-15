@@ -78,7 +78,7 @@ MAX_DAILY_LOSSES         = 5     # stop trading after N consecutive losses
 
 # ── SMART WEBSOCKET ──
 import os
-ENABLE_WEBSOCKET = os.environ.get("ENABLE_WEBSOCKET", "False").lower() in ("true", "1", "yes")  # Default False for Cloud stability (REST API polling); set True for local WebSocket
+ENABLE_WEBSOCKET = os.environ.get("ENABLE_WEBSOCKET", "True").lower() in ("true", "1", "yes")  # Set False to use REST API polling only
 
 # ── CACHING ──
 CACHE_TTL_SECONDS = 1            # option chain cache TTL

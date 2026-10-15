@@ -53,7 +53,7 @@ for _k, _default in [
     ("MAX_DAILY_LOSS", 9000),
     ("DAILY_TGT", 3000),
     ("PROFIT_LOCK_START", 1500),
-    ("ENABLE_WEBSOCKET", False),
+    ("ENABLE_WEBSOCKET", True),
     ("ML_ENABLED", False),
     ("GEMINI_API_KEY", ""),
     ("GEMINI_MODEL", "gemini-3.5-flash-lite"),
