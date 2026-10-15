@@ -241,9 +241,18 @@ DATA RULES:
 ANALYSIS RULES:
 1. Classify regime: trending_up | trending_down | range | high_vol.
 2. Liquidity & Validity: Reject options with LTP < ₹5.00 unless expiry day.
-3. Defined Risk: Every recommended setup must include entry, stop, target, max_loss (INR), max_profit (INR), and risk_reward.
-4. Setup Filter: Reject any trade where risk_reward < 1.5, conviction < 60, or max_loss > ₹{max_risk_val}.
-5. Capital Protection: If signals conflict or regime is "range", return recommendation "AVOID_WAIT" / NO_TRADE. NO_TRADE is preferred over weak setups.
+3. Defined Risk: Every recommended setup must include entry, stop, target, max_loss (INR), max_profit (INR), and risk_reward >= 1.5.
+4. Institutional Momentum & OI Priority:
+   - Session OI Deltas and PCR momentum are primary leading indicators of institutional smart money positioning.
+   - Bullish Flow: When PE OI Delta is heavily positive (aggressive Put writing) and CE OI Delta is negative or substantially lower, institutions are building a solid floor. Prioritize the bullish bias for BUY CE.
+   - Bearish Flow: When CE OI Delta is heavily positive (aggressive Call writing) and PE OI Delta is negative or substantially lower, institutions are capping the market. Prioritize the bearish bias for BUY PE.
+5. VWAP Proximity Tolerance:
+   - If spot is within ±0.15% (marginal range of ~10-15 points) of VWAP and institutional flow strongly aligns with the direction, treat this as a high-probability breakout or continuation opportunity rather than a hard barrier.
+6. Conviction Scoring:
+   - Do NOT rigidly anchor or clamp conviction to the technical Rule Score alone. The technical score is only one factor. If institutional OI accumulation, PCR trajectory, and risk-reward are favorable, assign a decisive conviction score (>= 60-80) reflecting institutional backing.
+7. Setup Filter & Capital Protection:
+   - Authorize actionable setups (EXECUTE_BUY_CE or EXECUTE_BUY_PE) when institutional flow is clearly one-sided and aligns with the signal, structuring a tight stop loss.
+   - Only return "AVOID_WAIT" / NO_TRADE if the market is dead sideways with flat OI deltas and PCR ~ 1.0, or if institutional order flow directly opposes the signal (e.g. heavy Call writing during a buy signal).
 
 OUTPUT SCHEMA (strict JSON):
 {{
@@ -307,7 +316,7 @@ OUTPUT SCHEMA (strict JSON):
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=350,
+                    max_tokens=650,
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 )
 
