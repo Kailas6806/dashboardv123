@@ -62,7 +62,7 @@ class BackgroundTradingEngine:
 
         # Configurable flags
         self.ai_auto_trade = AI_AUTO_TRADE_DEFAULT
-        self.min_confidence_score = 15  # Rule engine score minimum
+        self.min_confidence_score = getattr(config, "MIN_CONFIDENCE_SCORE", 30)  # Rule engine score minimum
 
         # Signal audit & rejection log
         self._audit_history: List[Dict[str, Any]] = []

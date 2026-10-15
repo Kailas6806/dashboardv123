@@ -512,7 +512,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             can_afford, afford_reason = True, ""
 
         import config
-        min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 15)
+        min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 30)
         if daily_trades_exceeded:
             st.warning(f"🛑 Daily limit reached ({trades_today_count}/{MAX_DAILY_TRADES} trades taken today across portfolio) — trading paused")
         elif not daily_allowed:

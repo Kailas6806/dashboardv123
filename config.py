@@ -127,7 +127,7 @@ CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 
 # ── BACKGROUND AUTONOMOUS MULTI-INDEX SCANNER ──
 ENABLE_BACKGROUND_SCANNER = True  # Continuously evaluate all 3 indices in background daemon
-MIN_CONFIDENCE_SCORE      = 15    # Minimum rule engine score (0-100) to allow trade entry
+MIN_CONFIDENCE_SCORE      = 30    # Minimum rule engine score (0-100) to allow trade entry
 
 # ── STREAMLIT REFRESH ──
 FRAGMENT_REFRESH_SECONDS = 3   # @st.fragment(run_every=N)
