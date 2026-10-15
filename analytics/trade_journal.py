@@ -207,6 +207,15 @@ class TradeJournal:
                         logger.info("Updated trade %s with exit data", trade_id)
                         return True
 
+            # If not found in self.trades, still attempt direct update in Supabase
+            if self.db:
+                try:
+                    if self.db.update_trade_exit(trade_id, exit_data, trade_dict):
+                        logger.info("Updated trade %s in Supabase with exit data", trade_id)
+                        return True
+                except Exception as e:
+                    logger.warning("TradeDB direct update exit error: %s", e)
+
             # Fallback: Try finding by fields if trade_dict is provided
             # NOTE: We do NOT filter by Status=="OPEN" because trade_manager may have
             # already set Status="CLOSED" on the in-memory dict before journal.update_trade
@@ -486,7 +495,28 @@ class TradeJournal:
                 try:
                     db_trades = self.db.get_all_trades()
                     if db_trades is not None:
-                        self.trades = db_trades
+                        # Also read local cache to ensure no un-synced trades are lost
+                        local_trades = []
+                        if os.path.isfile(self.journal_path) and os.path.getsize(self.journal_path) > 0:
+                            try:
+                                with open(self.journal_path, "r", encoding="utf-8") as fh:
+                                    content = json.load(fh)
+                                    if isinstance(content, list):
+                                        local_trades = content
+                            except Exception:
+                                pass
+                        # Merge local trades not yet present in DB
+                        merged = list(db_trades)
+                        db_ids = {t.get("trade_id") for t in db_trades if t.get("trade_id")}
+                        for lt in local_trades:
+                            lt_id = lt.get("trade_id")
+                            if lt_id and lt_id not in db_ids:
+                                merged.append(lt)
+                                try:
+                                    self.db.upsert_trade(lt, lt.get("signal_metadata"))
+                                except Exception:
+                                    pass
+                        self.trades = merged
                         self._load_failed = False
                         self._save_cache_only()
                         return

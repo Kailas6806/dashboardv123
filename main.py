@@ -295,7 +295,7 @@ for _bg_idx in INDEX_CONFIG:
 # ── FRAGMENTS (Only active tab runs its refresh timer!) ──
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_open_trades():
-    render_open_trades_tab(trade_mgr, fetcher)
+    render_open_trades_tab(trade_mgr, fetcher, bg_engine=bg_engine)
 
 @st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
 def show_nifty():

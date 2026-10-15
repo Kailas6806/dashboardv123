@@ -820,8 +820,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                 st.info("Waiting for first signal...")
 
 
-def render_open_trades_tab(trade_mgr, fetcher):
+def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     """Render the 'Open Trades' tab showing all open trades across all indices."""
+    # Sync latest trades from background engine if available
+    for idx in INDEX_CONFIG:
+        if bg_engine:
+            bg_trades = bg_engine.get_trade_log(idx)
+            if bg_trades is not None:
+                st.session_state[sk(idx, "trade_log")] = bg_trades
+
     # Update prices for open trades
     for idx in INDEX_CONFIG:
         tlog = st.session_state.get(sk(idx, "trade_log"), [])
@@ -1021,6 +1028,15 @@ def render_open_trades_tab(trade_mgr, fetcher):
 
             st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
+    # ── 3. Closed Trades Today ──
+    if closed_today:
+        st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.08); margin:24px 0 16px 0;'>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px; font-weight:700; color:#94a3b8; text-transform:uppercase; margin-bottom:12px;'>🏁 Closed Trades Today ({len(closed_today)})</div>", unsafe_allow_html=True)
+        for t in closed_today:
+            norm = normalize_trade(t)
+            st.markdown(render_trade_card_html(norm), unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+
 
 # ──────────────────────────────────────────────────
 # TRADE HISTORY TAB
@@ -1052,11 +1068,9 @@ def render_trade_history_tab(journal):
     if all_trades is None:
         all_trades = []
 
-    # Merge active session trades ONLY if currently OPEN and not yet in database
+    # Merge active session trades (OPEN or CLOSED) if not yet in database
     for idx in INDEX_CONFIG:
         for t in st.session_state.get(sk(idx, "trade_log"), []):
-            if t.get("Status") != "OPEN":
-                continue
             t_id = t.get("trade_id") or t.get("_journal_id")
             if t_id and any(at.get("trade_id") == t_id for at in all_trades):
                 continue
@@ -1074,7 +1088,7 @@ def render_trade_history_tab(journal):
                 try:
                     db.upsert_trade(t)
                 except Exception as e:
-                    logger.warning(f"Failed to upsert open session trade to DB: {e}")
+                    logger.warning(f"Failed to upsert session trade to DB: {e}")
 
     # ── Manual Record Trade Expander ──
     with st.expander("➕ Manually Record Past Trade (e.g. from Zerodha / AngelOne / Groww)", expanded=False):
