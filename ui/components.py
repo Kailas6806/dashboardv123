@@ -117,36 +117,52 @@ def render_app_header(
     is_connected: bool,
     datetime_str: str,
     ws_connected: bool = False,
+    ticker_items: Optional[List[Dict[str, Any]]] = None,
+    scanner_status: Optional[Dict[str, Any]] = None,
     *args,
     **kwargs,
 ) -> str:
-    """Renders compact terminal header with status indicators."""
+    """Renders the dashboard's branded header, market strip, and scanner status."""
     if "ws_connected" in kwargs:
         ws_connected = kwargs["ws_connected"]
     scanner_active = kwargs.get("scanner_active", True)
-    market_pill = '<span class="pill pill-on">MARKET OPEN</span>' if is_market_open else '<span class="pill pill-off">MARKET CLOSED</span>'
-    live_pill = '<span class="pill pill-live">LIVE</span>' if is_connected else '<span class="pill pill-off">DATA DISCONNECTED</span>'
-    ws_pill = '<span class="pill pill-live" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#10b981;font-weight:600;">⚡ WS: &lt;50ms</span>' if ws_connected else '<span class="pill pill-off" style="opacity:0.8;">⚡ WS: STANDBY</span>'
-    scanner_pill = '<span class="pill pill-live" style="background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.4);color:#38bdf8;font-weight:600;">🤖 AUTO-SCAN 3X</span>' if scanner_active else ''
+    market_status = "Market open" if is_market_open else "Market closed"
+    market_cls = "market-open" if is_market_open else "market-closed"
+    feed_cls = "header-indicator-on" if is_connected else "header-indicator-off"
+    ws_cls = "header-indicator-on" if ws_connected else "header-indicator-off"
+    market_ticker = render_market_ticker(ticker_items or [])
+    scan_count = (scanner_status or {}).get("total_scans", 0)
+    last_scan = (scanner_status or {}).get("last_scan", "Awaiting first cycle")
+    if scanner_active:
+        scan_status = f"Auto-scan 3x active · {scan_count:,} cycles · {last_scan}"
+        scan_cls = "scanner-active"
+    else:
+        scan_status = "Auto-scan disabled · Automatic entries are paused."
+        scan_cls = "scanner-disabled"
 
     return f"""
-<div class="app-header">
-  <div class="app-header-left">
-    <h1>V12 <span style="color:var(--indigo);">PRO MAX</span></h1>
-    <p>Algorithmic Trading Engine</p>
-  </div>
-  <div style="text-align: right;">
-    <div style="display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-bottom: 4px;">
-      {market_pill}
-      {live_pill}
-      {ws_pill}
-      {scanner_pill}
+<section class="dashboard-top">
+  <div class="app-header">
+    <div class="app-header-left">
+      <h1><span class="brand-v">V12</span><span class="brand-pro">PRO MAX</span></h1>
+      <p>Algorithmic trading engine</p>
     </div>
-    <div class="num" style="font-size: 12px; color: var(--text-1); letter-spacing: 0.02em;">
-      {datetime_str}
+    <div class="app-header-right">
+      <div class="app-header-status">
+        <span class="header-indicator header-indicator-purple {ws_cls}" role="img" aria-label="WebSocket {'connected' if ws_connected else 'standby'}" title="WebSocket {'connected' if ws_connected else 'standby'}">⚡</span>
+        <span class="header-indicator header-indicator-red {feed_cls}" role="img" aria-label="Market data {'available' if is_connected else 'unavailable'}" title="Market data {'available' if is_connected else 'unavailable'}">◉</span>
+        <span class="header-status-divider"></span>
+        <span class="market-status {market_cls}"><i></i>{market_status}</span>
+      </div>
+      <div class="header-datetime">{datetime_str}</div>
     </div>
   </div>
-</div>"""
+  {market_ticker}
+  <div class="scanner-status-line {scan_cls}">
+    <span class="scanner-status-icon" aria-hidden="true"></span>
+    <span>{scan_status}</span>
+  </div>
+</section>"""
 
 
 def render_market_ticker(ticker_items: List[Dict[str, Any]]) -> str:
@@ -207,26 +223,25 @@ def render_open_positions_summary(
         win_rate_disp = "N/A"
 
     return f"""
-<div style="margin-bottom: 18px;">
-  <div class="label" style="font-size: 11px !important; margin-bottom: 8px; color: #ffffff !important; font-weight: 700;">
-    OPEN POSITIONS SUMMARY
-  </div>
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
-    <div class="kpi-card">
+<div class="positions-summary">
+  <div class="label positions-summary-heading">OPEN POSITIONS SUMMARY</div>
+  <div class="positions-summary-grid">
+    <div class="kpi-card positions-summary-card">
       <div class="label">OPEN TRADES</div>
       <div class="kpi num">{trades_disp}</div>
     </div>
-    <div class="kpi-card">
+    <div class="kpi-card positions-summary-card">
       <div class="label">TODAY P&L</div>
       <div class="kpi num {pnl_cls}">{pnl_disp}</div>
     </div>
-    <div class="kpi-card">
+    <div class="kpi-card positions-summary-card">
       <div class="label">MAX LOSS</div>
       <div class="kpi num">{max_loss_disp}</div>
     </div>
-    <div class="kpi-card">
+    <div class="kpi-card positions-summary-card">
       <div class="label">WIN RATE</div>
       <div class="kpi num">{win_rate_disp}</div>
+      <div class="win-rate-track"><span style="width:{max(0.0, min(win_rate or 0.0, 100.0)):.1f}%;"></span></div>
     </div>
   </div>
 </div>"""
@@ -261,71 +276,74 @@ def render_trade_card_html(t: Dict[str, Any]) -> str:
     card_cls = "ce-card" if is_ce else "pe-card"
     accent_cls = "c-ce" if is_ce else "c-pe"
     pnl_cls = "pnl-positive" if pnl >= 0 else "pnl-negative"
-    fill_cls = "fill-ce" if is_ce else "fill-pe"
+    direction_label = f"{direction} {option_type}".strip()
+    trade_status = str(t.get("status") or "OPEN").upper()
+    status_cls = "trade-status-closed" if trade_status == "CLOSED" else "trade-status-open"
 
     spot_str = f"₹{_safe_float(spot):,.2f}" if spot is not None else "N/A"
     ml_str = f"₹{_safe_float(ml):,.0f}" if ml is not None else "N/A"
     tp_str = f"₹{_safe_float(tp):,.0f}" if tp is not None else "N/A"
+    pnl_sign = "+" if pnl >= 0 else "−"
+    pnl_text = f"{pnl_sign}₹{abs(pnl):,.2f}"
 
     opt_label = f"{strike} {option_type}".strip() if option_type else str(strike)
+    progress = max(0.0, min(100.0, _safe_float(progress_pct)))
+    low_price = min(value for value in (sl, ev, lv, tgt) if value > 0) if any(
+        value > 0 for value in (sl, ev, lv, tgt)
+    ) else 0.0
+    high_price = max(sl, ev, lv, tgt)
+    price_range = high_price - low_price
+    if price_range > 0 and all(value > 0 for value in (sl, ev, lv, tgt)):
+        sl_position = (sl - low_price) / price_range * 100
+        entry_position = (ev - low_price) / price_range * 100
+        target_position = (tgt - low_price) / price_range * 100
+        live_position = (lv - low_price) / price_range * 100
+        track_markup = f"""
+  <div class="trade-price-track" aria-label="Stop loss {sl:.2f}, entry {ev:.2f}, live {lv:.2f}, target {tgt:.2f}">
+    <div class="trade-track-base"></div>
+    <div class="trade-track-risk" style="left:{min(sl_position, entry_position):.2f}%;width:{abs(entry_position - sl_position):.2f}%;"></div>
+    <div class="trade-track-reward" style="left:{min(entry_position, target_position):.2f}%;width:{abs(target_position - entry_position):.2f}%;"></div>
+    <span class="trade-track-marker trade-marker-sl" style="left:{sl_position:.2f}%;"></span>
+    <span class="trade-track-marker trade-marker-entry" style="left:{entry_position:.2f}%;"></span>
+    <span class="trade-track-marker trade-marker-live" style="left:{live_position:.2f}%;"></span>
+    <span class="trade-track-marker trade-marker-target" style="left:{target_position:.2f}%;"></span>
+  </div>
+  <div class="trade-track-labels">
+    <span class="trade-stop-label">SL <b>₹{sl:.2f}</b></span>
+    <span class="trade-entry-label">Entry <b>₹{ev:.2f}</b></span>
+    <span class="trade-target-label">Target <b>₹{tgt:.2f}</b></span>
+  </div>"""
+    else:
+        fill_cls = "fill-ce" if is_ce else "fill-pe"
+        track_markup = f"""
+  <div class="progress-bar trade-progress-fallback">
+    <div class="progress-fill {fill_cls}" style="width: {progress}%"></div>
+  </div>"""
 
     return f"""
 <div class="trade-card {card_cls}">
-  <!-- Card Header -->
   <div class="trade-header">
-    <div class="num" style="font-size: 18px; color: #ffffff;">
-      <b>{instrument}</b> &nbsp;•&nbsp; <span class="{accent_cls}">{direction} {option_type}</span> &nbsp;•&nbsp; <span>{opt_label}</span>
+    <div class="trade-title">
+      <span class="trade-instrument">{instrument}</span>
+      <span class="trade-direction {accent_cls}">{direction_label}</span>
+      <span class="trade-contract">{opt_label}</span>
+      <span class="trade-status {status_cls}">{trade_status}</span>
     </div>
-    <div class="num {pnl_cls}" style="font-size: 21px; font-weight: 800;">
-      {pnl_disp}
-    </div>
-  </div>
-
-  <!-- Row 1: Execution Metrics -->
-  <div class="trade-grid">
-    <div>
-      <div class="label">ENTRY</div>
-      <div class="kpi-sm num">₹{ev:.2f}</div>
-    </div>
-    <div>
-      <div class="label">LIVE</div>
-      <div class="kpi-sm num {pnl_cls}">₹{lv:.2f}</div>
-    </div>
-    <div>
-      <div class="label">STOP LOSS</div>
-      <div class="kpi-sm num c-pe">{f'₹{sl:.2f}' if sl > 0 else 'N/A'}</div>
-    </div>
-    <div>
-      <div class="label">TARGET</div>
-      <div class="kpi-sm num c-ce">{f'₹{tgt:.2f}' if tgt > 0 else 'N/A'}</div>
-    </div>
-    <div>
-      <div class="label">QUANTITY</div>
-      <div class="kpi-sm num">{qty}</div>
+    <div class="trade-pnl {pnl_cls}">
+      {pnl_text}
     </div>
   </div>
-
-  <!-- Row 2: Secondary Context Strip -->
-  <div class="trade-strip">
-    <div>Spot <b class="num" style="color:#ffffff;">{spot_str}</b></div>
-    <div>Max Loss <b class="num c-pe">{ml_str}</b></div>
-    <div>Target P&L <b class="num c-ce">{tp_str}</b></div>
+  <div class="trade-live-line">
+    <span>Live</span><strong class="{pnl_cls}">₹{lv:.2f}</strong>
   </div>
-
-  <!-- Row 3: Target Progress -->
-  <div style="margin-bottom: 12px;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-      <span class="label" style="margin-bottom: 0;">TARGET PROGRESS</span>
-      <span class="num" style="font-size: 11px; color: var(--text-1);">{progress_pct}%</span>
-    </div>
-    <div class="progress-bar">
-      <div class="progress-fill {fill_cls}" style="width: {progress_pct}%;"></div>
-    </div>
-  </div>
-
-  <!-- Row 4: Entry Time -->
-  <div style="font-size: 11px; color: var(--text-2);">
-    Entry: <span class="num" style="color: var(--text-1);">{etime}</span>
+  {track_markup}
+  <div class="trade-detail-row">
+    <span>Qty <b>{qty}</b></span>
+    <span>Spot <b>{spot_str}</b></span>
+    <span>Max loss <b class="c-pe">{ml_str}</b></span>
+    <span>Target P&amp;L <b class="c-ce">{tp_str}</b></span>
+    <span>Progress <b>{progress:.1f}%</b></span>
+    <span>Entry <b>{etime}</b></span>
   </div>
 </div>"""
 
@@ -351,38 +369,49 @@ def render_empty_open_trades() -> str:
 # ──────────────────────────────────────────────────
 def render_kpi_grid(idx, spot, atm_actual, pcr, bias, support, resistance,
                     secondary_support=None, secondary_resistance=None):
-    """Top KPI cards for index tabs."""
-    sr_extra = ""
-    if secondary_support and secondary_resistance:
-        sr_extra = f"""
-  <div class="card"><div class="label">S2</div><div class="kpi num">{secondary_support}</div></div>
-  <div class="card"><div class="label">R2</div><div class="kpi num">{secondary_resistance}</div></div>"""
-
+    """Render the index price, bias, and PCR in a compact signal overview."""
     bias_str = str(bias).upper()
     bias_cls = "c-ce" if "BULL" in bias_str else ("c-pe" if "BEAR" in bias_str else "c-amber")
+    bias_color = "#00E5A0" if "BULL" in bias_str else ("#FF4D6D" if "BEAR" in bias_str else "#F59E0B")
+    bias_icon = "↗" if "BULL" in bias_str else ("↘" if "BEAR" in bias_str else "→")
+    pcr_value = _safe_float(pcr)
+    pcr_progress = max(0.0, min(pcr_value / 2.0, 1.0))
+    gauge_length = 188.5
+    gauge_offset = gauge_length * (1.0 - pcr_progress)
 
     return f"""
-<div class="kpi-grid">
-  <div class="card"><div class="label">{idx} SPOT</div><div class="kpi num c-white">{round(spot,2)}</div></div>
-  <div class="card"><div class="label">ATM</div><div class="kpi num">{atm_actual}</div></div>
-  <div class="card"><div class="label">PCR</div><div class="kpi num">{pcr}</div></div>
-  <div class="card"><div class="label">BIAS</div><div class="kpi num {bias_cls}">{bias}</div></div>
-  <div class="card"><div class="label">SUPPORT</div><div class="kpi num">{support}</div></div>
-  <div class="card"><div class="label">RESISTANCE</div><div class="kpi num">{resistance}</div></div>{sr_extra}
-</div>"""
+<section class="signal-overview">
+  <div class="signal-overview-main">
+    <div class="signal-price-block">
+      <div class="signal-eyebrow">{idx} <span>·</span> ATM {atm_actual}</div>
+      <div class="signal-spot">{round(spot, 2):,.2f}</div>
+      <div class="signal-bias {bias_cls}"><span class="signal-bias-icon">{bias_icon}</span>{bias} bias</div>
+    </div>
+    <div class="pcr-gauge" role="img" aria-label="PCR {pcr_value:.2f}">
+      <svg viewBox="0 0 160 100" aria-hidden="true">
+        <path class="pcr-gauge-track" d="M 20 80 A 60 60 0 0 1 140 80" />
+        <path class="pcr-gauge-value" d="M 20 80 A 60 60 0 0 1 140 80"
+          style="stroke:{bias_color};stroke-dasharray:{gauge_length};stroke-dashoffset:{gauge_offset:.2f};" />
+      </svg>
+      <div class="pcr-gauge-number">{pcr_value:.2f}</div>
+      <div class="pcr-gauge-label">PCR</div>
+    </div>
+  </div>
+</section>"""
 
 
 def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
                        pcr_momentum, total_ce_delta, total_pe_delta,
                        sideways_info=None, cooldown_info=None,
                        trend_15m=None, trend_15m_ema=0.0):
-    """Filter status cards for index tabs."""
+    """Render primary OI context and collapsible secondary signal diagnostics."""
     tw_c = "#00E5A0" if in_window else "#FF4D6D"
     oi_c = "#00E5A0" if oi_active else "#FF4D6D"
     vw_c = "#00E5A0" if spot_vs_vwap == "ABOVE" else "#FF4D6D"
     pm_c = "#00E5A0" if pcr_momentum != "FLAT" else "#F59E0B"
 
     extra_cards = ""
+    cooldown_card = ""
     if trend_15m and trend_15m != "NEUTRAL":
         t_c = "#00E5A0" if trend_15m == "BULLISH" else "#FF4D6D"
         ema_str = f" ({trend_15m_ema:,.0f})" if trend_15m_ema > 0 else ""
@@ -409,66 +438,88 @@ def render_filter_grid(in_window, oi_active, spot_vs_vwap, vwap_proxy,
             cooldown_reason = ""
 
         if not cooldown_allowed:
-            extra_cards += f"""
-  <div class="card"><div class="label">COOLDOWN</div>
-    <div class="num" style="color:#4F46E5;font-size:15px;">{cooldown_reason}</div></div>"""
+            cooldown_card = f"""
+<div class="card cooldown-notice"><div class="label">TRADE PAUSE</div>
+  <div class="num" style="color:#a5b4fc;font-size:13px;">{cooldown_reason}</div></div>"""
 
     return f"""
-<div class="filter-grid">
-  <div class="card"><div class="label">TIME WINDOW</div>
-    <div class="num" style="color:{tw_c};font-size:15px;">{"IN WINDOW" if in_window else "CLOSED"}</div></div>
-  <div class="card"><div class="label">OI MARKET</div>
-    <div class="num" style="color:{oi_c};font-size:15px;">{"ACTIVE" if oi_active else "NO DATA"}</div></div>
-  <div class="card"><div class="label">VS VWAP ({vwap_proxy})</div>
-    <div class="num" style="color:{vw_c};font-size:15px;">{spot_vs_vwap}</div></div>
-  <div class="card"><div class="label">PCR MOMENTUM</div>
-    <div class="num" style="color:{pm_c};font-size:15px;">{pcr_momentum}</div></div>
-  <div class="card"><div class="label">OI FLOW (CE Δ / PE Δ)</div>
-    <div class="num" style="color:#F59E0B;font-size:15px;"><span class="c-ce">{_safe_int(total_ce_delta)}</span> / <span class="c-pe">{_safe_int(total_pe_delta)}</span></div></div>{extra_cards}
-</div>"""
+<div class="signal-context-row">
+  <div class="signal-context-stat">
+    <span class="signal-overview-label">OI market</span>
+    <strong class="signal-overview-value" style="color:{oi_c};">{"Active" if oi_active else "No data"}</strong>
+  </div>
+  <div class="signal-context-divider"></div>
+  <div class="signal-context-stat">
+    <span class="signal-overview-label">OI flow · CE Δ / PE Δ</span>
+    <strong class="signal-overview-value"><span class="c-ce">{_safe_int(total_ce_delta)}</span> / <span class="c-pe">{_safe_int(total_pe_delta)}</span></strong>
+  </div>
+</div>
+{cooldown_card}
+<details class="signal-diagnostics">
+  <summary>Signal diagnostics</summary>
+  <div class="filter-grid">
+    <div class="card"><div class="label">TIME WINDOW</div>
+      <div class="num" style="color:{tw_c};font-size:15px;">{"IN WINDOW" if in_window else "CLOSED"}</div></div>
+    <div class="card"><div class="label">VS VWAP ({vwap_proxy})</div>
+      <div class="num" style="color:{vw_c};font-size:15px;">{spot_vs_vwap}</div></div>
+    <div class="card"><div class="label">PCR MOMENTUM</div>
+      <div class="num" style="color:{pm_c};font-size:15px;">{pcr_momentum}</div></div>{extra_cards}
+  </div>
+</details>"""
 
 
 def render_signal_card(idx, final_signal, final_conf, raw_signal, confidence,
                        pcr, buffer, filter_reason="", confidence_score=0,
                        oi_unusual=False, spot=None, atm=None):
     """Signal display card + mobile sticky signal bar."""
-    if "CE" in final_signal:
+    signal_text = str(final_signal).upper()
+    if "CE" in signal_text:
         card_class = "sc-ce"
         signal_color = "#00E5A0"
-        bar_fill_cls = "conf-bar-high"
-        state_badge = '<span class="badge badge-ce">BULLISH CE</span>'
-    elif "PE" in final_signal:
+        state_label = "Bullish"
+        action_label = "Sell" if "SELL" in signal_text else "Buy"
+    elif "PE" in signal_text:
         card_class = "sc-pe"
         signal_color = "#FF4D6D"
-        bar_fill_cls = "conf-bar-low"
-        state_badge = '<span class="badge badge-pe">BEARISH PE</span>'
+        state_label = "Bearish"
+        action_label = "Sell" if "SELL" in signal_text else "Buy"
     else:
         card_class = "sc-wait"
         signal_color = "#F59E0B"
-        bar_fill_cls = "conf-bar-medium"
-        state_badge = '<span class="badge badge-amber">WAIT / NEUTRAL</span>'
-
-    score_bar = f"""
-<div class="conf-bar-outer"><div class="conf-bar-inner {bar_fill_cls}" style="width:{confidence_score}%;"></div></div>
-<div style="font-size:11px;color:var(--text-2);margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-  <span>CONFIDENCE SCORE: <b class="num" style="color:#ffffff;">{confidence_score}/100</b></span>
-  <span>{final_conf}</span>
-</div>"""
+        state_label = "Neutral"
+        action_label = "Wait"
 
     unusual_badge = ""
     if oi_unusual:
-        unusual_badge = ' <span class="badge badge-warning" style="margin-left:6px;">UNUSUAL OI</span>'
+        unusual_badge = '<span class="badge badge-warning">UNUSUAL OI</span>'
 
-    buf_str = ", ".join(buffer[-3:]) if buffer else ""
-    filter_txt = f" | {filter_reason}" if filter_reason else ""
+    try:
+        score = max(0, min(100, int(float(confidence_score))))
+    except (TypeError, ValueError):
+        score = 0
+    score_ring = f"conic-gradient({signal_color} {score}%, rgba(148, 163, 184, 0.16) {score}% 100%)"
+
+    recent_buffer = [str(item) for item in buffer[-3:]] if buffer else []
+    buffer_bars = "".join(
+        f'<span class="signal-buffer-bar {("signal-buffer-active" if item.upper() not in ("WAIT", "NEUTRAL", "") else "signal-buffer-muted")}" title="{item}"></span>'
+        for item in recent_buffer
+    )
+    buffer_bars = buffer_bars or '<span class="signal-buffer-bar signal-buffer-muted"></span>' * 3
 
     spot_str = f"{round(float(spot), 2):,}" if spot is not None else ""
     atm_str = f"ATM {atm}" if atm is not None else ""
+    filter_text = str(filter_reason or "").strip()
+    outside_hours = "outside trading hours" in filter_text.lower()
+    market_notice = ""
+    if outside_hours:
+        market_notice = f'<div class="signal-market-notice"><span aria-hidden="true">◉</span><span>{filter_text}</span></div>'
+    elif filter_text:
+        market_notice = f'<div class="signal-filter-note">{filter_text}</div>'
 
     sticky_bar = f"""
 <div class="mobile-signal-bar">
   <div>
-    <div style="font-size:10px;font-weight:700;color:var(--text-2);">{idx} {state_badge}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--text-2);">{idx} {state_label}</div>
     <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:800;color:{signal_color};display:flex;align-items:center;gap:6px;">
       <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{signal_color};"></span>
       {final_signal}
@@ -482,19 +533,35 @@ def render_signal_card(idx, final_signal, final_conf, raw_signal, confidence,
 
     return f"""{sticky_bar}
 <div class="signal-card {card_class}">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-    <div>
-      <div class="label">{idx} SIGNAL</div>
+  <div class="signal-card-topline">
+    <div class="signal-card-eyebrow"><span></span>{idx} signal</div>
+    <span class="signal-state-pill">{state_label}</span>
+  </div>
+  <div class="signal-card-main">
+    <div class="signal-card-primary">
       <h2 class="signal-hero">{final_signal}</h2>
+      <div class="signal-action-switch" aria-label="Signal action">
+        <span class="signal-action-option {("signal-action-selected" if action_label == "Sell" else "")}">Sell</span>
+        <span class="signal-action-option {("signal-action-selected" if action_label == "Wait" else "")}">Wait</span>
+        <span class="signal-action-option {("signal-action-selected" if action_label == "Buy" else "")}">Buy</span>
+      </div>
     </div>
-    <div style="text-align:right;">
-      {state_badge}{unusual_badge}
+    <div class="signal-confidence" role="img" aria-label="Confidence {score} out of 100, {final_conf}">
+      <div class="signal-confidence-ring" style="background:{score_ring};">
+        <div class="signal-confidence-inner">
+          <strong>{score}</strong>
+          <span>{final_conf}</span>
+        </div>
+      </div>
     </div>
   </div>
-  {score_bar}
-  <div style="font-size:11px;color:var(--text-2);margin-top:12px;letter-spacing:0.02em;">
-    RAW: <span style="color:var(--text-1);font-weight:600;">{raw_signal} ({confidence})</span> | PCR: <span class="num" style="color:var(--text-1);">{pcr}</span> | BUFFER: <span style="color:var(--text-1);">{buf_str}</span>{filter_txt}
+  <div class="signal-data-grid">
+    <div class="signal-data-cell"><span>Raw</span><strong>{raw_signal} <small>{confidence}</small></strong></div>
+    <div class="signal-data-cell"><span>PCR</span><strong>{pcr}</strong></div>
+    <div class="signal-data-cell"><span>Buffer</span><div class="signal-buffer-bars">{buffer_bars}</div></div>
   </div>
+  {unusual_badge}
+  {market_notice}
 </div>
 {sticky_bar}"""
 
@@ -582,7 +649,7 @@ def render_expander_open_trade(trade, sc):
 
 
 def render_account_capital_hud(portfolio_stats: dict) -> str:
-    """Render top-level Brokerage Account HUD showing real liquid capital, live MTM floating P&L, equity, and margin."""
+    """Render the account summary in a compact equity-first layout."""
     equity = portfolio_stats.get("total_equity", 0.0)
     cash = portfolio_stats.get("cash_balance", 0.0)
     margin_avail = portfolio_stats.get("available_margin", 0.0)
@@ -594,37 +661,28 @@ def render_account_capital_hud(portfolio_stats: dict) -> str:
     equity_color = "#10b981" if equity >= base else "#ef4444"
     rpnl_color = "#10b981" if rpnl >= 0 else "#ef4444"
     upnl_color = "#10b981" if upnl >= 0 else "#ef4444"
+    equity_change = equity - base
+    equity_change_color = "#10b981" if equity_change >= 0 else "#ef4444"
+    equity_change_sign = "+" if equity_change >= 0 else "−"
 
     return f"""
-<div class="card" style="border-left: 4px solid #6366f1; background: linear-gradient(135deg, rgba(30, 27, 75, 0.4), rgba(24, 24, 27, 0.7)); margin-bottom: 20px; padding: 16px 20px; border-radius: 12px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom:12px; gap:8px;">
-    <div style="display:flex; align-items:center; gap:8px;">
-      <span style="font-size:12px; font-weight:800; color:#818cf8; letter-spacing:0.1em; text-transform:uppercase;">💼 REAL TRADING CAPITAL HUD</span>
-      <span style="background:rgba(16,185,129,0.15); color:#10b981; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; border:1px solid rgba(16,185,129,0.3);">🟢 SUPABASE PERSISTED</span>
-    </div>
-    <div style="font-size:12px; color:#a1a1aa; font-weight:600;">Cash Balance: <b style="color:#ffffff;">₹{cash:,.2f}</b> | Base: <b style="color:#ffffff;">₹{base:,.0f}</b></div>
+<section class="account-overview">
+  <div class="account-overview-top">
+    <span class="account-brand">V12 <small>PRO MAX</small></span>
+    <span class="account-cloud-status">● SUPABASE PERSISTED</span>
   </div>
-  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:16px;">
-    <div>
-      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Live Net Equity</div>
-      <div class="kpi" style="font-size:22px; font-weight:800; color:{equity_color};">₹{equity:,.2f}</div>
-    </div>
-    <div>
-      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Available Margin</div>
-      <div class="kpi" style="font-size:22px; font-weight:800; color:#e4e4e7;">₹{margin_avail:,.2f}</div>
-    </div>
-    <div>
-      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Margin in Trades</div>
-      <div class="kpi" style="font-size:22px; font-weight:800; color:#f59e0b;">₹{margin_used:,.2f}</div>
-    </div>
-    <div>
-      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Floating P&L (MTM)</div>
-      <div class="kpi" style="font-size:22px; font-weight:800; color:{upnl_color};">{'+' if upnl>=0 else ''}₹{upnl:,.2f}</div>
-    </div>
-    <div>
-      <div class="label" style="font-size:11px; color:#a1a1aa; text-transform:uppercase; letter-spacing:0.05em;">Cumulative Realized P&L</div>
-      <div class="kpi" style="font-size:22px; font-weight:800; color:{rpnl_color};">{'+' if rpnl>=0 else ''}₹{rpnl:,.2f}</div>
-    </div>
+  <div class="account-equity-label">Live net equity</div>
+  <div class="account-equity-line">
+    <strong class="account-equity" style="color:{equity_color};">₹{equity:,.2f}</strong>
+    <span class="account-equity-change" style="color:{equity_change_color};">
+      {equity_change_sign}₹{abs(equity_change):,.2f}
+    </span>
   </div>
-</div>"""
-
+  <div class="account-capital-note">Base ₹{base:,.0f} <span>·</span> Cash ₹{cash:,.2f}</div>
+  <div class="account-margin-row">
+    <div><span class="account-overview-label">Available margin</span><strong>₹{margin_avail:,.2f}</strong></div>
+    <div><span class="account-overview-label">Margin in trades</span><strong class="c-amber">₹{margin_used:,.2f}</strong></div>
+    <div><span class="account-overview-label">Floating P&amp;L</span><strong style="color:{upnl_color};">{'+' if upnl >= 0 else '−'}₹{abs(upnl):,.2f}</strong></div>
+  </div>
+  <span class="account-realized-note">Cumulative realized P&amp;L: <b style="color:{rpnl_color};">{'+' if rpnl >= 0 else '−'}₹{abs(rpnl):,.2f}</b></span>
+</section>"""

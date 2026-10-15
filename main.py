@@ -102,7 +102,7 @@ from ui.renderer import (
     init_state, load_log, sk,
 )
 from ui.components import (
-    render_app_header, render_market_ticker,
+    render_app_header,
 )
 from core.signal_engine import SignalEngine
 from core.risk_manager import RiskManager
@@ -191,7 +191,7 @@ latest_scan_results = {
 # ── COMPUTE TICKER & MARKET STATUS ──
 now_ist = datetime.datetime.now(IST)
 market_open = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_ist.time() <= MARKET_CLOSE_TIME)
-datetime_str = now_ist.strftime("%d %b %Y | %I:%M %p")
+datetime_str = now_ist.strftime("%d %b %Y · %I:%M %p").replace("AM", "am").replace("PM", "pm")
 
 # Check and ensure WebSocket streaming during trading hours (if ENABLE_WEBSOCKET is True)
 ws_connected = fetcher.is_websocket_connected() if (fetcher and hasattr(fetcher, "is_websocket_connected")) else False
@@ -230,19 +230,19 @@ is_connected = any(it.get("spot") is not None for it in ticker_items)
 
 # ── RENDER HEADER & TICKER ──
 scanner_enabled = bool(getattr(config, "ENABLE_BACKGROUND_SCANNER", True))
-try:
-    st.markdown(render_app_header(market_open, is_connected, datetime_str, ws_connected=ws_connected, scanner_active=scanner_enabled), unsafe_allow_html=True)
-except TypeError:
-    st.markdown(render_app_header(market_open, is_connected, datetime_str), unsafe_allow_html=True)
-st.markdown(render_market_ticker(ticker_items), unsafe_allow_html=True)
 scanner_status = get_scanner_status()
-if scanner_enabled:
-    st.caption(
-        f"Auto-scan active · {scanner_status['total_scans']:,} cycles · "
-        f"Last cycle: {scanner_status['last_scan']}"
-    )
-else:
-    st.caption("Auto-scan disabled · Automatic entries are paused.")
+st.markdown(
+    render_app_header(
+        market_open,
+        is_connected,
+        datetime_str,
+        ws_connected=ws_connected,
+        scanner_active=scanner_enabled,
+        ticker_items=ticker_items,
+        scanner_status=scanner_status,
+    ),
+    unsafe_allow_html=True,
+)
 
 # ── DYNAMIC NAVIGATION (FAST LAZY-LOADED TABS) ──
 open_count = sum(
@@ -266,11 +266,40 @@ tab_options = [
     "SETTINGS",
 ]
 
-# Keep the widget value stable while formatting its visible label with the live count.
-def _format_nav_label(tab):
-    if tab == open_tab_label and open_count > 0:
-        return f"● OPEN TRADES {open_count}"
-    return tab
+nav_icons = {
+    "OPEN TRADES": "▣",
+    "NIFTY": "⌁",
+    "BANKNIFTY": "▤",
+    "FINNIFTY": "▥",
+    "🧠 XGBOOST ML": "◈",
+    "🤖 AI COPILOT": "✧",
+    "🦾 AUTONOMOUS AI": "⟡",
+    "🎯 SIGNAL AUDIT": "◎",
+    "TRADE HISTORY": "◴",
+    "ANALYTICS": "▥",
+    "⚡ ACTIVITY": "≋",
+    "SETTINGS": "⚙",
+}
+sidebar_icons = {
+    "OPEN TRADES": ":material/work:",
+    "NIFTY": ":material/show_chart:",
+    "BANKNIFTY": ":material/account_balance:",
+    "FINNIFTY": ":material/candlestick_chart:",
+    "🧠 XGBOOST ML": ":material/psychology:",
+    "🤖 AI COPILOT": ":material/auto_awesome:",
+    "🦾 AUTONOMOUS AI": ":material/smart_toy:",
+    "🎯 SIGNAL AUDIT": ":material/track_changes:",
+    "TRADE HISTORY": ":material/history:",
+    "ANALYTICS": ":material/analytics:",
+    "⚡ ACTIVITY": ":material/bolt:",
+    "SETTINGS": ":material/settings:",
+}
+mobile_nav_tabs = [open_tab_label, "NIFTY", "🤖 AI COPILOT", "TRADE HISTORY"]
+
+
+def _select_nav_tab(tab):
+    st.session_state["active_nav_tab"] = tab
+    st.session_state["main_nav_pills"] = tab
 
 
 # Normalize values saved by versions that included the live count in the option itself.
@@ -292,27 +321,59 @@ if curr_default not in tab_options:
 
 previous_nav_tab = st.session_state.get("_last_rendered_nav_tab", curr_default)
 
-def _on_nav_change():
-    val = st.session_state.get("main_nav_pills")
-    if val:
-        st.session_state["active_nav_tab"] = val
-    else:
-        st.session_state["main_nav_pills"] = st.session_state.get("active_nav_tab", "NIFTY")
+with st.sidebar:
+    st.markdown(
+        '<div class="nav-brand" title="V12 PRO MAX"><strong>V<span>12</span></strong></div>'
+        '<div class="nav-section-label">WORKSPACE</div>',
+        unsafe_allow_html=True,
+    )
+    for nav_tab in tab_options:
+        nav_label = nav_tab
+        if nav_tab == open_tab_label and open_count > 0:
+            nav_label = f"{nav_tab} · {open_count}"
+        if st.button(
+            nav_tab,
+            icon=sidebar_icons[nav_tab],
+            key=f"sidebar_nav_{tab_options.index(nav_tab)}",
+            help=nav_label,
+            type="primary" if curr_default == nav_tab else "secondary",
+            use_container_width=True,
+        ):
+            _select_nav_tab(nav_tab)
 
-selected_tab = st.pills(
-    "Navigation",
-    options=tab_options,
-    default=curr_default,
-    label_visibility="collapsed",
-    key="main_nav_pills",
-    on_change=_on_nav_change,
-    format_func=_format_nav_label,
-)
+with st.container(key="mobile_bottom_nav"):
+    mobile_columns = st.columns(5, gap="small")
+    for column, nav_tab in zip(mobile_columns[:4], mobile_nav_tabs):
+        with column:
+            mobile_label = {
+                open_tab_label: "▣\nTrades",
+                "NIFTY": "⌁\nNifty",
+                "🤖 AI COPILOT": "✧\nAI",
+                "TRADE HISTORY": "◴\nHistory",
+            }[nav_tab]
+            if st.button(
+                mobile_label,
+                key=f"mobile_nav_{tab_options.index(nav_tab)}",
+                help=nav_tab,
+                type="primary" if curr_default == nav_tab else "secondary",
+                use_container_width=True,
+            ):
+                _select_nav_tab(nav_tab)
+    with mobile_columns[4]:
+        with st.popover("☰\nMore", use_container_width=True):
+            st.markdown("**More pages**")
+            for nav_tab in tab_options:
+                if nav_tab in mobile_nav_tabs:
+                    continue
+                if st.button(
+                    f"{nav_icons[nav_tab]}  {nav_tab}",
+                    key=f"mobile_more_nav_{tab_options.index(nav_tab)}",
+                    type="primary" if curr_default == nav_tab else "secondary",
+                    use_container_width=True,
+                ):
+                    _select_nav_tab(nav_tab)
 
-if not selected_tab:
-    selected_tab = st.session_state.get("active_nav_tab", "NIFTY")
-else:
-    st.session_state["active_nav_tab"] = selected_tab
+selected_tab = st.session_state.get("active_nav_tab", curr_default)
 
 st.session_state["_last_rendered_nav_tab"] = selected_tab
 

@@ -12,8 +12,12 @@ enableWebsocketCompression = false
 gatherUsageStats = false
 
 [theme]
-primaryColor = "#34D399"
-backgroundColor = "#0F172A"
-secondaryBackgroundColor = "#1E293B"
+base = "dark"
+primaryColor = "#6366F1"
+backgroundColor = "#06070D"
+secondaryBackgroundColor = "#0D0F18"
 textColor = "#F8FAFC"
 font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
