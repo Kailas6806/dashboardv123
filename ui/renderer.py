@@ -571,6 +571,11 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             and can_afford
         )
 
+        # Single Engine Authority: If background engine is running, it autonomously executes trades.
+        # UI renderer defers to background engine to eliminate duplicate execution race conditions.
+        if bg_engine and hasattr(bg_engine, "is_running") and bg_engine.is_running():
+            can_enter = False
+
         if (final_signal != st.session_state[sk(idx, "last_signal")]
                 and trade_allowed and daily_allowed and can_enter):
 
