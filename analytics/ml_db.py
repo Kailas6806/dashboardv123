@@ -7,14 +7,31 @@ from utils.logger import get_logger
 logger = get_logger("ml_db")
 
 def get_connection():
+    import os
     import streamlit as st
+    uri = ""
     try:
-        if "supabase" in st.secrets:
-            uri = st.secrets["supabase"].get("SUPABASE_URI", "")
-            if uri:
-                return psycopg2.connect(uri)
-    except Exception as e:
-        logger.warning(f"Failed to load DB URI from secrets: {e}")
+        if hasattr(st, "secrets"):
+            if "SUPABASE_URI" in st.secrets:
+                uri = str(st.secrets["SUPABASE_URI"]).strip()
+            elif "supabase" in st.secrets and isinstance(st.secrets["supabase"], dict):
+                uri = str(st.secrets["supabase"].get("SUPABASE_URI", "")).strip()
+    except Exception:
+        pass
+    if not uri:
+        uri = os.environ.get("SUPABASE_URI", "").strip()
+    if not uri:
+        try:
+            import config
+            uri = getattr(config, "SUPABASE_URI", "").strip()
+        except Exception:
+            pass
+            
+    if uri:
+        try:
+            return psycopg2.connect(uri)
+        except Exception as e:
+            logger.warning(f"Failed to connect to Supabase: {e}")
     return None
 
 def init_ml_tables():

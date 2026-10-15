@@ -209,7 +209,7 @@ except Exception:
     pass
 
 # ML / XGBOOST CONFIG
-ML_ENABLED = True
+ML_ENABLED = False
 ML_MIN_PROBABILITY = 0.70
 ML_FAIL_SAFE_BLOCK = False
 ML_MODELS_DIR = 'models'

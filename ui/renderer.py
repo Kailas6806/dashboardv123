@@ -580,12 +580,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                         st.info(f"🤖 AI Analysis Complete — conviction **{ai_pre_score}/100**. (Auto-trade is OFF, proceeding via rules)")
 
 
-            # ??? XGBOOST ML VALIDATION ???
+            # ── XGBOOST ML VALIDATION (ADVISORY & DISABLED CHECK) ──
+            import config
+            ML_ENABLED = getattr(config, "ML_ENABLED", False)
             xgb_ok = True
             xgb_prob = 0.0
             xgb_msg = ""
             
-            if ai_conviction_ok and trade_allowed and daily_allowed and can_enter:
+            if ML_ENABLED and ai_conviction_ok and trade_allowed and daily_allowed and can_enter:
                 try:
                     from ml.predict import evaluate_ml_signal
                     ai_analysis_val = st.session_state.get(sk(idx, "ai_analysis"))
@@ -595,15 +597,14 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     else:
                         st.success(f"🤖 **XGBoost Approved:** {xgb_msg}")
                 except Exception as e:
-                    import config
                     ML_FAIL_SAFE_BLOCK = getattr(config, "ML_FAIL_SAFE_BLOCK", False)
                     st.error(f"XGBoost Error: {e}")
                     if ML_FAIL_SAFE_BLOCK:
                         xgb_ok = False
                         
-            can_enter = can_enter and xgb_ok
-            if not ai_conviction_ok or not xgb_ok:
-                # AI blocked — don't enter, but mark signal as seen so it doesn't loop
+            can_enter = can_enter and (xgb_ok if ML_ENABLED else True)
+            if not ai_conviction_ok or (ML_ENABLED and not xgb_ok):
+                # AI / ML blocked — don't enter, but mark signal as seen so it doesn't loop
                 st.session_state[sk(idx, "last_signal")] = final_signal
             else:
                 now_str = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
