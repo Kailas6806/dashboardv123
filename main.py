@@ -337,7 +337,7 @@ with st.sidebar:
             key=f"sidebar_nav_{tab_options.index(nav_tab)}",
             help=nav_label,
             type="primary" if curr_default == nav_tab else "secondary",
-            use_container_width=True,
+            width="stretch",
         ):
             _select_nav_tab(nav_tab)
 
@@ -356,11 +356,11 @@ with st.container(key="mobile_bottom_nav"):
                 key=f"mobile_nav_{tab_options.index(nav_tab)}",
                 help=nav_tab,
                 type="primary" if curr_default == nav_tab else "secondary",
-                use_container_width=True,
+                width="stretch",
             ):
                 _select_nav_tab(nav_tab)
     with mobile_columns[4]:
-        with st.popover("☰\nMore", use_container_width=True):
+        with st.popover("☰\nMore", width="stretch"):
             st.markdown("**More pages**")
             for nav_tab in tab_options:
                 if nav_tab in mobile_nav_tabs:
@@ -369,7 +369,7 @@ with st.container(key="mobile_bottom_nav"):
                     f"{nav_icons[nav_tab]}  {nav_tab}",
                     key=f"mobile_more_nav_{tab_options.index(nav_tab)}",
                     type="primary" if curr_default == nav_tab else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     _select_nav_tab(nav_tab)
 

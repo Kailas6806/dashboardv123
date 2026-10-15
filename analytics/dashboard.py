@@ -111,7 +111,7 @@ def render_analytics_tab(journal: Any) -> None:
         else:
             days = 36500  # practically all time
     with reset_col:
-        if st.button("🗑️ Reset", key="reset_journal", use_container_width=True,
+        if st.button("🗑️ Reset", key="reset_journal", width="stretch",
                       help="Clear all trade history from Supabase and Journal"):
             st.session_state["_confirm_reset_journal"] = True
 
@@ -121,7 +121,7 @@ def render_analytics_tab(journal: Any) -> None:
         c1, c2, c3 = st.columns([1, 1, 3])
         with c1:
             if st.button("✅ Yes, Reset", key="confirm_reset_journal", type="primary",
-                          use_container_width=True):
+                          width="stretch"):
                 if hasattr(journal, "clear_all_trades"):
                     journal.clear_all_trades()
                 else:
@@ -135,7 +135,7 @@ def render_analytics_tab(journal: Any) -> None:
                 st.success("✅ Trade database cleared!")
                 st.rerun()
         with c2:
-            if st.button("❌ Cancel", key="cancel_reset_journal", use_container_width=True):
+            if st.button("❌ Cancel", key="cancel_reset_journal", width="stretch"):
                 st.session_state["_confirm_reset_journal"] = False
                 st.rerun()
 
@@ -148,7 +148,7 @@ def render_analytics_tab(journal: Any) -> None:
         )
         b_c1, b_c2, b_c3, b_c4 = st.columns([1.5, 1.5, 1.5, 2.5])
         with b_c1:
-            if st.button("🔄 Sync from Supabase", use_container_width=True, help="Force refresh data directly from Supabase"):
+            if st.button("🔄 Sync from Supabase", width="stretch", help="Force refresh data directly from Supabase"):
                 if hasattr(journal, "_load"):
                     journal._load()
                 st.success("✅ Refreshed from Supabase!")
@@ -159,7 +159,7 @@ def render_analytics_tab(journal: Any) -> None:
                 data=journal.export_to_json(),
                 file_name="trade_journal_backup.json",
                 mime="application/json",
-                use_container_width=True,
+                width="stretch",
                 help="Download full trade history as JSON"
             )
         with b_c3:
@@ -168,7 +168,7 @@ def render_analytics_tab(journal: Any) -> None:
                 data=journal.export_to_csv(),
                 file_name="trade_journal_backup.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
                 help="Download trade history as CSV"
             )
         with b_c4:
@@ -308,7 +308,7 @@ def _render_cumulative_pnl(trades: List[Dict[str, Any]]) -> None:
         xaxis_title="",
         yaxis_title="₹",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_pnl_by_index(analytics: Dict[str, Any]) -> None:
@@ -343,13 +343,13 @@ def _render_pnl_by_index(analytics: Dict[str, Any]) -> None:
         margin=dict(l=40, r=20, t=30, b=40),
         legend_title_text="",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Also show P&L numbers below
     pnl_rows = []
     for idx, stats in by_index.items():
         pnl_rows.append({"Index": idx, "Trades": stats["trades"], "P&L (₹)": round(stats["pnl"], 2)})
-    st.dataframe(pd.DataFrame(pnl_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(pnl_rows), hide_index=True, width="stretch")
 
 
 def _render_pnl_by_hour(analytics: Dict[str, Any]) -> None:
@@ -381,7 +381,7 @@ def _render_pnl_by_hour(analytics: Dict[str, Any]) -> None:
         xaxis_title="Hour of Day",
         yaxis_title="₹",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_win_loss_pie(analytics: Dict[str, Any]) -> None:
@@ -415,7 +415,7 @@ def _render_win_loss_pie(analytics: Dict[str, Any]) -> None:
         margin=dict(l=20, r=20, t=30, b=20),
         legend=dict(orientation="h", y=-0.1),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_signal_type_cards(analytics: Dict[str, Any]) -> None:
@@ -514,4 +514,4 @@ def _render_recent_trades(trades: List[Dict[str, Any]], count: int = 20) -> None
         return "color: #e0e0e0"
 
     styled = df.style.map(_color_pnl, subset=["Actual P&L ₹"])  # type: ignore[arg-type]
-    st.dataframe(styled, hide_index=True, use_container_width=True, height=500)
+    st.dataframe(styled, hide_index=True, width="stretch", height=500)

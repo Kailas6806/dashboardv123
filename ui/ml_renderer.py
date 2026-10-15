@@ -54,7 +54,7 @@ def render_ml_dashboard():
             with st.expander("🔍 Top Predictive Features (XGBoost Feature Weights)", expanded=False):
                 imp_df = pd.DataFrame(list(feat_imp.items()), columns=["Feature", "Importance Weight"])
                 imp_df = imp_df.sort_values(by="Importance Weight", ascending=False).reset_index(drop=True)
-                st.dataframe(imp_df.head(10), use_container_width=True)
+                st.dataframe(imp_df.head(10), width="stretch")
 
     st.markdown("#### ⚡ Retrain Model with Historical Candles & AI Copilot")
     st.caption("Connects to Angel One, downloads 5m candles for NIFTY & BANKNIFTY, replays your Rule Engine, evaluates setups with AI Copilot, labels 1:2 R:R outcomes, and updates `models/xgb_prod.joblib`.")
@@ -66,7 +66,7 @@ def render_ml_dashboard():
         use_ai = st.checkbox("Include AI Copilot Intelligence", value=True, help="Queries NVIDIA / Gemini Copilot to incorporate quantitative conviction, market regime, and agreement scores into XGBoost features.")
     with col_opt3:
         st.write("") # Spacer
-        if st.button("🚀 Run Full Replay & Retrain XGBoost", use_container_width=True, type="primary"):
+        if st.button("🚀 Run Full Replay & Retrain XGBoost", width="stretch", type="primary"):
             progress_bar = st.progress(0.0)
             status_text = st.empty()
             
@@ -126,4 +126,4 @@ def render_ml_dashboard():
             df = df.sort_values(by="timestamp", ascending=False).head(20)
             disp_df = df[['timestamp', 'idx', 'signal', 'strategy_score', 'xgb_probability', 'decision', 'target']]
             disp_df['xgb_probability'] = (disp_df['xgb_probability'] * 100).round(1).astype(str) + "%"
-            st.dataframe(disp_df, use_container_width=True)
+            st.dataframe(disp_df, width="stretch")

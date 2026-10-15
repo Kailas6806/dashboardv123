@@ -149,7 +149,7 @@ def render_audit_tab(auditor: Any = None, fetcher: Any = None, copilot: Any = No
             data=csv_data,
             file_name=f"signal_audit_{date_slug}_{datetime.datetime.now(IST).strftime('%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
     st.write("")
 

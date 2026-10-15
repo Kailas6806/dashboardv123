@@ -60,12 +60,23 @@ def _safe_trade_pnl(trade):
     if raw_pnl is None:
         return 0.0
 
+    trade_identity = (
+        trade.get("trade_id")
+        or trade.get("_journal_id")
+        or " ".join(
+            str(trade.get(key))
+            for key in ("Index", "Entry Time", "Strike", "Signal")
+            if trade.get(key) not in (None, "")
+        )
+        or "unknown"
+    )
+
     try:
         pnl = float(raw_pnl)
     except (TypeError, ValueError, OverflowError):
         logger.warning(
             "Ignoring invalid Actual P&L for trade %s: %r",
-            trade.get("trade_id") or trade.get("_journal_id") or "unknown",
+            trade_identity,
             raw_pnl,
         )
         return 0.0
@@ -73,7 +84,7 @@ def _safe_trade_pnl(trade):
     if not math.isfinite(pnl):
         logger.warning(
             "Ignoring non-finite Actual P&L for trade %s: %r",
-            trade.get("trade_id") or trade.get("_journal_id") or "unknown",
+            trade_identity,
             raw_pnl,
         )
         return 0.0
@@ -390,7 +401,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         with st.container():
             col_ai_btn, col_ai_txt = st.columns([1.8, 5.2])
             with col_ai_btn:
-                if st.button(f"🧠 AI VALIDATE {idx}", key=f"btn_quick_ai_{idx}", use_container_width=True):
+                if st.button(f"🧠 AI VALIDATE {idx}", key=f"btn_quick_ai_{idx}", width="stretch"):
                     with st.status(f"⚡ AI Copilot: Analyzing {idx} with Gemini 3.5 Flash-Lite...", expanded=True) as status_box:
                         st.write("📊 Evaluating 21-strike Option Chain & Spot vs VWAP...")
                         ai_res = copilot.analyze_market_and_signals(
@@ -770,7 +781,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         st.subheader(f"💼 {idx} Tracker")
     with rcol:
         st.write("")
-        if st.button("🔄 Reset", key=f"reset_{idx}", use_container_width=True):
+        if st.button("🔄 Reset", key=f"reset_{idx}", width="stretch"):
             st.session_state[tlog_key] = []
             st.session_state[sk(idx, "last_signal")] = "WAIT"
             st.session_state[sk(idx, "last_played")] = "WAIT"
@@ -784,7 +795,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             st.rerun()
     with tcol:
         st.write("")
-        if st.button("📨 Test", key=f"test_{idx}", use_container_width=True):
+        if st.button("📨 Test", key=f"test_{idx}", width="stretch"):
             now_t = datetime.datetime.now(IST).strftime("%I:%M:%S %p")
             trade_mgr.notifier.send(
                 f"🧪 *V12 {idx} TEST ALERT*\n🟢 SIGNAL: BUY CE\n"
@@ -811,7 +822,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     with st.expander(f"{idx} Option Chain & Charts"):
         st.dataframe(
             disp.style.map(hl, subset=["CE OI Δ", "PE OI Δ"]),
-            use_container_width=True,
+            width="stretch",
         )
         
         show_charts = st.checkbox("📊 Render Visual OI Distribution Charts", value=False, key=f"show_charts_{idx}")
@@ -819,12 +830,12 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             fig1 = px.bar(disp, x="Strike", y=["CE OI", "PE OI"], barmode="group",
                           color_discrete_map={"CE OI": "#10b981", "PE OI": "#ef4444"})
             fig1.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width="stretch")
             
             fig2 = px.bar(disp, x="Strike", y=["CE OI Δ", "PE OI Δ"], barmode="group",
                           color_discrete_map={"CE OI Δ": "#34d399", "PE OI Δ": "#f87171"})
             fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='#a1a1aa', margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
 
     # ── POSITIONS ──
     with st.expander(f"{idx} Trade Positions"):
@@ -839,7 +850,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                 if st.button(
                     f"❌ Close Position ({idx} {ot.get('Signal')} {ot.get('Strike')})",
                     key=f"close_{idx}_expander",
-                    type="primary", use_container_width=True,
+                    type="primary", width="stretch",
                 ):
                     lp = float(ot.get("Live Price") or ot.get("Entry Price") or 0)
                     trade_mgr.close_manually(idx, ot, lp)
@@ -892,7 +903,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
                 st.dataframe(
                     hdf[cols].style.map(cp, subset=["Actual P&L ₹"]),
-                    use_container_width=True,
+                    width="stretch",
                 )
                 pnl_s = hdf["Actual P&L ₹"].apply(pd.to_numeric, errors="coerce")
                 ca, cb, cc2 = st.columns(3)
@@ -1114,11 +1125,11 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                     """, unsafe_allow_html=True)
                     c_cancel, c_confirm = st.columns([1, 1])
                     with c_cancel:
-                        if st.button("✕ CANCEL", key=f"cancel_{trade_id}", use_container_width=True):
+                        if st.button("✕ CANCEL", key=f"cancel_{trade_id}", width="stretch"):
                             st.session_state["_confirm_close"] = None
                             st.rerun()
                     with c_confirm:
-                        if st.button("✓ CONFIRM CLOSE", key=f"confirm_{trade_id}", type="primary", use_container_width=True):
+                        if st.button("✓ CONFIRM CLOSE", key=f"confirm_{trade_id}", type="primary", width="stretch"):
                             st.session_state["_confirm_close"] = None
                             lp = float(t.get("Live Price") or t.get("Entry Price") or 0)
                             trade_mgr.close_manually(idx, t, lp)
@@ -1145,7 +1156,7 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             else:
                 c_sp, c_close = st.columns([3, 2])
                 with c_close:
-                    if st.button("CLOSE POSITION", key=f"req_close_{trade_id}", type="primary", use_container_width=True):
+                    if st.button("CLOSE POSITION", key=f"req_close_{trade_id}", type="primary", width="stretch"):
                         st.session_state["_confirm_close"] = trade_id
                         st.rerun()
 
@@ -1228,7 +1239,7 @@ def render_trade_history_tab(journal):
                 m_xp = st.number_input("Exit Price (₹)", value=120.0, step=1.0, key="m_trade_xp")
             with f_col4:
                 m_qty = st.number_input("Quantity", value=INDEX_CONFIG.get("NIFTY", {}).get("lot", 65), step=1, key="m_trade_qty")
-                m_submit = st.form_submit_button("💾 Save Trade to History", use_container_width=True)
+                m_submit = st.form_submit_button("💾 Save Trade to History", width="stretch")
 
             if m_submit:
                 m_pnl = round((m_xp - m_ep) * m_qty, 2)
@@ -1268,7 +1279,7 @@ def render_trade_history_tab(journal):
                     data=journal.export_to_json(),
                     file_name="trade_history_backup.json",
                     mime="application/json",
-                    use_container_width=True,
+                    width="stretch",
                     key="hist_dl_json",
                     help="Download complete trade history as JSON"
                 )
@@ -1279,7 +1290,7 @@ def render_trade_history_tab(journal):
                     data=journal.export_to_csv(),
                     file_name="trade_history_backup.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     key="hist_dl_csv",
                     help="Download complete trade history as CSV"
                 )
@@ -1470,7 +1481,7 @@ def render_trade_history_tab(journal):
                 "❌ CLOSE ALL OPEN TRADES",
                 key="btn_close_all_open_hist",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             ):
                 exit_now = now_close_time.strftime("%I:%M:%S %p")
                 closed_count = 0
@@ -1535,7 +1546,7 @@ def render_trade_history_tab(journal):
 
     st.dataframe(
         df_hist,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -1618,7 +1629,7 @@ def render_settings_tab(trade_mgr, journal):
                 st.markdown('<span class="badge badge-warning">● TELEGRAM NOT CONFIGURED</span>', unsafe_allow_html=True)
             st.caption("Daily P&L summaries and automated trade alerts are dispatched to your configured Telegram channel.")
         with col_btn:
-            if st.button("📨 SEND DAILY REPORT NOW", key="btn_send_report_settings", use_container_width=True):
+            if st.button("📨 SEND DAILY REPORT NOW", key="btn_send_report_settings", width="stretch"):
                 with st.spinner("Compiling and sending report..."):
                     current_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
                     total_pnl = 0
@@ -1824,7 +1835,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     # 2. Trigger AI Analysis
     col_act, col_info = st.columns([2, 5])
     with col_act:
-        run_ai = st.button("🧠 RUN AI SIGNAL ANALYSIS", key=f"btn_run_ai_{selected_idx}", use_container_width=True)
+        run_ai = st.button("🧠 RUN AI SIGNAL ANALYSIS", key=f"btn_run_ai_{selected_idx}", width="stretch")
     with col_info:
         active_analysis = st.session_state.get(sk(selected_idx, "ai_analysis"))
         if active_analysis and "timestamp" in active_analysis:
@@ -1990,7 +2001,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             """, unsafe_allow_html=True)
 
             btn_label = f"⚡ TAKE AI TRADE ({exec_signal})"
-            if st.button(btn_label, key=f"btn_take_trade_{selected_idx}", use_container_width=True):
+            if st.button(btn_label, key=f"btn_take_trade_{selected_idx}", width="stretch"):
                 ok, trade_entry, msg = copilot.take_trade(
                     selected_idx, exec_signal, md, trade_mgr, risk_mgr, journal, tlog,
                     ai_conviction=conviction,
@@ -2009,7 +2020,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             # Manual trade override buttons
             c_ce, c_pe = st.columns(2)
             with c_ce:
-                if st.button("BUY ATM CE", key=f"btn_force_ce_{selected_idx}", use_container_width=True):
+                if st.button("BUY ATM CE", key=f"btn_force_ce_{selected_idx}", width="stretch"):
                     ok, trade_entry, msg = copilot.take_trade(
                         selected_idx, "BUY CE", md, trade_mgr, risk_mgr, journal, tlog,
                         ai_conviction=conviction,
@@ -2024,7 +2035,7 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
                     else:
                         st.error(msg)
             with c_pe:
-                if st.button("BUY ATM PE", key=f"btn_force_pe_{selected_idx}", use_container_width=True):
+                if st.button("BUY ATM PE", key=f"btn_force_pe_{selected_idx}", width="stretch"):
                     ok, trade_entry, msg = copilot.take_trade(
                         selected_idx, "BUY PE", md, trade_mgr, risk_mgr, journal, tlog,
                         ai_conviction=conviction,
@@ -2201,7 +2212,7 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             </div>
             """, unsafe_allow_html=True)
             quick_label = f"⚡ Analyze {idx_name}" if not idx_res else f"🔄 Re-Analyze {idx_name}"
-            if st.button(quick_label, key=f"quick_btn_{idx_name}", use_container_width=True):
+            if st.button(quick_label, key=f"quick_btn_{idx_name}", width="stretch"):
                 with st.spinner(f"⚡ Synthesizing {idx_name} with Gemini 3.5 Flash-Lite..."):
                     ok, res_obj = _run_autonomous_pipeline(idx_name, fetcher, signal_engine, copilot)
                     if ok:
@@ -2233,7 +2244,7 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
 
     cur_res = st.session_state.get(f"autonomous_result_{selected_idx}")
     main_btn_label = f"⚡ RUN AUTONOMOUS AI ENGINE FOR {selected_idx}" if not cur_res else f"⚡ RE-RUN AUTONOMOUS AI ENGINE FOR {selected_idx}"
-    if st.button(main_btn_label, key=f"btn_run_auto_{selected_idx}", type="primary", use_container_width=True):
+    if st.button(main_btn_label, key=f"btn_run_auto_{selected_idx}", type="primary", width="stretch"):
         with st.spinner(f"⚡ Synthesizing {selected_idx} with Gemini 3.5 Flash-Lite..."):
             ok, res_obj = _run_autonomous_pipeline(selected_idx, fetcher, signal_engine, copilot)
             if ok:
@@ -2386,7 +2397,7 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
             )
 
             if is_armed:
-                if st.button(f"🚀 CONFIRM & FIRE {signal} (₹{ep:.2f})", key=f"auto_exec_{idx}", type="primary", use_container_width=True):
+                if st.button(f"🚀 CONFIRM & FIRE {signal} (₹{ep:.2f})", key=f"auto_exec_{idx}", type="primary", width="stretch"):
                     tlog = st.session_state.get(sk(idx, "trade_log"), [])
                     ok, trade_entry, msg = copilot.take_trade(
                         idx, signal, md, trade_mgr, risk_mgr, journal, tlog,
@@ -2407,5 +2418,4 @@ def render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, 
                     else:
                         st.error(f"❌ Execution Blocked: {msg}")
             else:
-                st.button(f"🔒 Check Box Above to Arm & Fire Order", disabled=True, use_container_width=True)
-
+                st.button(f"🔒 Check Box Above to Arm & Fire Order", disabled=True, width="stretch")

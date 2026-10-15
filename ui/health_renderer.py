@@ -230,7 +230,7 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
         with warn_col:
             st.error(f"⚠️ Angel One Broker Offline: {fetcher.login_message or 'Session inactive'}")
         with btn_col:
-            if st.button("⚡ Reconnect Session", key="btn_reconnect_broker_ui", use_container_width=True):
+            if st.button("⚡ Reconnect Session", key="btn_reconnect_broker_ui", width="stretch"):
                 with st.spinner("Re-authenticating with Angel One..."):
                     fetcher.login(max_retries=3, retry_delay=2.0, force=True)
                     st.rerun()
@@ -238,10 +238,10 @@ def render_health_dashboard(fetcher=None, trade_mgr=None, copilot=None, md_dict=
     # Quick Telemetry Actions
     btn_col1, btn_col2 = st.columns([1, 1])
     with btn_col1:
-        if st.button("🔄 Refresh Telemetry Feed", key="btn_refresh_activity_tab", use_container_width=True):
+        if st.button("🔄 Refresh Telemetry Feed", key="btn_refresh_activity_tab", width="stretch"):
             st.rerun()
     with btn_col2:
-        if st.button("⚡ Force WebSocket Reconnect", key="btn_reconnect_ws_feed", use_container_width=True):
+        if st.button("⚡ Force WebSocket Reconnect", key="btn_reconnect_ws_feed", width="stretch"):
             if fetcher and hasattr(fetcher, "reconnect_websocket"):
                 with st.spinner("Reconnecting SmartWebSocket..."):
                     fetcher.reconnect_websocket()
