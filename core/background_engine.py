@@ -459,6 +459,23 @@ class BackgroundTradingEngine:
                         },
                         trade
                     )
+                try:
+                    if self.trade_mgr and hasattr(self.trade_mgr, "notifier") and self.trade_mgr.notifier:
+                        res_str = str(trade.get("Result", "CLOSED"))
+                        emoji = "🟢" if "WIN" in res_str else ("🔴" if "LOSS" in res_str or "SL" in res_str else "🛡️")
+                        self.trade_mgr.notifier.send_exit_alert(
+                            idx=idx,
+                            signal=trade.get("Signal", ""),
+                            result_emoji=emoji,
+                            result_text=res_str,
+                            strike=str(trade.get("Strike", "")),
+                            entry=str(trade.get("Entry Price", "")),
+                            exit_price=str(trade.get("Exit Price", "")),
+                            pnl=str(trade.get("Actual P&L ₹", "")),
+                            time_str=str(trade.get("Exit Time") or now_ist.strftime("%I:%M:%S %p")),
+                        )
+                except Exception as e_exit_ntf:
+                    logger.warning(f"Error sending background exit alert for {idx}: {e_exit_ntf}")
 
         # 7. Don't enter if trade already open
         open_exists = any(t.get("Status") == "OPEN" for t in tlog)

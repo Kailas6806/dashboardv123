@@ -839,12 +839,40 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
 def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     """Render the 'Open Trades' tab showing all open trades across all indices."""
-    # Sync latest trades from background engine if available
+    # 1. Fetch today's authoritative trades from Supabase DB
+    db_today_trades = []
+    try:
+        from analytics.db import TradeDB
+        db = TradeDB()
+        now_date_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+        all_db_trades = db.get_all_trades()
+        db_today_trades = [t for t in all_db_trades if str(t.get("date") or "")[:10] == now_date_str]
+    except Exception as e:
+        logger.warning(f"TradeDB query in render_open_trades_tab: {e}")
+
+    # 2. Sync and merge trades across DB, background engine, and session state
     for idx in INDEX_CONFIG:
+        idx_trades_map = {}
+        for t in db_today_trades:
+            if str(t.get("Index") or "").upper() == idx:
+                tid = t.get("trade_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
+                idx_trades_map[tid] = t
+
         if bg_engine:
             bg_trades = bg_engine.get_trade_log(idx)
-            if bg_trades is not None:
-                st.session_state[sk(idx, "trade_log")] = bg_trades
+            if bg_trades:
+                for t in bg_trades:
+                    tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
+                    idx_trades_map[tid] = t
+
+        for t in st.session_state.get(sk(idx, "trade_log"), []):
+            tid = t.get("trade_id") or t.get("_journal_id") or f"{idx}_{t.get('Entry Time')}_{t.get('Strike')}"
+            if tid not in idx_trades_map:
+                idx_trades_map[tid] = t
+
+        merged_list = list(idx_trades_map.values())
+        merged_list.sort(key=lambda x: str(x.get("recorded_at") or x.get("Entry Time") or ""), reverse=True)
+        st.session_state[sk(idx, "trade_log")] = merged_list
 
     # Update prices for open trades
     for idx in INDEX_CONFIG:
