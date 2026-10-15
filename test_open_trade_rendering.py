@@ -1,9 +1,17 @@
 import unittest
 
-from ui.renderer import _merge_trade_records
+from ui.renderer import _merge_trade_records, _safe_trade_pnl
 
 
 class TestOpenTradeRendering(unittest.TestCase):
+    def test_trade_pnl_ignores_non_finite_and_invalid_values(self):
+        self.assertEqual(125.5, _safe_trade_pnl({"Actual P&L ₹": "125.5"}))
+        self.assertEqual(-12.0, _safe_trade_pnl({"Actual P&L ₹": -12}))
+        self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": None}))
+        self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": float("nan")}))
+        self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": float("inf")}))
+        self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": "invalid"}))
+
     def test_session_log_overrides_stale_foreground_status(self):
         database_trade = {
             "trade_id": "trade-1",

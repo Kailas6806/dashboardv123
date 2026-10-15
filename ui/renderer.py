@@ -55,6 +55,32 @@ def _merge_trade_records(
     return list(trades_by_id.values())
 
 
+def _safe_trade_pnl(trade):
+    raw_pnl = trade.get("Actual P&L ₹")
+    if raw_pnl is None:
+        return 0.0
+
+    try:
+        pnl = float(raw_pnl)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "Ignoring invalid Actual P&L for trade %s: %r",
+            trade.get("trade_id") or trade.get("_journal_id") or "unknown",
+            raw_pnl,
+        )
+        return 0.0
+
+    if not math.isfinite(pnl):
+        logger.warning(
+            "Ignoring non-finite Actual P&L for trade %s: %r",
+            trade.get("trade_id") or trade.get("_journal_id") or "unknown",
+            raw_pnl,
+        )
+        return 0.0
+
+    return pnl
+
+
 def init_state(idx):
     """Initialize per-index session state keys."""
     defaults = [
@@ -1001,7 +1027,8 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
 
     # ── Summary KPI calculations (Real data only) ──
     trades_count = len(all_open)
-    realized_pnl = sum(float(t.get("Actual P&L ₹") or 0) for t in closed_today)
+    closed_pnls = [_safe_trade_pnl(t) for t in closed_today]
+    realized_pnl = sum(closed_pnls)
     unrealized_pnl = 0.0
     total_max_loss = 0.0
     for t in all_open:
@@ -1019,7 +1046,7 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
         from config import MAX_LOSS
         total_max_loss = float(MAX_LOSS * len(all_open))
 
-    wins = sum(1 for t in closed_today if float(t.get("Actual P&L ₹") or 0) > 0)
+    wins = sum(1 for pnl in closed_pnls if pnl > 0)
     win_rate = (wins / len(closed_today) * 100.0) if closed_today else None
 
     # ── 0. Real Brokerage Capital HUD (Supabase Persisted) ──
