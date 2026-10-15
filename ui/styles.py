@@ -71,6 +71,7 @@ body, .stApp {
   background-color: var(--bg-0) !important;
   color: var(--text-0);
   -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
 }
 
 /* ── Prevent Streamlit Screen Dimming / Fading on Refresh & Reruns ── */
@@ -133,7 +134,7 @@ section[data-testid="stSidebar"],
   padding-left: 0.85rem !important;
   padding-right: 0.85rem !important;
   padding-bottom: 70px !important;
-  max-width: 100% !important;
+  max-width: 1600px !important;
 }
 
 /* ── Typography & Hierarchy: Numbers are the HERO ── */
@@ -194,7 +195,7 @@ section[data-testid="stSidebar"],
 
 /* ── App Header ── */
 .app-header {
-  padding: 6px 0 12px 0;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border-blue);
   margin-bottom: 10px;
   display: flex;
@@ -202,6 +203,9 @@ section[data-testid="stSidebar"],
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
+  background: linear-gradient(110deg, rgba(79, 70, 229, 0.10), rgba(13, 15, 24, 0.78) 48%, rgba(0, 229, 160, 0.04));
+  border: 1px solid var(--border-blue);
+  border-radius: 12px;
 }
 .app-header-left h1 {
   font-family: 'Space Grotesk', sans-serif;
@@ -217,7 +221,7 @@ section[data-testid="stSidebar"],
 .app-header-left p {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-2);
+  color: var(--text-1);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   margin-top: 2px;
@@ -491,6 +495,8 @@ div[data-testid="stPills"] button {
   letter-spacing: 0.04em !important;
   color: var(--text-1) !important;
   white-space: nowrap !important;
+  flex: 0 0 auto !important;
+  scroll-snap-align: start;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -507,6 +513,62 @@ div[data-testid="stPills"] button[data-checked="true"] {
   color: #ffffff !important;
   border: 1px solid var(--indigo-hi) !important;
   border-bottom: 2px solid var(--purple) !important;
+}
+
+/* ── Readability, focus, and high-density dashboard surfaces ── */
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {
+  color: #f8fafc;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  margin-bottom: 0.45rem;
+}
+.stMarkdown p, .stCaption, [data-testid="stCaptionContainer"] {
+  line-height: 1.55;
+}
+.stMarkdown a {
+  color: #a5b4fc !important;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.stApp :is(button, input, textarea, [role="combobox"], [role="slider"]):focus-visible {
+  outline: 2px solid #818cf8 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.18) !important;
+}
+.stApp [data-testid="stMetric"] {
+  background: linear-gradient(145deg, rgba(17, 20, 33, 0.96), rgba(13, 15, 24, 0.96));
+  border: 1px solid var(--border-blue);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 88px;
+}
+.stApp [data-testid="stMetricLabel"] {
+  color: var(--text-1) !important;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+.stApp [data-testid="stMetricValue"] {
+  color: #f8fafc;
+  font-family: 'Space Grotesk', -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.stApp [data-testid="stDataFrame"],
+.stApp [data-testid="stTable"] {
+  border: 1px solid var(--border-blue);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.stApp [data-testid="stTextInput"] input,
+.stApp [data-testid="stNumberInput"] input,
+.stApp [data-testid="stDateInput"] input,
+.stApp [data-testid="stSelectbox"] [role="combobox"] {
+  background: var(--bg-1);
+  border-color: var(--border-hi);
+  border-radius: var(--r-sm);
+  min-height: var(--touch-min);
+}
+.stApp [data-testid="stHorizontalBlock"] {
+  gap: 0.85rem;
 }
 
 /* ── Signal Cards ── */
@@ -560,13 +622,52 @@ div[data-testid="stPills"] button[data-checked="true"] {
 
 @media (min-width: 960px) {
   .block-container {
-    padding-left: 1.5rem !important;
-    padding-right: 1.5rem !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
     padding-bottom: 30px !important;
   }
   .kpi-grid     { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
   .filter-grid  { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .tracker-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+}
+
+@media (max-width: 768px) {
+  .block-container {
+    padding-top: 0.4rem !important;
+    padding-left: 0.65rem !important;
+    padding-right: 0.65rem !important;
+  }
+  .app-header {
+    align-items: flex-start;
+    padding: 12px;
+  }
+  .app-header-left h1 {
+    font-size: 22px;
+  }
+  .app-header > div:last-child {
+    width: 100%;
+    text-align: left !important;
+  }
+  .app-header > div:last-child > div:first-child {
+    justify-content: flex-start !important;
+    flex-wrap: wrap;
+  }
+  div[data-testid="stPills"] {
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+  }
+  .stApp [data-testid="stHorizontalBlock"] {
+    gap: 0.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ── Bottom Sticky Bar on Mobile ── */
