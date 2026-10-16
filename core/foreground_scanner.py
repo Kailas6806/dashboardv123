@@ -339,6 +339,11 @@ def _scan_single_index(
 
     # 6. Check SL / Target / Trailing / Exits on Open Trades
     tlog = _scanner_state["trade_logs"].get(idx, [])
+    stop_losses_before = {
+        id(trade): trade.get("Stop Loss")
+        for trade in tlog
+        if trade.get("Status") == "OPEN"
+    }
     events = []
     try:
         events = trade_mgr.update_live_prices(
@@ -346,6 +351,21 @@ def _scan_single_index(
         )
     except Exception as e:
         logger.warning("Foreground SL/Target update error on %s: %s", idx, e)
+
+    for trade in tlog:
+        old_stop = stop_losses_before.get(id(trade))
+        if old_stop is None or trade.get("Status") != "OPEN":
+            continue
+        try:
+            stop_changed = float(trade.get("Stop Loss") or 0) != float(old_stop or 0)
+        except (TypeError, ValueError):
+            stop_changed = trade.get("Stop Loss") != old_stop
+        if stop_changed and journal and hasattr(journal, "update_trade_stop_loss"):
+            journal.update_trade_stop_loss(
+                trade.get("_journal_id", ""),
+                float(trade.get("Stop Loss") or 0),
+                trade,
+            )
 
     if events:
         for ev in events:

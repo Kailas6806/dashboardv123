@@ -31,10 +31,14 @@ class _FakeConnection:
     def __init__(self):
         self.test_cursor = _ExistingOpenTradeCursor()
         self.rolled_back = False
+        self.committed = False
         self.closed = False
 
     def cursor(self):
         return self.test_cursor
+
+    def commit(self):
+        self.committed = True
 
     def rollback(self):
         self.rolled_back = True
@@ -162,6 +166,27 @@ class TestForegroundScannerSafety(unittest.TestCase):
         self.assertIn("pg_advisory_xact_lock", queries[0])
         self.assertIn("status = 'OPEN'", queries[1])
         self.assertFalse(any(query.lstrip().startswith("INSERT INTO trades") for query in queries))
+
+    def test_stop_loss_update_preserves_open_trade_status(self):
+        db = TradeDB.__new__(TradeDB)
+        db._lock = threading.RLock()
+        connection = _FakeConnection()
+        connection.test_cursor.rowcount = 1
+
+        with patch.object(db, "_get_connection", return_value=connection):
+            updated = db.update_trade_stop_loss(
+                "TEST_NIFTY_001",
+                151.25,
+                {"Index": "NIFTY", "Entry Time": "10:00:00 AM", "Strike": 22000, "Signal": "BUY CE"},
+            )
+
+        self.assertTrue(updated)
+        self.assertTrue(connection.committed)
+        query, params = connection.test_cursor.calls[0]
+        self.assertIn("SET stop_loss = %s", query)
+        self.assertIn("status = 'OPEN'", query)
+        self.assertEqual(params[0], 151.25)
+        self.assertNotIn("status =", query.split("WHERE")[0])
 
 
 if __name__ == "__main__":

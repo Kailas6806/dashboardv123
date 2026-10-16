@@ -47,7 +47,8 @@ class RiskManager:
     """Manages risk calculations for trade entry, fixed SL, and cooldowns.
 
     Design principle: qty is ALWAYS = lot (1 lot only). No dynamic
-    position sizing. SL is fixed at ₹1,500 (MAX_LOSS). No trailing stop.
+    position sizing. Initial SL is capped by MAX_LOSS; TradeManager may
+    ratchet the protective stop upward after entry.
     """
 
     def __init__(self) -> None:
@@ -371,4 +372,3 @@ class RiskManager:
         if available_margin < required:
             return False, f"Insufficient margin: Required ₹{required:,.0f}, Available ₹{available_margin:,.0f}"
         return True, ""
-

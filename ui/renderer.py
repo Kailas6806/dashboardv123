@@ -973,6 +973,11 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             if not d or "records" not in d:
                 continue
 
+            stop_losses_before = {
+                id(trade): trade.get("Stop Loss")
+                for trade in tlog
+                if trade.get("Status") == "OPEN"
+            }
             events = []
             try:
                 events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now, fetcher=fetcher)
@@ -983,6 +988,21 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                     logger.warning(f"Error updating open trades for {idx}: {e}")
             except Exception as e:
                 logger.warning(f"Error updating open trades for {idx}: {e}")
+            journal = st.session_state.get("_journal")
+            for trade in tlog:
+                old_stop = stop_losses_before.get(id(trade))
+                if old_stop is None or trade.get("Status") != "OPEN":
+                    continue
+                try:
+                    stop_changed = float(trade.get("Stop Loss") or 0) != float(old_stop or 0)
+                except (TypeError, ValueError):
+                    stop_changed = trade.get("Stop Loss") != old_stop
+                if stop_changed and journal and hasattr(journal, "update_trade_stop_loss"):
+                    journal.update_trade_stop_loss(
+                        trade.get("_journal_id", ""),
+                        float(trade.get("Stop Loss") or 0),
+                        trade,
+                    )
             if events:
                 trade_mgr.save_log(idx, tlog)
                 for ev in events:
@@ -991,7 +1011,6 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                     st.session_state[sk(idx, "last_signal")] = "WAIT"
                     
                     # Record exit in journal
-                    journal = st.session_state.get("_journal")
                     trade = ev["trade"]
                     if journal:
                         journal.update_trade(

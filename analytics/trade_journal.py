@@ -299,6 +299,56 @@ class TradeJournal:
         finally:
             self._lock.release()
 
+    def update_trade_stop_loss(
+        self,
+        trade_id: str,
+        stop_loss: float,
+        trade_dict: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Persist a trailing stop update without marking the trade as closed."""
+        with self._lock:
+            self._load()
+            matched = None
+            for entry in self.trades:
+                if trade_id and entry.get("trade_id") == trade_id:
+                    matched = entry
+                    break
+
+            if matched is None and trade_dict:
+                idx = str(trade_dict.get("Index") or "").upper()
+                entry_time = trade_dict.get("Entry Time")
+                strike = self._normalize_strike(trade_dict.get("Strike"))
+                signal = str(trade_dict.get("Signal") or "").upper()
+                matched = next(
+                    (
+                        entry for entry in self.trades
+                        if str(entry.get("Index") or "").upper() == idx
+                        and entry.get("Entry Time") == entry_time
+                        and self._normalize_strike(entry.get("Strike")) == strike
+                        and str(entry.get("Signal") or "").upper() == signal
+                        and str(entry.get("Status") or "").upper() == "OPEN"
+                    ),
+                    None,
+                )
+
+            if matched is not None:
+                matched["Stop Loss"] = stop_loss
+                matched["updated_at"] = datetime.now(tz=IST).isoformat()
+                self._save()
+
+            db_updated = False
+            if self.db:
+                try:
+                    db_updated = self.db.update_trade_stop_loss(
+                        trade_id, stop_loss, trade_dict
+                    )
+                except Exception as e:
+                    logger.warning("TradeDB stop-loss update error: %s", e)
+
+            if matched is None and not db_updated:
+                logger.warning("Trade %s not found for stop-loss update", trade_id)
+            return matched is not None or db_updated
+
     def get_all_trades(self) -> List[Dict[str, Any]]:
         """Return a copy of every trade in the journal (prioritizing Supabase PostgreSQL DB)."""
         with self._lock:

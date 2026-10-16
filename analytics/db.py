@@ -486,6 +486,55 @@ class TradeDB:
             finally:
                 conn.close()
 
+    def update_trade_stop_loss(
+        self,
+        trade_id: str,
+        stop_loss: float,
+        trade_dict: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Persist a ratcheted stop without changing the trade's open status."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                now_ist = datetime.datetime.now(IST).isoformat()
+                updated = False
+                if trade_id:
+                    cursor.execute(
+                        """
+                        UPDATE trades
+                        SET stop_loss = %s, updated_at = %s
+                        WHERE trade_id = %s AND status = 'OPEN'
+                        """,
+                        (stop_loss, now_ist, trade_id),
+                    )
+                    updated = cursor.rowcount > 0
+                if not updated and trade_dict:
+                    cursor.execute(
+                        """
+                        UPDATE trades
+                        SET stop_loss = %s, updated_at = %s
+                        WHERE instrument = %s AND entry_time = %s
+                          AND strike = %s AND signal = %s AND status = 'OPEN'
+                        """,
+                        (
+                            stop_loss,
+                            now_ist,
+                            str(trade_dict.get("Index") or trade_dict.get("instrument") or "").upper(),
+                            trade_dict.get("Entry Time") or trade_dict.get("entry_time"),
+                            self._safe_float(trade_dict.get("Strike") or trade_dict.get("strike")),
+                            str(trade_dict.get("Signal") or trade_dict.get("signal") or "").upper(),
+                        ),
+                    )
+                    updated = cursor.rowcount > 0
+                conn.commit()
+                return updated
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def get_all_trades(
         self,
         status: Optional[str] = None,

@@ -235,6 +235,7 @@ class TradeManager:
         """
         events: List[Dict[str, Any]] = []
         pending_notifications: List[str] = []
+        stop_loss_changed = False
         if now is None:
             now = datetime.datetime.now(IST)
         now_str = now.strftime("%I:%M:%S %p")
@@ -301,18 +302,38 @@ class TradeManager:
 
                 trade["Live Price"] = lp
                 unrealized_pnl = round((lp - ep_t) * qty_t, 2)
+                risk_pts = round(abs(tgt - ep_t) / 2.0, 2)
+                if risk_pts < 1:
+                    risk_pts = 1
+
+                current_sl = float(trade.get("Stop Loss") or sl)
+                initial_sl = ep_t - risk_pts
+                buffer_pts = max(0.5, round(100.0 / qty_t, 2)) if qty_t > 0 else 1.0
+                breakeven_sl = round(ep_t + buffer_pts, 2)
+                breakeven_locked = bool(trade.get("_breakeven_locked")) or current_sl >= breakeven_sl
+                profit_locked = bool(trade.get("_profit_locked")) or current_sl > breakeven_sl
+                if breakeven_locked:
+                    trade["_breakeven_locked"] = True
+                if profit_locked:
+                    trade["_profit_locked"] = True
+                peak_price = max(
+                    ep_t,
+                    lp,
+                    float(trade.get("_peak_price") or ep_t),
+                    current_sl + risk_pts if profit_locked else ep_t,
+                )
+                trade["_peak_price"] = peak_price
 
                 # 1. Early Breakeven Lock (+₹1,000 Unrealized Profit)
                 # When unrealized profit touches +₹1,000, lock Stop Loss to entry price + ₹100 brokerage buffer
-                current_sl = float(trade.get("Stop Loss") or sl)
-                if unrealized_pnl >= EARLY_BREAKEVEN_PROFIT and not trade.get("_breakeven_locked") and not trade.get("_profit_locked"):
-                    buffer_pts = max(0.5, round(100.0 / qty_t, 2)) if qty_t > 0 else 1.0
-                    be_sl = round(ep_t + buffer_pts, 2)
-                    if be_sl > current_sl:
-                        trade["Stop Loss"] = be_sl
+                if unrealized_pnl >= EARLY_BREAKEVEN_PROFIT and not breakeven_locked and not profit_locked:
+                    if breakeven_sl > current_sl:
+                        trade["Stop Loss"] = breakeven_sl
                         trade["_breakeven_locked"] = True
                         trade["Result"] = "🛡️ BREAKEVEN LOCKED (+₹100 buffer)"
-                        current_sl = be_sl
+                        current_sl = breakeven_sl
+                        breakeven_locked = True
+                        stop_loss_changed = True
                         
                         lock_key = f"{trade_key}_breakeven"
                         if lock_key not in self._notified_locks:
@@ -320,48 +341,34 @@ class TradeManager:
                             pending_notifications.append(
                                 f"🛡️ *BREAKEVEN LOCK ACTIVATED — {idx} {signal}*\n"
                                 f"📈 Unrealized P&L reached `+₹{unrealized_pnl:,.0f}` (≥ ₹{EARLY_BREAKEVEN_PROFIT:,})!\n"
-                                f"🔒 Stop Loss moved to `{be_sl}` (+₹100 brokerage buffer)\n"
+                                f"🔒 Stop Loss moved to `{breakeven_sl}` (+₹100 brokerage buffer)\n"
                                 f"✨ Trade is now 100% risk-free!"
                             )
-                            log.info("BREAKEVEN LOCK: %s %s locked at %.2f (+₹100 buffer)", idx, signal, be_sl)
+                            log.info("BREAKEVEN LOCK: %s %s locked at %.2f (+₹100 buffer)", idx, signal, breakeven_sl)
 
-                # 2. Dynamic R-Multiple Trailing Logic
-                # Risk = (Target - Entry) / 2
-                risk_pts = round(abs(tgt - ep_t) / 2.0, 2)
-                if risk_pts < 1:
-                    risk_pts = 1  # fallback to avoid division by zero
-                
-                # Current profit in points (long option buyer: lp - ep_t)
-                current_profit_pts = round(lp - ep_t, 2)
-                
-                # How many R's of profit have we achieved?
-                r_achieved = math.floor(current_profit_pts / risk_pts)
-                
-                if r_achieved >= 2:
-                    # If we hit 1:2 or more, we trail the Stop Loss to (R - 1)
-                    # Example: Hit 1:2 -> lock 1:1. Hit 1:3 -> lock 1:2.
-                    lock_r = r_achieved - 1
-                    locked_pts = round(lock_r * risk_pts, 2)
-                    new_sl = round(ep_t + locked_pts, 2)
-                    
+                # 2. Trail one initial-risk unit below the best price after breakeven.
+                if breakeven_locked:
+                    new_sl = round(peak_price - risk_pts, 2)
                     if new_sl > current_sl:
                         trade["Stop Loss"] = new_sl
                         trade["_profit_locked"] = True
-                        locked_pnl = round(locked_pts * qty_t, 2)
+                        profit_locked = True
+                        locked_pnl = round((new_sl - ep_t) * qty_t, 2)
                         trade["_locked_profit"] = locked_pnl
-                        trade["Result"] = f"📈 PROFIT LOCKED (1:{lock_r} / +₹{locked_pnl:,.0f})"
+                        trade["Result"] = f"📈 TRAILING PROFIT LOCKED (+₹{locked_pnl:,.0f})"
                         current_sl = new_sl
+                        stop_loss_changed = True
                         
-                        lock_key = f"{trade_key}_lock_{lock_r}R"
+                        lock_key = f"{trade_key}_trail_{new_sl:.2f}"
                         if lock_key not in self._notified_locks:
                             self._notified_locks.add(lock_key)
                             pending_notifications.append(
-                                f"🔥 *TRAILING STOP LOSS ACTIVATED — {idx} {signal}*\n"
-                                f"🎯 Market reached 1:{r_achieved} Reward!\n"
+                                f"🔥 *TRAILING STOP LOSS UPDATED — {idx} {signal}*\n"
+                                f"📈 Best price: `{peak_price}`\n"
                                 f"🔒 Stop Loss moved to `{new_sl}`\n"
                                 f"💰 Guaranteed Profit: `₹{locked_pnl:,.0f}`"
                             )
-                            log.info("TRAILING SL: %s %s locked %sR (%.2f)", idx, signal, lock_r, new_sl)
+                        log.info("TRAILING SL: %s %s peak=%.2f stop=%.2f", idx, signal, peak_price, new_sl)
 
                 # 3. Check Auto-Square Off
                 should_notify = trade_key not in self._notified_exits
@@ -389,7 +396,7 @@ class TradeManager:
                     # ── 4. Check Pullback / SL Exit ──
                     current_sl = float(trade.get("Stop Loss") or sl)
 
-                    if trade.get("_profit_locked") and lp <= current_sl and lp > 0:
+                    if profit_locked and lp <= current_sl and lp > 0:
                         pnl = round((lp - ep_t) * qty_t, 2)
                         trade.update({
                             "Status": "CLOSED",
@@ -411,7 +418,7 @@ class TradeManager:
                         log.info("PROFIT LOCKED EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                                  idx, signal, trade.get("Strike"), lp, pnl)
 
-                    elif trade.get("_breakeven_locked") and lp <= current_sl and lp > 0:
+                    elif breakeven_locked and lp <= current_sl and lp > 0:
                         pnl = round((lp - ep_t) * qty_t, 2)
                         trade.update({
                             "Status": "CLOSED",
@@ -433,7 +440,7 @@ class TradeManager:
                         log.info("BREAKEVEN EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
                                  idx, signal, trade.get("Strike"), lp, pnl)
 
-                    elif not trade.get("_profit_locked") and not trade.get("_breakeven_locked") and lp <= current_sl and lp > 0:
+                    elif not profit_locked and not breakeven_locked and lp <= current_sl and lp > 0:
                         pnl = round((lp - ep_t) * qty_t, 2)
                         trade.update({
                             "Status": "CLOSED",
@@ -457,6 +464,9 @@ class TradeManager:
         # Send notifications outside the lock to avoid potential deadlock
         for notification_msg in pending_notifications:
             self._notify(notification_msg)
+
+        if stop_loss_changed:
+            self.save_log(idx, trade_log)
 
         return events
 

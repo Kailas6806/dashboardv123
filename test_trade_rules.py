@@ -4,9 +4,9 @@ Unit test suite verifying:
 2. Profit target set based on DAILY_TGT (₹3,000 / 1:2 R:R).
 3. Max daily trades limit across the portfolio (MAX_DAILY_TRADES = 30).
 4. Cumulative daily loss limit across the portfolio (MAX_DAILY_LOSS = ₹9,000).
-5. Dynamic R-Multiple Trailing Profit Lock:
-   - When trade reaches 1:2 R or higher, SL is moved to lock guaranteed profit.
-   - Pullback triggers exit with locked profit (PROFIT_LOCKED_EXIT).
+5. Peak-based trailing stop:
+   - After breakeven, SL ratchets one initial-risk unit below the best price.
+   - Pullbacks never loosen the stop and crossing it closes the trade.
 """
 import datetime
 import time
@@ -140,13 +140,13 @@ class TestTradeRules(unittest.TestCase):
         }
         trade_log = [trade]
 
-        # Step 1: Price reaches 210 (+110 pts >= 2R = 100 pts) -> SL locks at 1R (150.0)
+        # Step 1: Price reaches 210 (+110 pts); SL trails one risk unit below the peak.
         records = {51000.0: {"CE": {"lastPrice": 210.0}}}
         events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
         self.assertEqual(len(events), 0, "Trade should stay OPEN while above trailing SL")
         self.assertTrue(trade.get("_profit_locked"))
-        self.assertEqual(trade["Stop Loss"], 150.0)
-        self.assertEqual(trade["_locked_profit"], 1500.0)
+        self.assertEqual(trade["Stop Loss"], 160.0)
+        self.assertEqual(trade["_locked_profit"], 1800.0)
 
         # Step 2: Price pulls back to 148 (below 150 trailing SL) -> Exits with locked profit
         records = {51000.0: {"CE": {"lastPrice": 148.0}}}
@@ -156,6 +156,72 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual(trade["Status"], "CLOSED")
         self.assertEqual(trade["Result"], "🟢 WIN (LOCKED)")
         self.assertEqual(trade["Actual P&L ₹"], 1440.0)
+
+    def test_trailing_stop_tracks_peak_and_never_moves_down(self):
+        now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        trade = {
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 100.0,
+            "Stop Loss": 50.0,
+            "Target": 200.0,
+            "Qty": 30,
+            "Status": "OPEN",
+        }
+        trade_log = [trade]
+
+        self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log,
+            {51000.0: {"CE": {"lastPrice": 210.0}}}, now,
+        )
+        self.assertEqual(trade["Stop Loss"], 160.0)
+        self.assertEqual(trade["_peak_price"], 210.0)
+
+        self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log,
+            {51000.0: {"CE": {"lastPrice": 220.0}}}, now,
+        )
+        self.assertEqual(trade["Stop Loss"], 170.0)
+
+        self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log,
+            {51000.0: {"CE": {"lastPrice": 215.0}}}, now,
+        )
+        self.assertEqual(trade["Stop Loss"], 170.0)
+        self.assertEqual(trade["_peak_price"], 220.0)
+
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log,
+            {51000.0: {"CE": {"lastPrice": 169.0}}}, now,
+        )
+        self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
+        self.assertEqual(trade["Status"], "CLOSED")
+
+    def test_persisted_raised_stop_remains_armed_without_private_flags(self):
+        now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        trade = {
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 175.0,
+            "Stop Loss": 170.0,
+            "Target": 200.0,
+            "Qty": 30,
+            "Status": "OPEN",
+        }
+
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY", [trade],
+            {51000.0: {"CE": {"lastPrice": 169.0}}}, now,
+        )
+
+        self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
+        self.assertEqual(trade["Status"], "CLOSED")
 
     def test_early_breakeven_lock(self):
         """
