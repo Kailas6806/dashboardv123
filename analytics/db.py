@@ -539,6 +539,7 @@ class TradeDB:
         self,
         status: Optional[str] = None,
         instrument: Optional[str] = None,
+        trade_date: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve all trades formatted for the dashboard and journal."""
         with self._lock:
@@ -553,6 +554,9 @@ class TradeDB:
                 if instrument and instrument != "ALL":
                     query += " AND instrument = %s"
                     params.append(instrument.upper())
+                if trade_date:
+                    query += " AND trade_date = %s"
+                    params.append(trade_date)
                 query += " ORDER BY trade_date DESC, entry_time DESC, created_at DESC"
                 cursor.execute(query, tuple(params))
                 rows = cursor.fetchall()

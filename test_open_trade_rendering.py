@@ -1,5 +1,8 @@
 import unittest
+import threading
+from unittest.mock import MagicMock, patch
 
+from analytics.db import TradeDB
 from ui.renderer import _merge_trade_records, _safe_trade_pnl
 
 
@@ -39,6 +42,20 @@ class TestOpenTradeRendering(unittest.TestCase):
         self.assertEqual("OPEN", merged[0]["Status"])
         self.assertEqual(125, merged[0]["Live Price"])
         self.assertIn(db_only_trade, merged)
+
+    def test_trade_date_filter_is_applied_in_database_query(self):
+        db = TradeDB.__new__(TradeDB)
+        db._lock = threading.RLock()
+        connection = MagicMock()
+        connection.cursor.return_value.fetchall.return_value = []
+
+        with patch.object(db, "_get_connection", return_value=connection):
+            self.assertEqual([], db.get_all_trades(trade_date="2026-10-16"))
+
+        cursor = connection.cursor.return_value
+        query, params = cursor.execute.call_args.args
+        self.assertIn("AND trade_date = %s", query)
+        self.assertEqual(("2026-10-16",), params)
 
 
 if __name__ == "__main__":

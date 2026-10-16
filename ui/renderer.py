@@ -920,11 +920,13 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     # 1. Fetch today's authoritative trades from Supabase DB
     db_today_trades = []
     try:
-        from analytics.db import TradeDB
-        db = TradeDB()
         now_date_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-        all_db_trades = db.get_all_trades()
-        db_today_trades = [t for t in all_db_trades if str(t.get("date") or "")[:10] == now_date_str]
+        db = st.session_state.get("_trade_db")
+        if not db or not hasattr(db, "get_all_trades"):
+            from analytics.db import TradeDB
+            db = TradeDB()
+            st.session_state["_trade_db"] = db
+        db_today_trades = db.get_all_trades(trade_date=now_date_str)
     except Exception as e:
         logger.warning(f"TradeDB query in render_open_trades_tab: {e}")
 
