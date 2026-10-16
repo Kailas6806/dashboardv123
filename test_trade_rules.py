@@ -223,6 +223,63 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
         self.assertEqual(trade["Status"], "CLOSED")
 
+    def test_gap_through_profit_stop_reports_observed_loss_not_locked_win(self):
+        now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        trade = {
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 175.0,
+            "Stop Loss": 120.0,
+            "Target": 200.0,
+            "Qty": 30,
+            "Status": "OPEN",
+            "_profit_locked": True,
+            "_peak_price": 170.0,
+        }
+
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY",
+            [trade],
+            {51000.0: {"CE": {"lastPrice": 99.9}}},
+            now,
+        )
+
+        self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
+        self.assertEqual(trade["Actual P&L ₹"], -3.0)
+        self.assertEqual(trade["Result"], "🔴 TRAILING STOP SLIPPAGE")
+        self.assertTrue(any("PRICE SLIPPAGE" in msg for msg in self.notifier.messages))
+        self.assertTrue(any("₹-3" in msg for msg in self.notifier.messages))
+
+    def test_gap_through_breakeven_stop_reports_observed_loss(self):
+        now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        trade = {
+            "Entry Time": "10:30:00 AM",
+            "Index": "NIFTY",
+            "Signal": "BUY PE",
+            "Strike": 23000,
+            "Entry Price": 149.45,
+            "Live Price": 175.0,
+            "Stop Loss": 150.99,
+            "Target": 195.59,
+            "Qty": 65,
+            "Status": "OPEN",
+        }
+
+        events = self.trade_mgr.update_live_prices(
+            "NIFTY",
+            [trade],
+            {23000.0: {"PE": {"lastPrice": 149.40}}},
+            now,
+        )
+
+        self.assertEqual([event["type"] for event in events], ["BREAKEVEN_EXIT"])
+        self.assertEqual(trade["Actual P&L ₹"], -3.25)
+        self.assertEqual(trade["Result"], "🔴 BREAKEVEN STOP SLIPPAGE")
+        self.assertTrue(any("BREAKEVEN STOP — PRICE SLIPPAGE" in msg for msg in self.notifier.messages))
+
     def test_early_breakeven_lock(self):
         """
         Verify Early Breakeven Lock (+₹1,000 unrealized profit):

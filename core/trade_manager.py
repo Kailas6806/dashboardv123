@@ -398,9 +398,10 @@ class TradeManager:
 
                     if profit_locked and lp <= current_sl and lp > 0:
                         pnl = round((lp - ep_t) * qty_t, 2)
+                        result = "🟢 WIN (LOCKED)" if pnl >= 0 else "🔴 TRAILING STOP SLIPPAGE"
                         trade.update({
                             "Status": "CLOSED",
-                            "Result": "🟢 WIN (LOCKED)",
+                            "Result": result,
                             "Exit Price": lp,
                             "Exit Time": now_str,
                             "Actual P&L ₹": pnl,
@@ -409,20 +410,31 @@ class TradeManager:
                         self._notified_exits.add(trade_key)
                         events.append({"type": "PROFIT_LOCKED_EXIT", "trade": trade, "pnl": pnl})
                         if should_notify:
+                            if pnl >= 0:
+                                notification = (
+                                    f"💸 Secured P&L: `₹{pnl:,.0f}`"
+                                )
+                            else:
+                                notification = (
+                                    f"⚠️ Price moved through the virtual stop before this check.\n"
+                                    f"💸 Observed exit P&L after slippage: `₹{pnl:,.0f}`"
+                                )
                             pending_notifications.append(
-                                f"🟢 *PROFIT LOCKED EXIT — {idx} {signal}*\n"
+                                f"{'🟢' if pnl >= 0 else '🔴'} *{'PROFIT LOCKED EXIT' if pnl >= 0 else 'TRAILING STOP — PRICE SLIPPAGE'} — {idx} {signal}*\n"
                                 f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                                f"💸 Secured P&L: `₹{pnl:,.0f}`\n"
+                                f"{notification}\n"
                                 f"⏰ Time: `{now_str}`"
                             )
-                        log.info("PROFIT LOCKED EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        log.info("%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                                 "PROFIT LOCKED EXIT" if pnl >= 0 else "TRAILING STOP SLIPPAGE",
                                  idx, signal, trade.get("Strike"), lp, pnl)
 
                     elif breakeven_locked and lp <= current_sl and lp > 0:
                         pnl = round((lp - ep_t) * qty_t, 2)
+                        result = "🛡️ BREAKEVEN EXIT" if pnl >= 0 else "🔴 BREAKEVEN STOP SLIPPAGE"
                         trade.update({
                             "Status": "CLOSED",
-                            "Result": "🛡️ BREAKEVEN EXIT",
+                            "Result": result,
                             "Exit Price": lp,
                             "Exit Time": now_str,
                             "Actual P&L ₹": pnl,
@@ -431,13 +443,24 @@ class TradeManager:
                         self._notified_exits.add(trade_key)
                         events.append({"type": "BREAKEVEN_EXIT", "trade": trade, "pnl": pnl})
                         if should_notify:
+                            if pnl >= 0:
+                                notification = (
+                                    f"💸 Observed P&L: `₹{pnl:,.0f}` (before fees)\n"
+                                    f"⏰ Time: `{now_str}`"
+                                )
+                            else:
+                                notification = (
+                                    f"⚠️ Price moved through the virtual stop before this check.\n"
+                                    f"💸 Observed exit P&L after slippage: `₹{pnl:,.0f}`\n"
+                                    f"⏰ Time: `{now_str}`"
+                                )
                             pending_notifications.append(
-                                f"🛡️ *BREAKEVEN EXIT — {idx} {signal}*\n"
+                                f"{'🛡️' if pnl >= 0 else '🔴'} *{'BREAKEVEN EXIT' if pnl >= 0 else 'BREAKEVEN STOP — PRICE SLIPPAGE'} — {idx} {signal}*\n"
                                 f"📍 Strike: `{trade.get('Strike')}` | Exit: `{lp}`\n"
-                                f"💸 Secured P&L: `₹{pnl:,.0f}` (Brokerage protected!)\n"
-                                f"⏰ Time: `{now_str}`"
+                                f"{notification}"
                             )
-                        log.info("BREAKEVEN EXIT: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                        log.info("%s: %s %s Strike=%s Exit=%.2f PnL=%.2f",
+                                 "BREAKEVEN EXIT" if pnl >= 0 else "BREAKEVEN STOP SLIPPAGE",
                                  idx, signal, trade.get("Strike"), lp, pnl)
 
                     elif not profit_locked and not breakeven_locked and lp <= current_sl and lp > 0:
