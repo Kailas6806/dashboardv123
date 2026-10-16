@@ -13,6 +13,16 @@ from analytics.trade_journal import TradeJournal
 
 
 class TestTradingJsonSerialization(unittest.TestCase):
+    def test_json_export_serializes_database_time_values(self):
+        journal = TradeJournal(journal_path="unused.json")
+        journal.get_all_trades = lambda: [
+            {"Entry Time": datetime.time(10, 30, 15)}
+        ]
+
+        exported = json.loads(journal.export_to_json())
+
+        self.assertEqual("10:30:15", exported[0]["Entry Time"])
+
     def test_journal_saves_datetime_and_numpy_values(self):
         with tempfile.TemporaryDirectory() as directory:
             journal_path = os.path.join(directory, "journal.json")
