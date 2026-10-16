@@ -134,6 +134,14 @@ class TestForegroundScannerSafety(unittest.TestCase):
         self.assertEqual(initial_scans, foreground_scanner._scanner_state["total_scans"])
         self.assertIs(result, foreground_scanner._scanner_state["latest_states"])
 
+    def test_auto_trade_setting_is_shared_process_wide(self):
+        original = foreground_scanner.get_auto_trade_enabled()
+        try:
+            foreground_scanner.set_auto_trade_enabled(not original)
+            self.assertEqual(not original, foreground_scanner.get_auto_trade_enabled())
+        finally:
+            foreground_scanner.set_auto_trade_enabled(original)
+
     def test_ai_autotrade_requires_configured_successful_approval(self):
         approved, _, _, _, _ = foreground_scanner._validate_ai_entry(
             None, "NIFTY", {}, "BUY CE", 80, True, 0

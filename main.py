@@ -165,8 +165,8 @@ fetcher       = get_fetcher()
 
 # ── 100% FOREGROUND MULTI-INDEX SCANNER & AUDITOR ──
 from core.foreground_scanner import (
-    run_foreground_market_scan, get_scanner_status,
-    get_latest_index_state, get_index_trade_log
+    start_foreground_scanner, get_scanner_status,
+    get_latest_index_state, get_index_trade_log, set_index_trade_log,
 )
 from core.signal_audit import get_signal_auditor
 auditor = get_signal_auditor()
@@ -179,15 +179,28 @@ for idx in INDEX_CONFIG:
         if hasattr(journal, "db") and journal.db:
             try:
                 now_date = datetime.datetime.now(IST).strftime("%Y-%m-%d")
-                db_t = journal.db.get_all_trades(instrument=idx)
-                if db_t:
-                    initial_trades = [t for t in db_t if str(t.get("date") or "")[:10] == now_date]
+                try:
+                    initial_trades = journal.db.get_all_trades(
+                        instrument=idx,
+                        trade_date=now_date,
+                        include_open=True,
+                    )
+                except TypeError:
+                    db_t = journal.db.get_all_trades(instrument=idx)
+                    initial_trades = [
+                        trade for trade in db_t
+                        if str(trade.get("date") or "")[:10] == now_date
+                        or str(trade.get("Status") or "").upper() == "OPEN"
+                    ]
             except Exception:
                 initial_trades = []
-        if not initial_trades:
+        if not initial_trades and not (hasattr(journal, "db") and journal.db):
             initial_trades = load_log(idx)
         st.session_state[sk(idx, "trade_log")] = initial_trades
+        set_index_trade_log(idx, initial_trades)
         st.session_state[f"_trades_loaded_{idx}"] = True
+
+start_foreground_scanner(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 # Render the most recent scanner state immediately; scanning is scheduled below.
 latest_scan_results = {
@@ -253,7 +266,7 @@ st.markdown(
 
 # ── DYNAMIC NAVIGATION (FAST LAZY-LOADED TABS) ──
 open_count = sum(
-    len([t for t in st.session_state.get(sk(idx, "trade_log"), []) if t.get("Status") == "OPEN"])
+    len([t for t in get_index_trade_log(idx) if t.get("Status") == "OPEN"])
     for idx in INDEX_CONFIG
 )
 open_tab_label = "OPEN TRADES"
@@ -392,66 +405,28 @@ navigation_changed = (
     and _nav_identity(previous_nav_tab) != _nav_identity(selected_tab)
 )
 if navigation_changed:
-    st.session_state["_skip_scanner_once"] = True
+    logger.debug("Navigation changed to %s; rendering latest shared snapshot", selected_tab)
 
-
-def _run_scanner_for_fragment():
-    if st.session_state.pop("_skip_scanner_once", False):
-        return {
-            idx: get_latest_index_state(idx)
-            for idx in INDEX_CONFIG
-        }
-    now_monotonic = time.monotonic()
-    last_scan = st.session_state.get("_last_foreground_scan_monotonic", 0.0)
-    if now_monotonic - last_scan < FRAGMENT_REFRESH_SECONDS:
-        return {
-            idx: get_latest_index_state(idx)
-            for idx in INDEX_CONFIG
-        }
-    st.session_state["_last_foreground_scan_monotonic"] = now_monotonic
-    return run_foreground_market_scan(
-        fetcher=fetcher,
-        signal_engine=signal_engine,
-        risk_mgr=risk_mgr,
-        trade_mgr=trade_mgr,
-        journal=journal,
-        copilot=copilot,
-        ai_auto_trade=st.session_state.get("ai_auto_trade", True),
-    )
-
-
-if not navigation_changed:
-    latest_scan_results = _run_scanner_for_fragment()
-
-# ── FOREGROUND MULTI-INDEX SCANNER & TAB FRAGMENTS ──
-# Live panels refresh every second; the foreground scanner remains throttled to FRAGMENT_REFRESH_SECONDS.
-# The foreground loop scans NIFTY, BANKNIFTY, FINNIFTY sequentially, evaluates signals,
+# ── BACKGROUND MULTI-INDEX SCANNER & TAB FRAGMENTS ──
+# Live panels refresh independently; one process-wide worker scans NIFTY, BANKNIFTY, and FINNIFTY,
+# evaluates signals,
 # checks SL/TP exits, executes autonomous entries (max 1 open trade per index), and persists state.
 
 @st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_open_trades():
-    _run_scanner_for_fragment()
     render_open_trades_tab(trade_mgr, fetcher)
 
 @st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_nifty():
-    _run_scanner_for_fragment()
     render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_banknifty():
-    _run_scanner_for_fragment()
     render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
 @st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_finnifty():
-    _run_scanner_for_fragment()
     render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
-
-@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
-def foreground_scanner_daemon_worker():
-    """Keeps the multi-index foreground scan loop active when viewing non-index tabs."""
-    _run_scanner_for_fragment()
 
 def show_analytics():
     render_analytics_tab(journal)
@@ -464,10 +439,6 @@ def show_ai():
 def show_autonomous():
     from ui.renderer import render_autonomous_tab
     render_autonomous_tab(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
-
-# When on non-index tabs, keep foreground scanning alive every FRAGMENT_REFRESH_SECONDS
-if scanner_enabled and selected_tab not in ("NIFTY", "BANKNIFTY", "FINNIFTY") and "OPEN TRADES" not in selected_tab:
-    foreground_scanner_daemon_worker()
 
 # ── PURE LAZY TAB RENDERING ──
 if "OPEN TRADES" in selected_tab:

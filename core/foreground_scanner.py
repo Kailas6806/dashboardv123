@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import datetime
+import threading
 import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -89,14 +90,24 @@ _scanner_state: Dict[str, Any] = {
     "last_scan_ts": 0.0,
     "status": "READY",
 }
+_scan_lock = threading.RLock()
+_worker_lock = threading.Lock()
+_control_lock = threading.Lock()
+_worker_thread: Optional[threading.Thread] = None
+_auto_trade_enabled = AI_AUTO_TRADE_DEFAULT
 
 
 def get_scanner_status() -> Dict[str, Any]:
     """Return diagnostic telemetry for Activity/Health tab and app header."""
     enabled = bool(getattr(config, "ENABLE_BACKGROUND_SCANNER", True))
+    running = bool(_worker_thread and _worker_thread.is_alive())
     return {
-        "running": enabled,
-        "status": "RUNNING (100% Foreground Loop)" if enabled else "DISABLED",
+        "running": running,
+        "status": (
+            "RUNNING (Background Loop)" if running
+            else "STARTING" if enabled
+            else "DISABLED"
+        ),
         "total_scans": _scanner_state["total_scans"],
         "last_scan": _scanner_state["last_scan_time"] or "Awaiting first cycle",
         "indices": list(INDEX_CONFIG.keys()),
@@ -118,7 +129,99 @@ def set_index_trade_log(idx: str, tlog: List[Dict[str, Any]]) -> None:
     _scanner_state["trade_logs"][idx] = list(tlog)
 
 
+def set_auto_trade_enabled(enabled: bool) -> None:
+    """Set the process-wide autonomous-entry switch used by the scanner."""
+    global _auto_trade_enabled
+    with _control_lock:
+        _auto_trade_enabled = bool(enabled)
+
+
+def get_auto_trade_enabled() -> bool:
+    """Return the process-wide autonomous-entry switch."""
+    with _control_lock:
+        return _auto_trade_enabled
+
+
+def start_foreground_scanner(
+    fetcher: Any,
+    signal_engine: Any,
+    risk_mgr: Any,
+    trade_mgr: Any,
+    journal: Any,
+    copilot: Optional[Any] = None,
+) -> bool:
+    """Start one process-wide scanner worker, independent of Streamlit reruns."""
+    global _worker_thread
+    if not getattr(config, "ENABLE_BACKGROUND_SCANNER", True):
+        return False
+
+    with _worker_lock:
+        if _worker_thread and _worker_thread.is_alive():
+            return True
+        _worker_thread = threading.Thread(
+            target=_scanner_worker,
+            args=(fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot),
+            name="V12-ForegroundScanner",
+            daemon=True,
+        )
+        _worker_thread.start()
+        logger.info("Started process-wide foreground scanner worker")
+        return True
+
+
+def _scanner_worker(
+    fetcher: Any,
+    signal_engine: Any,
+    risk_mgr: Any,
+    trade_mgr: Any,
+    journal: Any,
+    copilot: Optional[Any],
+) -> None:
+    """Run scans independently of user-driven Streamlit rendering."""
+    while True:
+        try:
+            run_foreground_market_scan(
+                fetcher=fetcher,
+                signal_engine=signal_engine,
+                risk_mgr=risk_mgr,
+                trade_mgr=trade_mgr,
+                journal=journal,
+                copilot=copilot,
+                ai_auto_trade=get_auto_trade_enabled(),
+                force=True,
+            )
+        except Exception:
+            logger.exception("Background market scan failed")
+        time.sleep(max(1, config.FRAGMENT_REFRESH_SECONDS))
+
+
 def run_foreground_market_scan(
+    fetcher: Any,
+    signal_engine: Any,
+    risk_mgr: Any,
+    trade_mgr: Any,
+    journal: Any,
+    copilot: Optional[Any] = None,
+    ai_auto_trade: Optional[bool] = None,
+    min_interval: float = 1.5,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Serialize scanner cycles so concurrent callers cannot mutate shared state."""
+    with _scan_lock:
+        return _run_foreground_market_scan(
+            fetcher=fetcher,
+            signal_engine=signal_engine,
+            risk_mgr=risk_mgr,
+            trade_mgr=trade_mgr,
+            journal=journal,
+            copilot=copilot,
+            ai_auto_trade=ai_auto_trade,
+            min_interval=min_interval,
+            force=force,
+        )
+
+
+def _run_foreground_market_scan(
     fetcher: Any,
     signal_engine: Any,
     risk_mgr: Any,
@@ -145,30 +248,41 @@ def run_foreground_market_scan(
     auditor = get_signal_auditor()
 
     if ai_auto_trade is None:
-        try:
-            import streamlit as st
-            ai_auto_trade = st.session_state.get("ai_auto_trade", AI_AUTO_TRADE_DEFAULT)
-        except Exception:
-            ai_auto_trade = AI_AUTO_TRADE_DEFAULT
+        ai_auto_trade = get_auto_trade_enabled()
 
     now_ist = datetime.datetime.now(IST)
     now_time = now_ist.time()
     in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
     min_conf_score = getattr(config, "MIN_CONFIDENCE_SCORE", 30)
 
-    # Load initial trade logs if empty
+    # Refresh shared trade state every scan so every tab/session sees the same positions.
     for idx in INDEX_CONFIG:
-        if not _scanner_state["trade_logs"][idx]:
+        loaded_trades = None
+        try:
+            trade_db = getattr(journal, "db", None)
+            if trade_db and hasattr(trade_db, "get_all_trades"):
+                today = now_ist.strftime("%Y-%m-%d")
+                try:
+                    loaded_trades = trade_db.get_all_trades(
+                        instrument=idx,
+                        trade_date=today,
+                        include_open=True,
+                    )
+                except TypeError:
+                    loaded_trades = [
+                        trade for trade in trade_db.get_all_trades(instrument=idx)
+                        if str(trade.get("date") or "")[:10] == today
+                        or str(trade.get("Status") or "").upper() == "OPEN"
+                    ]
+        except Exception as exc:
+            logger.warning("Failed to refresh shared trade state for %s: %s", idx, exc)
+        if loaded_trades is not None:
+            _scanner_state["trade_logs"][idx] = loaded_trades
+        elif not _scanner_state["trade_logs"][idx] and hasattr(trade_mgr, "load_log"):
             try:
-                import streamlit as st
-                session_tlog = st.session_state.get(f"trade_log_{idx}", [])
-                if session_tlog:
-                    _scanner_state["trade_logs"][idx] = session_tlog
-                elif hasattr(trade_mgr, "load_log"):
-                    _scanner_state["trade_logs"][idx] = trade_mgr.load_log(idx)
-            except Exception:
-                if hasattr(trade_mgr, "load_log"):
-                    _scanner_state["trade_logs"][idx] = trade_mgr.load_log(idx)
+                _scanner_state["trade_logs"][idx] = trade_mgr.load_log(idx)
+            except Exception as exc:
+                logger.warning("Failed to load local trade log for %s: %s", idx, exc)
 
     # ─────────────────────────────────────────────────────────────
     # SEQUENTIAL SCAN: NIFTY -> BANKNIFTY -> FINNIFTY
@@ -195,18 +309,6 @@ def run_foreground_market_scan(
     _scanner_state["total_scans"] += 1
     _scanner_state["last_scan_time"] = now_ist.strftime("%I:%M:%S %p")
     _scanner_state["status"] = "RUNNING"
-
-    # Push updated state to Streamlit session_state if available
-    try:
-        import streamlit as st
-        for idx in INDEX_CONFIG:
-            st.session_state[f"latest_state_{idx}"] = _scanner_state["latest_states"].get(idx)
-            st.session_state[f"trade_log_{idx}"] = _scanner_state["trade_logs"].get(idx, [])
-            st.session_state[f"signal_buffer_{idx}"] = _scanner_state["signal_buffers"].get(idx, [])
-            st.session_state[f"last_signal_{idx}"] = _scanner_state["last_signals"].get(idx, "WAIT")
-        st.session_state["_scanner_telemetry"] = get_scanner_status()
-    except Exception:
-        pass
 
     return _scanner_state["latest_states"]
 
@@ -442,11 +544,6 @@ def _scan_single_index(
 
     # 7. Don't enter if trade already open for this index (Strict: 1 open trade per index)
     open_exists = any(t.get("Status") == "OPEN" for t in tlog)
-    if not open_exists and hasattr(journal, "get_all_trades"):
-        try:
-            open_exists = any(t.get("Status") == "OPEN" and str(t.get("Index") or "").upper() == idx for t in journal.get_all_trades())
-        except Exception:
-            pass
 
     if open_exists and final_signal in ("BUY CE", "BUY PE"):
         final_signal = "WAIT"

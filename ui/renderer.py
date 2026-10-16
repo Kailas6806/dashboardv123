@@ -210,6 +210,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     step = cfg["step"]
     rng = cfg["rng"]
     tlog_key = sk(idx, "trade_log")
+    from core.foreground_scanner import get_index_trade_log, set_index_trade_log
 
     # ── MARKET TIME CHECK ──
     now_ist = datetime.datetime.now(IST)
@@ -217,14 +218,11 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     in_window = (now_ist.weekday() < 5) and (MARKET_OPEN_TIME <= now_time <= MARKET_CLOSE_TIME)
 
     # ── CHECK PRECOMPUTED FOREGROUND SCANNER STATE FIRST (Instant sub-5ms render) ──
-    latest_state = st.session_state.get(sk(idx, "latest_state"))
-    if not latest_state:
-        from core.foreground_scanner import get_latest_index_state
-        latest_state = get_latest_index_state(idx)
+    from core.foreground_scanner import get_latest_index_state
+    latest_state = get_latest_index_state(idx)
 
     if latest_state:
-        if latest_state.get("tlog"):
-            st.session_state[tlog_key] = latest_state["tlog"]
+        st.session_state[tlog_key] = get_index_trade_log(idx)
         records = latest_state["records"]
         spot = latest_state["spot"]
         data = {"records": {"data": records, "underlyingValue": spot}}
@@ -248,11 +246,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         cache_file = os.path.join(BASE_DIR, f"last_data_{idx}.json")
 
         data = None
-        if fetcher:
-            try:
-                data = fetcher.fetch_option_chain(idx)
-            except Exception as e:
-                logger.warning(f"Live fetch error for {idx}: {e}")
+        get_cached_chain = getattr(fetcher, "get_cached_option_chain", None)
+        if callable(get_cached_chain):
+            data = get_cached_chain(idx)
 
         if data is None:
             if os.path.exists(cache_file):
@@ -270,7 +266,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                 logger.warning(f"Failed to save cache file for {idx}: {e}")
 
         if data is None:
-            st.error(f"❌ {idx} data unavailable. Retrying...")
+            st.info(f"{idx} market snapshot is warming up. The background scanner will populate it shortly.")
             return
 
         records = data["records"]["data"]
@@ -366,15 +362,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
         )
         sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
-    open_exists = any(t.get("Status") == "OPEN" for t in st.session_state.get(tlog_key, []))
-    if not open_exists:
-        from core.foreground_scanner import get_index_trade_log
-        open_exists = any(t.get("Status") == "OPEN" for t in get_index_trade_log(idx))
-    if not open_exists and journal:
-        try:
-            open_exists = any(t.get("Status") == "OPEN" and str(t.get("Index") or "").upper() == idx for t in journal.get_all_trades())
-        except Exception:
-            pass
+    open_exists = any(t.get("Status") == "OPEN" for t in get_index_trade_log(idx))
     if open_exists and final_signal in ("BUY CE", "BUY PE"):
         final_signal = "WAIT"
         final_conf = "LOW"
@@ -382,7 +370,9 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
     # ── PORTFOLIO-WIDE TODAY TRADES ──
     portfolio_today_trades = []
     for _idx in INDEX_CONFIG:
-        portfolio_today_trades.extend(st.session_state.get(sk(_idx, "trade_log"), []))
+        shared_tlog = get_index_trade_log(_idx)
+        st.session_state[sk(_idx, "trade_log")] = shared_tlog
+        portfolio_today_trades.extend(shared_tlog)
     valid_today_trades = [t for t in portfolio_today_trades if t.get("Entry Time")]
     trades_today_count = len(valid_today_trades)
 
@@ -429,6 +419,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                 },
                 trade
             )
+        set_index_trade_log(idx, st.session_state[tlog_key])
 
     # ── KPI DISPLAY ──
     st.markdown(render_kpi_grid(
@@ -793,6 +784,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     "ai_reasoning": ai_pre_summary if ai_auto_on else "",
                 })
                 trade_entry["_journal_id"] = journal_id
+                set_index_trade_log(idx, st.session_state[tlog_key])
 
                 # Telegram alert
                 signal_label = f"🤖 [AI✅] {final_signal}" if ai_auto_on else final_signal
@@ -925,6 +917,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                         "Actual P&L ₹": ot.get("Actual P&L ₹"),
                         "Status": "CLOSED", "Result": "🟡 MANUAL",
                     }, ot)
+                    set_index_trade_log(idx, st.session_state[tlog_key])
                     st.rerun()
             else:
                 st.info("No open position. Waiting for signal...")
@@ -1855,7 +1848,12 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     """
     import os
     import json
-    from config import INDEX_CONFIG, AI_AUTO_TRADE_DEFAULT, NVIDIA_MODEL
+    from config import INDEX_CONFIG, NVIDIA_MODEL
+    from core.foreground_scanner import (
+        get_auto_trade_enabled,
+        get_index_trade_log,
+        set_auto_trade_enabled,
+    )
 
     st.markdown('<div class="label" style="font-size:12px !important;color:#ffffff !important;font-weight:700;margin-bottom:12px;">⚡ NVIDIA NEMOTRON AI COPILOT & TRADE EXECUTION</div>', unsafe_allow_html=True)
 
@@ -1868,11 +1866,20 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     with col_idx:
         selected_idx = st.selectbox("Select Index", list(INDEX_CONFIG.keys()), key="ai_copilot_idx")
     with col_toggle:
-        if "ai_auto_trade" not in st.session_state:
-            st.session_state["ai_auto_trade"] = AI_AUTO_TRADE_DEFAULT
-        if "toggle_ai_autotrade" not in st.session_state:
-            st.session_state["toggle_ai_autotrade"] = st.session_state["ai_auto_trade"]
-        auto_trade = st.toggle(f"⚡ Auto-Trade on High Conviction (>={AI_MIN_CONVICTION}%)", key="toggle_ai_autotrade")
+        shared_auto_trade = get_auto_trade_enabled()
+        st.session_state["ai_auto_trade"] = shared_auto_trade
+        st.session_state["toggle_ai_autotrade"] = shared_auto_trade
+
+        def _sync_auto_trade_setting():
+            enabled = bool(st.session_state["toggle_ai_autotrade"])
+            st.session_state["ai_auto_trade"] = enabled
+            set_auto_trade_enabled(enabled)
+
+        auto_trade = st.toggle(
+            f"⚡ Auto-Trade on High Conviction (>={AI_MIN_CONVICTION}%)",
+            key="toggle_ai_autotrade",
+            on_change=_sync_auto_trade_setting,
+        )
         st.session_state["ai_auto_trade"] = auto_trade
     with col_model:
         st.markdown(f'<div style="padding-top:10px;"><span class="badge badge-ce">● NEMOTRON 550B ACTIVE</span> <span style="font-size:11px;color:#94a3b8;margin-left:8px;">{NVIDIA_MODEL}</span></div>', unsafe_allow_html=True)
@@ -1880,11 +1887,9 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
     # Fetch fresh or cached data for selected index
     cache_file = os.path.join(BASE_DIR, f"last_data_{selected_idx}.json")
     d = None
-    if fetcher:
-        try:
-            d = fetcher.fetch_option_chain(selected_idx)
-        except Exception:
-            pass
+    get_cached_chain = getattr(fetcher, "get_cached_option_chain", None)
+    if callable(get_cached_chain):
+        d = get_cached_chain(selected_idx)
 
     if d is None and os.path.exists(cache_file):
         try:
@@ -1988,9 +1993,8 @@ def render_ai_copilot_tab(copilot, fetcher, signal_engine, risk_mgr, trade_mgr, 
             st.caption("⚡ Powered by Gemini 3.5 Flash-Lite (~1.2s). Click to evaluate live option chain & market regime.")
 
     tlog_key = sk(selected_idx, "trade_log")
-    if tlog_key not in st.session_state:
-        st.session_state[tlog_key] = []
-    tlog = st.session_state[tlog_key]
+    tlog = get_index_trade_log(selected_idx)
+    st.session_state[tlog_key] = tlog
     open_trades_count = len([t for t in tlog if t.get("Status") == "OPEN"])
 
     if run_ai:
