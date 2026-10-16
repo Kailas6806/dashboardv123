@@ -23,8 +23,17 @@ try:
 
     class SmartWebSocketV2(_SmartWebSocketV2):
         def _on_close(self, wsapp: Any, *close_details: Any) -> None:
-            """Adapt SmartAPI's one-argument handler to websocket-client callbacks."""
-            super()._on_close(wsapp)
+            """Adapt websocket-client close details to the manager callback."""
+            callback = getattr(self, "on_close", None)
+            if callback:
+                callback(wsapp, *close_details)
+
+        def _on_error(self, wsapp: Any, error: Any) -> None:
+            """Report the transport error without starting the SDK's recursive retry loop."""
+            self.RESUBSCRIBE_FLAG = True
+            callback = getattr(self, "on_error", None)
+            if callback:
+                callback(wsapp, error)
 
     HAS_SMART_WS = True
 except ImportError:
@@ -279,13 +288,26 @@ class SmartWebSocketManager:
 
     def _on_error(self, wsapp: Any, error: Any) -> None:
         """Handle error from WebSocket."""
-        log.warning("WebSocket error: %s", error)
+        log.warning(
+            "WebSocket transport error (%s): %r",
+            type(error).__name__,
+            error,
+        )
 
-    def _on_close(self, wsapp: Any) -> None:
+    def _on_close(
+        self,
+        wsapp: Any,
+        close_status_code: Optional[int] = None,
+        close_message: Optional[Any] = None,
+    ) -> None:
         """Handle connection closure."""
         with self._lock:
             self._is_connected = False
-        log.info("WebSocket connection closed")
+        log.info(
+            "WebSocket connection closed (code=%s, reason=%r)",
+            close_status_code,
+            close_message,
+        )
 
     def _resubscribe_all(self) -> None:
         """Resubscribe all registered tokens (e.g. after reconnect)."""

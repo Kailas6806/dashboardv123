@@ -27,11 +27,24 @@ class TestWebSocketReconnect(unittest.TestCase):
 
     def test_sdk_close_callback_accepts_websocket_client_close_details(self):
         socket = SmartWebSocketV2.__new__(SmartWebSocketV2)
-        socket.on_close = lambda wsapp: setattr(socket, "closed_wsapp", wsapp)
+        socket.on_close = lambda *details: setattr(socket, "close_details", details)
 
         socket._on_close("socket-app", 1000, "closed")
 
-        self.assertEqual("socket-app", socket.closed_wsapp)
+        self.assertEqual(("socket-app", 1000, "closed"), socket.close_details)
+
+    def test_sdk_error_callback_preserves_transport_error_without_recursive_retry(self):
+        socket = SmartWebSocketV2.__new__(SmartWebSocketV2)
+        socket.RESUBSCRIBE_FLAG = False
+        socket.on_error = lambda *details: setattr(socket, "error_details", details)
+        socket.close_connection = lambda: self.fail("SDK must not close/retry recursively")
+        socket.connect = lambda: self.fail("SDK must leave reconnect ownership to manager")
+        transport_error = ConnectionError("server rejected websocket handshake")
+
+        socket._on_error("socket-app", transport_error)
+
+        self.assertTrue(socket.RESUBSCRIBE_FLAG)
+        self.assertEqual(("socket-app", transport_error), socket.error_details)
 
     def test_token_refresh_does_not_prevent_reconnect_cooldown(self):
         refresh_calls = []
