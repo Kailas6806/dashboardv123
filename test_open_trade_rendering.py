@@ -108,17 +108,41 @@ class TestOpenTradeRendering(unittest.TestCase):
         self.assertIn("AND trade_date = %s", query)
         self.assertEqual(("2026-10-16",), params)
 
+    def test_open_trade_date_query_includes_open_positions_from_earlier_dates(self):
+        db = TradeDB.__new__(TradeDB)
+        db._lock = threading.RLock()
+        connection = MagicMock()
+        connection.cursor.return_value.fetchall.return_value = []
+
+        with patch.object(db, "_get_connection", return_value=connection):
+            self.assertEqual(
+                [],
+                db.get_all_trades(
+                    trade_date="2026-10-16",
+                    include_open=True,
+                ),
+            )
+
+        query, params = connection.cursor.return_value.execute.call_args.args
+        self.assertIn("(trade_date = %s OR status = 'OPEN')", query)
+        self.assertEqual(("2026-10-16",), params)
+
     def test_cached_legacy_database_client_falls_back_to_date_filtering(self):
         class LegacyTradeDB:
             def get_all_trades(self):
                 return [
                     {"date": "2026-10-16", "trade_id": "today"},
                     {"date": "2026-10-15", "trade_id": "yesterday"},
+                    {"date": "2026-10-15", "trade_id": "still-open", "Status": "OPEN"},
+                    {"date": "2026-10-15", "trade_id": "already-closed", "Status": "CLOSED"},
                 ]
 
         trades = _get_trades_for_date(LegacyTradeDB(), "2026-10-16")
 
-        self.assertEqual(["today"], [trade["trade_id"] for trade in trades])
+        self.assertEqual(
+            ["today", "still-open"],
+            [trade["trade_id"] for trade in trades],
+        )
 
 
 if __name__ == "__main__":

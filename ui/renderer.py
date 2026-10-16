@@ -38,22 +38,26 @@ def sk(idx, key):
 
 
 def _get_trades_for_date(db, trade_date):
-    """Use the indexed date query, with compatibility for cached pre-update DB clients."""
+    """Get today's history and any still-open positions, including older ones."""
     global _legacy_trade_date_warning_logged
     try:
-        return db.get_all_trades(trade_date=trade_date)
+        return db.get_all_trades(trade_date=trade_date, include_open=True)
     except TypeError as exc:
-        if "trade_date" not in str(exc):
+        message = str(exc)
+        if "trade_date" not in message and "include_open" not in message:
             raise
         if not _legacy_trade_date_warning_logged:
             logger.warning(
-                "Cached TradeDB client does not support trade_date filtering; "
+                "Cached TradeDB client does not support open-position date queries; "
                 "using its legacy query until the client is refreshed."
             )
             _legacy_trade_date_warning_logged = True
         return [
             trade for trade in db.get_all_trades()
-            if str(trade.get("date") or "")[:10] == trade_date
+            if (
+                str(trade.get("date") or "")[:10] == trade_date
+                or str(trade.get("Status") or "").upper() == "OPEN"
+            )
         ]
 
 
