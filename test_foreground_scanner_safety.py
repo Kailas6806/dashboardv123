@@ -105,6 +105,17 @@ class TestForegroundScannerSafety(unittest.TestCase):
             fetcher.get_option_token("NIFTY", 22000, "BUY CE"),
         )
 
+    def test_cached_option_chain_lookup_does_not_fetch_from_broker(self):
+        fetcher = AngelOneDataFetcher.__new__(AngelOneDataFetcher)
+        fetcher._cache = Mock()
+        cached_chain = {"records": {"data": []}}
+        fetcher._cache.get.return_value = cached_chain
+        fetcher.fetch_option_chain = Mock(side_effect=AssertionError("broker fetch should not run"))
+
+        self.assertIs(cached_chain, fetcher.get_cached_option_chain("NIFTY"))
+        fetcher._cache.get.assert_called_once_with("NIFTY")
+        fetcher.fetch_option_chain.assert_not_called()
+
     def test_stale_or_untimestamped_chain_is_not_fresh(self):
         self.assertTrue(foreground_scanner._is_fresh_option_chain({"_fetched_at": 85}, now_ts=100))
         self.assertFalse(foreground_scanner._is_fresh_option_chain({"_fetched_at": 84.99}, now_ts=100))

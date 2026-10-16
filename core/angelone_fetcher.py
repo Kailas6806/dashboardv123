@@ -453,6 +453,10 @@ class AngelOneDataFetcher:
         self._perm_cache[idx_name] = result
         return result
 
+    def get_cached_option_chain(self, idx_name: str) -> Optional[Dict[str, Any]]:
+        """Return an in-memory option chain without making a broker request."""
+        return self._cache.get(idx_name)
+
     def get_option_token(self, idx_name: str, strike: float, signal: str) -> Tuple[Optional[str], Optional[str]]:
         """Look up symbolToken and tradingSymbol for an option contract."""
         opt_type = "CE" if "CE" in signal else "PE"

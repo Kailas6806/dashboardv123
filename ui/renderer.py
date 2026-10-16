@@ -1045,7 +1045,9 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                         pass
 
             if d is None:
-                d = fetcher.fetch_option_chain(idx)
+                get_cached_chain = getattr(fetcher, "get_cached_option_chain", None)
+                if callable(get_cached_chain):
+                    d = get_cached_chain(idx)
 
             if not d or "records" not in d:
                 continue
