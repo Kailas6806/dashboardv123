@@ -13,20 +13,9 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from config import JOURNAL_FILE, IST
+from analytics.json_encoder import NpEncoder
 
 logger = logging.getLogger("v12.trade_journal")
-
-
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        import numpy as np
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super().default(obj)
 
 class TradeJournal:
     """Persistent JSON-backed trade journal with analytics capabilities."""

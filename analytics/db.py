@@ -13,6 +13,7 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import BASE_DIR, LOG_DIR, JOURNAL_FILE, IST
+from analytics.json_encoder import NpEncoder
 
 try:
     from utils.logger import get_logger
@@ -379,7 +380,7 @@ class TradeDB:
             ai_reason = str(trade.get("_ai_reasoning") or trade.get("ai_reasoning") or "")
 
             meta_d = dict(metadata) if metadata else (trade.get("signal_metadata") or {})
-            meta_json = json.dumps(meta_d) if meta_d else "{}"
+            meta_json = json.dumps(meta_d, cls=NpEncoder) if meta_d else "{}"
 
             conn = self._get_connection()
             try:
