@@ -19,7 +19,13 @@ except ImportError:
         log.setLevel(logging.INFO)
 
 try:
-    from SmartApi.smartWebSocketV2 import SmartWebSocketV2
+    from SmartApi.smartWebSocketV2 import SmartWebSocketV2 as _SmartWebSocketV2
+
+    class SmartWebSocketV2(_SmartWebSocketV2):
+        def _on_close(self, wsapp: Any, *close_details: Any) -> None:
+            """Adapt SmartAPI's one-argument handler to websocket-client callbacks."""
+            super()._on_close(wsapp)
+
     HAS_SMART_WS = True
 except ImportError:
     HAS_SMART_WS = False
@@ -124,20 +130,7 @@ class SmartWebSocketManager:
                 return True
 
             try:
-                self.sws = SmartWebSocketV2(
-                    auth_token=self.auth_token,
-                    api_key=self.api_key,
-                    client_code=self.client_code,
-                    feed_token=self.feed_token,
-                    max_retry_attempt=2,
-                    retry_strategy=1,
-                    retry_delay=5,
-                )
-
-                self.sws.on_open = self._on_open
-                self.sws.on_data = self._on_data
-                self.sws.on_error = self._on_error
-                self.sws.on_close = self._on_close
+                self.sws = self._new_socket()
 
                 self._is_running = True
                 self._reconnect_attempts = 0
@@ -195,22 +188,11 @@ class SmartWebSocketManager:
                 except Exception as ex:
                     log.warning("Failed to refresh Angel One WebSocket tokens: %s", ex)
 
-            # Always re-instantiate a clean SmartWebSocketV2 client to reset internal retry counters
+            # Let this manager own retries; SDK recursion can leave sockets alive and exhaust
+            # the broker's connection limit after repeated disconnects.
             with self._lock:
                 try:
-                    self.sws = SmartWebSocketV2(
-                        auth_token=self.auth_token,
-                        api_key=self.api_key,
-                        client_code=self.client_code,
-                        feed_token=self.feed_token,
-                        max_retry_attempt=2,
-                        retry_strategy=1,
-                        retry_delay=5,
-                    )
-                    self.sws.on_open = self._on_open
-                    self.sws.on_data = self._on_data
-                    self.sws.on_error = self._on_error
-                    self.sws.on_close = self._on_close
+                    self.sws = self._new_socket()
                 except Exception as ws_ex:
                     log.warning("Failed to re-instantiate SmartWebSocketV2: %s", ws_ex)
 
@@ -222,6 +204,23 @@ class SmartWebSocketManager:
                 backoff = min(5 * self._reconnect_attempts, 20)
                 log.info("Reconnecting WebSocket in %ds (attempt %d)...", backoff, self._reconnect_attempts)
                 time.sleep(backoff)
+
+    def _new_socket(self) -> "SmartWebSocketV2":
+        """Build one SDK socket with manager-owned retry and lifecycle callbacks."""
+        socket = SmartWebSocketV2(
+            auth_token=self.auth_token,
+            api_key=self.api_key,
+            client_code=self.client_code,
+            feed_token=self.feed_token,
+            max_retry_attempt=0,
+            retry_strategy=1,
+            retry_delay=5,
+        )
+        socket.on_open = self._on_open
+        socket.on_data = self._on_data
+        socket.on_error = self._on_error
+        socket.on_close = self._on_close
+        return socket
 
     def _on_open(self, wsapp: Any) -> None:
         """Handle successful connection."""

@@ -30,10 +30,31 @@ from ui.components import (
 from utils.logger import get_logger
 
 logger = get_logger("renderer")
+_legacy_trade_date_warning_logged = False
 
 # ── SESSION KEY HELPER ──
 def sk(idx, key):
     return f"{idx}_{key}"
+
+
+def _get_trades_for_date(db, trade_date):
+    """Use the indexed date query, with compatibility for cached pre-update DB clients."""
+    global _legacy_trade_date_warning_logged
+    try:
+        return db.get_all_trades(trade_date=trade_date)
+    except TypeError as exc:
+        if "trade_date" not in str(exc):
+            raise
+        if not _legacy_trade_date_warning_logged:
+            logger.warning(
+                "Cached TradeDB client does not support trade_date filtering; "
+                "using its legacy query until the client is refreshed."
+            )
+            _legacy_trade_date_warning_logged = True
+        return [
+            trade for trade in db.get_all_trades()
+            if str(trade.get("date") or "")[:10] == trade_date
+        ]
 
 
 def _merge_trade_records(
@@ -42,16 +63,35 @@ def _merge_trade_records(
     foreground_trades,
     session_trades,
 ):
-    """Merge trade sources, preferring the session log used by the UI badge."""
+    """Use shared DB status as canonical; use browser-local trades only when DB is unavailable."""
+    def trade_key(trade):
+        return (
+            trade.get("trade_id")
+            or trade.get("_journal_id")
+            or f"{idx}_{trade.get('Entry Time')}_{trade.get('Strike')}_{trade.get('Signal')}"
+        )
+
+    local_trades = [*foreground_trades, *session_trades]
+    local_by_id = {trade_key(trade): trade for trade in local_trades}
+
+    if db_trades is not None:
+        canonical_trades = []
+        for db_trade in db_trades:
+            trade = dict(db_trade)
+            local_trade = local_by_id.get(trade_key(db_trade))
+            if (
+                local_trade
+                and str(trade.get("Status") or "").upper() == "OPEN"
+                and local_trade.get("Live Price") is not None
+            ):
+                trade["Live Price"] = local_trade["Live Price"]
+            canonical_trades.append(trade)
+        return canonical_trades
+
     trades_by_id = {}
-    for trades in (db_trades, foreground_trades, session_trades):
+    for trades in (foreground_trades, session_trades):
         for trade in trades:
-            trade_id = (
-                trade.get("trade_id")
-                or trade.get("_journal_id")
-                or f"{idx}_{trade.get('Entry Time')}_{trade.get('Strike')}"
-            )
-            trades_by_id[trade_id] = trade
+            trades_by_id[trade_key(trade)] = trade
     return list(trades_by_id.values())
 
 
@@ -918,7 +958,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     """Render the 'Open Trades' tab showing all open trades across all indices."""
     # 1. Fetch today's authoritative trades from Supabase DB
-    db_today_trades = []
+    db_today_trades = None
+    db_read_error = None
     try:
         now_date_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
         db = st.session_state.get("_trade_db")
@@ -926,17 +967,23 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             from analytics.db import TradeDB
             db = TradeDB()
             st.session_state["_trade_db"] = db
-        db_today_trades = db.get_all_trades(trade_date=now_date_str)
+        db_today_trades = _get_trades_for_date(db, now_date_str)
     except Exception as e:
+        db_read_error = e
         logger.warning(f"TradeDB query in render_open_trades_tab: {e}")
 
     # 2. Sync and merge trades across DB, foreground scanner, and session state
-    from core.foreground_scanner import get_index_trade_log
+    from core.foreground_scanner import get_index_trade_log, set_index_trade_log
+    if db_read_error:
+        st.warning(
+            "Shared trade data is temporarily unavailable. This browser is showing its "
+            "local cached trades, which may differ from other browsers until the database reconnects."
+        )
     for idx in INDEX_CONFIG:
         index_db_trades = [
             trade for trade in db_today_trades
             if str(trade.get("Index") or "").upper() == idx
-        ]
+        ] if db_today_trades is not None else None
         merged_list = _merge_trade_records(
             idx,
             index_db_trades,
@@ -945,6 +992,8 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
         )
         merged_list.sort(key=lambda x: str(x.get("recorded_at") or x.get("Entry Time") or ""), reverse=True)
         st.session_state[sk(idx, "trade_log")] = merged_list
+        if db_today_trades is not None:
+            set_index_trade_log(idx, merged_list)
 
     # Update prices for open trades
     for idx in INDEX_CONFIG:

@@ -3,7 +3,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 from analytics.db import TradeDB
-from ui.renderer import _merge_trade_records, _safe_trade_pnl
+from ui.renderer import _get_trades_for_date, _merge_trade_records, _safe_trade_pnl
 
 
 class TestOpenTradeRendering(unittest.TestCase):
@@ -15,33 +15,53 @@ class TestOpenTradeRendering(unittest.TestCase):
         self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": float("inf")}))
         self.assertEqual(0.0, _safe_trade_pnl({"Actual P&L ₹": "invalid"}))
 
-    def test_session_log_overrides_stale_foreground_status(self):
+    def test_database_status_is_authoritative_and_session_price_stays_live(self):
         database_trade = {
             "trade_id": "trade-1",
             "Status": "OPEN",
             "Entry Time": "10:00 AM",
             "Strike": 24500,
         }
-        foreground_trade = {**database_trade, "Status": "CLOSED"}
-        session_trade = {**database_trade, "Status": "OPEN", "Live Price": 125}
-        db_only_trade = {
-            "trade_id": "trade-2",
-            "Status": "OPEN",
-            "Entry Time": "10:05 AM",
-            "Strike": 24550,
-        }
+        foreground_trade = {**database_trade, "Status": "CLOSED", "Live Price": 120}
+        session_trade = {**database_trade, "Status": "CLOSED", "Live Price": 125}
 
         merged = _merge_trade_records(
             "NIFTY",
-            [database_trade, db_only_trade],
+            [database_trade],
             [foreground_trade],
             [session_trade],
         )
 
-        self.assertEqual(2, len(merged))
+        self.assertEqual(1, len(merged))
         self.assertEqual("OPEN", merged[0]["Status"])
         self.assertEqual(125, merged[0]["Live Price"])
-        self.assertIn(db_only_trade, merged)
+
+    def test_database_closed_status_overrides_cached_open_status(self):
+        database_trade = {"trade_id": "trade-1", "Status": "CLOSED"}
+        cached_trade = {"trade_id": "trade-1", "Status": "OPEN", "Live Price": 125}
+
+        merged = _merge_trade_records("NIFTY", [database_trade], [], [cached_trade])
+
+        self.assertEqual("CLOSED", merged[0]["Status"])
+
+    def test_successful_empty_database_does_not_resurrect_cached_open_trade(self):
+        cached_trade = {
+            "trade_id": "stale-trade",
+            "Status": "OPEN",
+            "Entry Time": "10:00 AM",
+            "Strike": 24500,
+        }
+
+        merged = _merge_trade_records("NIFTY", [], [], [cached_trade])
+
+        self.assertEqual([], merged)
+
+    def test_local_trades_are_used_when_database_read_is_unavailable(self):
+        cached_trade = {"trade_id": "cached-trade", "Status": "OPEN"}
+
+        merged = _merge_trade_records("NIFTY", None, [], [cached_trade])
+
+        self.assertEqual([cached_trade], merged)
 
     def test_trade_date_filter_is_applied_in_database_query(self):
         db = TradeDB.__new__(TradeDB)
@@ -56,6 +76,18 @@ class TestOpenTradeRendering(unittest.TestCase):
         query, params = cursor.execute.call_args.args
         self.assertIn("AND trade_date = %s", query)
         self.assertEqual(("2026-10-16",), params)
+
+    def test_cached_legacy_database_client_falls_back_to_date_filtering(self):
+        class LegacyTradeDB:
+            def get_all_trades(self):
+                return [
+                    {"date": "2026-10-16", "trade_id": "today"},
+                    {"date": "2026-10-15", "trade_id": "yesterday"},
+                ]
+
+        trades = _get_trades_for_date(LegacyTradeDB(), "2026-10-16")
+
+        self.assertEqual(["today"], [trade["trade_id"] for trade in trades])
 
 
 if __name__ == "__main__":

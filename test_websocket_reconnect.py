@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from core.websocket_manager import SmartWebSocketManager
+from core.websocket_manager import SmartWebSocketManager, SmartWebSocketV2
 
 
 class _FailingSocket:
@@ -16,6 +16,23 @@ class _FailingSocket:
 
 
 class TestWebSocketReconnect(unittest.TestCase):
+    def test_manager_disables_sdk_owned_retries(self):
+        manager = SmartWebSocketManager("auth", "api", "client", "feed")
+
+        with patch("core.websocket_manager.SmartWebSocketV2") as socket_class:
+            socket = manager._new_socket()
+
+        self.assertIs(socket, socket_class.return_value)
+        self.assertEqual(0, socket_class.call_args.kwargs["max_retry_attempt"])
+
+    def test_sdk_close_callback_accepts_websocket_client_close_details(self):
+        socket = SmartWebSocketV2.__new__(SmartWebSocketV2)
+        socket.on_close = lambda wsapp: setattr(socket, "closed_wsapp", wsapp)
+
+        socket._on_close("socket-app", 1000, "closed")
+
+        self.assertEqual("socket-app", socket.closed_wsapp)
+
     def test_token_refresh_does_not_prevent_reconnect_cooldown(self):
         refresh_calls = []
         sleep_calls = []

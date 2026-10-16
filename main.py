@@ -142,13 +142,18 @@ if "_journal" not in st.session_state or not hasattr(st.session_state.get("_jour
     st.session_state["_journal"] = TradeJournal()
 if "_copilot" not in st.session_state:
     st.session_state["_copilot"] = AICopilot()
-if "_trade_db" not in st.session_state or not hasattr(st.session_state.get("_trade_db"), "get_or_init_capital"):
-    try:
-        from analytics.db import TradeDB
+try:
+    from analytics.db import TradeDB
+    cached_trade_db = st.session_state.get("_trade_db")
+    if (
+        not isinstance(cached_trade_db, TradeDB)
+        or not hasattr(cached_trade_db, "get_all_trades")
+        or not hasattr(cached_trade_db, "get_or_init_capital")
+    ):
         st.session_state["_trade_db"] = TradeDB()
-    except Exception as e:
-        logger.warning(f"TradeDB initialization failed: {e}")
-        st.session_state["_trade_db"] = None
+except Exception as e:
+    logger.warning(f"TradeDB initialization failed: {e}")
+    st.session_state["_trade_db"] = None
 
 signal_engine = st.session_state["_signal_engine"]
 risk_mgr      = st.session_state["_risk_mgr"]
