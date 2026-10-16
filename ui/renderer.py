@@ -57,6 +57,20 @@ def _get_trades_for_date(db, trade_date):
         ]
 
 
+def _quote_timestamp(value):
+    if value is None:
+        return float("-inf")
+    if isinstance(value, datetime.datetime):
+        return value.timestamp()
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            return datetime.datetime.fromisoformat(str(value)).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return float("-inf")
+
+
 def _merge_trade_records(
     idx,
     db_trades,
@@ -83,8 +97,12 @@ def _merge_trade_records(
                 local_trade
                 and str(trade.get("Status") or "").upper() == "OPEN"
                 and local_trade.get("Live Price") is not None
+                and not local_trade.get("_live_price_is_stale", False)
+                and _quote_timestamp(local_trade.get("_live_price_updated_at"))
+                > _quote_timestamp(trade.get("_live_price_updated_at"))
             ):
                 trade["Live Price"] = local_trade["Live Price"]
+                trade["_live_price_updated_at"] = local_trade["_live_price_updated_at"]
             canonical_trades.append(trade)
         return canonical_trades
 
@@ -960,6 +978,7 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
     # 1. Fetch today's authoritative trades from Supabase DB
     db_today_trades = None
     db_read_error = None
+    db = None
     try:
         now_date_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
         db = st.session_state.get("_trade_db")
@@ -990,6 +1009,13 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             get_index_trade_log(idx),
             st.session_state.get(sk(idx, "trade_log"), []),
         )
+        max_quote_age = getattr(config, "LIVE_TICK_MAX_AGE_SECONDS", 10)
+        for trade in merged_list:
+            quote_timestamp = _quote_timestamp(trade.get("_live_price_updated_at"))
+            trade["_live_price_is_stale"] = (
+                quote_timestamp == float("-inf")
+                or time.time() - quote_timestamp > max_quote_age
+            )
         merged_list.sort(key=lambda x: str(x.get("recorded_at") or x.get("Entry Time") or ""), reverse=True)
         st.session_state[sk(idx, "trade_log")] = merged_list
         if db_today_trades is not None:
@@ -1031,7 +1057,14 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             }
             events = []
             try:
-                events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now, fetcher=fetcher)
+                events = trade_mgr.update_live_prices(
+                    idx,
+                    tlog,
+                    d["records"]["data"],
+                    now,
+                    fetcher=fetcher,
+                    quote_observed_at=d.get("_fetched_at"),
+                )
             except TypeError:
                 try:
                     events = trade_mgr.update_live_prices(idx, tlog, d["records"]["data"], now)
@@ -1040,6 +1073,27 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             except Exception as e:
                 logger.warning(f"Error updating open trades for {idx}: {e}")
             journal = st.session_state.get("_journal")
+            if db:
+                for trade in tlog:
+                    if (
+                        trade.get("Status") != "OPEN"
+                        or trade.get("_live_price_is_stale")
+                        or not trade.get("_live_price_updated_at")
+                    ):
+                        continue
+                    try:
+                        db.update_trade_live_price(
+                            trade.get("trade_id") or trade.get("_journal_id", ""),
+                            trade.get("Live Price"),
+                            trade["_live_price_updated_at"],
+                        )
+                    except Exception as price_error:
+                        logger.warning(
+                            "Failed to persist live price for %s trade %s: %s",
+                            idx,
+                            trade.get("trade_id") or trade.get("_journal_id", "unknown"),
+                            price_error,
+                        )
             for trade in tlog:
                 old_stop = stop_losses_before.get(id(trade))
                 if old_stop is None or trade.get("Status") != "OPEN":
@@ -1147,14 +1201,25 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
             trade_db = None
 
     try:
-        cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {"base_capital": CAPITAL, "current_balance": CAPITAL, "cumulative_realized_pnl": 0.0}
-        all_trades_combined = all_open + closed_today
-        portfolio_stats = risk_mgr.calculate_portfolio_equity(
-            cap_info.get("base_capital", CAPITAL),
-            all_trades_combined,
-            all_time_pnl=cap_info.get("cumulative_realized_pnl"),
-        )
-        st.markdown(render_account_capital_hud(portfolio_stats), unsafe_allow_html=True)
+        cap_info = trade_db.get_or_init_capital(CAPITAL) if trade_db else {
+            "base_capital": CAPITAL,
+            "current_balance": CAPITAL,
+            "cumulative_realized_pnl": 0.0,
+            "_source": "unavailable",
+        }
+        if cap_info.get("_source") in ("local_cache", "unavailable"):
+            st.warning(
+                "Shared account capital is unavailable. Wallet figures are hidden because "
+                "a server-local cache may differ between browsers; automated entries are paused."
+            )
+        else:
+            all_trades_combined = all_open + closed_today
+            portfolio_stats = risk_mgr.calculate_portfolio_equity(
+                cap_info.get("base_capital", CAPITAL),
+                all_trades_combined,
+                all_time_pnl=cap_info.get("cumulative_realized_pnl"),
+            )
+            st.markdown(render_account_capital_hud(portfolio_stats), unsafe_allow_html=True)
     except Exception as e:
         logger.warning(f"Error rendering capital HUD: {e}")
 

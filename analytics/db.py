@@ -81,6 +81,7 @@ class TradeDB:
                         strike REAL,
                         entry_price REAL,
                         live_price REAL,
+                        live_price_updated_at TIMESTAMPTZ,
                         exit_price REAL,
                         stop_loss REAL,
                         target REAL,
@@ -99,6 +100,9 @@ class TradeDB:
                         updated_at TEXT
                     )
                 """)
+                cursor.execute(
+                    "ALTER TABLE trades ADD COLUMN IF NOT EXISTS live_price_updated_at TIMESTAMPTZ"
+                )
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(trade_date)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
@@ -200,12 +204,15 @@ class TradeDB:
                             "updated_at": d_row.get("updated_at") or now_str,
                         }
                     self._save_local_capital_cache(result)
+                    result["_source"] = "supabase"
                     return result
                 finally:
                     conn.close()
             except Exception as e:
                 log.warning("Supabase get_or_init_capital failed, falling back to local cache: %s", e)
-                return self._load_local_capital_cache(default_base)
+                local_capital = self._load_local_capital_cache(default_base)
+                local_capital["_source"] = "local_cache"
+                return local_capital
 
     def apply_trade_pnl_to_capital(self, pnl: float, account_id: str = "DEFAULT") -> Dict[str, Any]:
         """Apply realized trade profit or loss directly to persistent wallet capital in Supabase."""
@@ -398,7 +405,10 @@ class TradeDB:
                     )
                     ON CONFLICT(trade_id) DO UPDATE SET
                         exit_time = COALESCE(EXCLUDED.exit_time, trades.exit_time),
-                        live_price = EXCLUDED.live_price,
+                        live_price = CASE
+                            WHEN trades.live_price_updated_at IS NULL THEN EXCLUDED.live_price
+                            ELSE trades.live_price
+                        END,
                         exit_price = COALESCE(EXCLUDED.exit_price, trades.exit_price),
                         actual_pnl = COALESCE(EXCLUDED.actual_pnl, trades.actual_pnl),
                         status = EXCLUDED.status,
@@ -421,7 +431,7 @@ class TradeDB:
         exit_data: Dict[str, Any],
         trade_dict: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Update an existing trade with exit information."""
+        """Close an open trade once and apply its P&L atomically to shared capital."""
         with self._lock:
             # Clean Pandas NaNs
             for k, v in exit_data.items():
@@ -430,17 +440,18 @@ class TradeDB:
 
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
                 now_ist = datetime.datetime.now(IST).isoformat()
                 exit_time = exit_data.get("Exit Time") or exit_data.get("exit_time")
                 exit_price = self._safe_float(exit_data.get("Exit Price") or exit_data.get("exit_price"))
                 actual_pnl = self._safe_float(exit_data.get("Actual P&L ₹") or exit_data.get("actual_pnl"))
-                
+
                 raw_status = exit_data.get("Status") or exit_data.get("status")
                 status = str(raw_status).upper() if raw_status else "CLOSED"
                 raw_result = exit_data.get("Result") or exit_data.get("result")
                 result = str(raw_result) if raw_result else "CLOSED"
 
+                updated_trade = None
                 if trade_id:
                     cursor.execute("""
                         UPDATE trades SET
@@ -451,38 +462,82 @@ class TradeDB:
                             status = %s,
                             result = %s,
                             updated_at = %s
-                        WHERE trade_id = %s
+                        WHERE trade_id = %s AND status = 'OPEN'
+                        RETURNING trade_id
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, trade_id))
-                    if cursor.rowcount > 0:
-                        conn.commit()
-                        if actual_pnl is not None:
-                            self.apply_trade_pnl_to_capital(actual_pnl)
-                        return True
+                    updated_trade = cursor.fetchone()
 
                 # Fallback: Match by instrument, strike, signal and entry_time if trade_dict provided
-                if trade_dict:
+                if not updated_trade and not trade_id and trade_dict:
                     idx = str(trade_dict.get("Index") or trade_dict.get("instrument") or "").upper()
                     strike = self._safe_float(trade_dict.get("Strike") or trade_dict.get("strike"))
                     etime = trade_dict.get("Entry Time")
                     sig = trade_dict.get("Signal")
                     cursor.execute("""
-                        UPDATE trades SET
-                            exit_time = COALESCE(%s, exit_time),
-                            exit_price = COALESCE(%s, exit_price),
-                            live_price = COALESCE(%s, live_price),
-                            actual_pnl = COALESCE(%s, actual_pnl),
-                            status = %s,
-                            result = %s,
-                            updated_at = %s
-                        WHERE instrument = %s AND strike = %s AND entry_time = %s AND signal = %s
-                    """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, idx, strike, etime, sig))
-                    if cursor.rowcount > 0:
-                        conn.commit()
-                        if actual_pnl is not None:
-                            self.apply_trade_pnl_to_capital(actual_pnl)
-                        return True
+                        SELECT trade_id FROM trades
+                        WHERE instrument = %s AND strike = %s AND entry_time = %s
+                          AND signal = %s AND status = 'OPEN'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        FOR UPDATE
+                    """, (idx, strike, etime, sig))
+                    matched_trade = cursor.fetchone()
+                    if matched_trade:
+                        cursor.execute("""
+                            UPDATE trades SET
+                                exit_time = COALESCE(%s, exit_time),
+                                exit_price = COALESCE(%s, exit_price),
+                                live_price = COALESCE(%s, live_price),
+                                actual_pnl = COALESCE(%s, actual_pnl),
+                                status = %s,
+                                result = %s,
+                                updated_at = %s
+                            WHERE trade_id = %s AND status = 'OPEN'
+                            RETURNING trade_id
+                        """, (
+                            exit_time, exit_price, exit_price, actual_pnl,
+                            status, result, now_ist, matched_trade["trade_id"],
+                        ))
+                        updated_trade = cursor.fetchone()
 
-                return False
+                if not updated_trade:
+                    conn.rollback()
+                    return False
+
+                capital_result = None
+                if actual_pnl is not None:
+                    cursor.execute("""
+                        INSERT INTO account_capital (
+                            account_id, base_capital, cumulative_realized_pnl,
+                            current_balance, updated_at
+                        )
+                        VALUES ('DEFAULT', 60000.0, %s, 60000.0 + %s, %s)
+                        ON CONFLICT (account_id) DO UPDATE
+                        SET cumulative_realized_pnl =
+                                account_capital.cumulative_realized_pnl + EXCLUDED.cumulative_realized_pnl,
+                            current_balance =
+                                account_capital.current_balance + EXCLUDED.cumulative_realized_pnl,
+                            updated_at = EXCLUDED.updated_at
+                        RETURNING *
+                    """, (actual_pnl, actual_pnl, now_ist))
+                    capital_result = cursor.fetchone()
+
+                conn.commit()
+                if capital_result:
+                    capital_result = dict(capital_result)
+                    for key in ("base_capital", "cumulative_realized_pnl", "current_balance"):
+                        if capital_result.get(key) is not None:
+                            capital_result[key] = float(capital_result[key])
+                    self._save_local_capital_cache(capital_result)
+                log.info(
+                    "Closed trade %s once; applied P&L=%s",
+                    updated_trade["trade_id"],
+                    actual_pnl,
+                )
+                return True
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
@@ -535,6 +590,51 @@ class TradeDB:
             finally:
                 conn.close()
 
+    def update_trade_live_price(
+        self,
+        trade_id: str,
+        live_price: float,
+        observed_at: float,
+    ) -> bool:
+        """Persist a newer market quote for an open trade without accepting stale updates."""
+        if not trade_id:
+            return False
+        try:
+            price = float(live_price)
+            observed_ts = float(observed_at)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(price) or price <= 0 or not math.isfinite(observed_ts):
+            return False
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE trades
+                    SET live_price = %s,
+                        live_price_updated_at = to_timestamp(%s),
+                        updated_at = NOW()
+                    WHERE trade_id = %s
+                      AND status = 'OPEN'
+                      AND (
+                          live_price_updated_at IS NULL
+                          OR live_price_updated_at < to_timestamp(%s)
+                      )
+                    """,
+                    (price, observed_ts, trade_id, observed_ts),
+                )
+                updated = cursor.rowcount > 0
+                conn.commit()
+                return updated
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def get_all_trades(
         self,
         status: Optional[str] = None,
@@ -574,6 +674,7 @@ class TradeDB:
                         "Strike": t["strike"],
                         "Entry Price": t["entry_price"],
                         "Live Price": t["live_price"],
+                        "_live_price_updated_at": t.get("live_price_updated_at"),
                         "Exit Price": t["exit_price"],
                         "Stop Loss": t["stop_loss"],
                         "Target": t["target"],

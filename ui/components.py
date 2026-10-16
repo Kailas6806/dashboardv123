@@ -279,6 +279,7 @@ def render_trade_card_html(t: Dict[str, Any]) -> str:
     direction_label = f"{direction} {option_type}".strip()
     trade_status = str(t.get("status") or "OPEN").upper()
     status_cls = "trade-status-closed" if trade_status == "CLOSED" else "trade-status-open"
+    live_label = "Last quote · stale" if t.get("raw", {}).get("_live_price_is_stale") else "Live"
 
     spot_str = f"₹{_safe_float(spot):,.2f}" if spot is not None else "N/A"
     ml_str = f"₹{_safe_float(ml):,.0f}" if ml is not None else "N/A"
@@ -334,7 +335,7 @@ def render_trade_card_html(t: Dict[str, Any]) -> str:
     </div>
   </div>
   <div class="trade-live-line">
-    <span>Live</span><strong class="{pnl_cls}">₹{lv:.2f}</strong>
+    <span>{live_label}</span><strong class="{pnl_cls}">₹{lv:.2f}</strong>
   </div>
   {track_markup}
   <div class="trade-detail-row">

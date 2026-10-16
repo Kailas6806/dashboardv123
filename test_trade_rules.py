@@ -157,6 +157,53 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual(trade["Result"], "🟢 WIN (LOCKED)")
         self.assertEqual(trade["Actual P&L ₹"], 1440.0)
 
+    def test_live_websocket_price_carries_market_observation_timestamp(self):
+        observed_at = time.time()
+
+        class FakeWebSocket:
+            def get_live_tick(self, token):
+                return {"ltp_updated_at": observed_at}
+
+            def get_live_ltp(self, token):
+                return 115.0
+
+            def subscribe_tokens(self, exchange_type, tokens):
+                return True
+
+        class FakeFetcher:
+            ws_mgr = FakeWebSocket()
+
+            def get_option_token(self, idx, strike, signal):
+                return "option-token", "BANKNIFTY123CE"
+
+        trade = {
+            "trade_id": "trade-live-price",
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 100.0,
+            "Stop Loss": 50.0,
+            "Target": 200.0,
+            "Qty": 1,
+            "Status": "OPEN",
+        }
+
+        self.trade_mgr.update_live_prices(
+            "BANKNIFTY",
+            [trade],
+            {},
+            datetime.datetime.now(IST).replace(hour=10, minute=30),
+            fetcher=FakeFetcher(),
+            quote_observed_at=observed_at - 2,
+        )
+
+        self.assertEqual(115.0, trade["Live Price"])
+        self.assertEqual(observed_at, trade["_live_price_updated_at"])
+        self.assertFalse(trade["_live_price_is_stale"])
+
+
     def test_trailing_stop_tracks_peak_and_never_moves_down(self):
         now = datetime.datetime.now(IST).replace(hour=10, minute=30)
         trade = {

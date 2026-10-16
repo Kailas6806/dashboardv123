@@ -21,9 +21,20 @@ class TestOpenTradeRendering(unittest.TestCase):
             "Status": "OPEN",
             "Entry Time": "10:00 AM",
             "Strike": 24500,
+            "_live_price_updated_at": None,
         }
-        foreground_trade = {**database_trade, "Status": "CLOSED", "Live Price": 120}
-        session_trade = {**database_trade, "Status": "CLOSED", "Live Price": 125}
+        foreground_trade = {
+            **database_trade,
+            "Status": "CLOSED",
+            "Live Price": 120,
+            "_live_price_updated_at": 100.0,
+        }
+        session_trade = {
+            **database_trade,
+            "Status": "CLOSED",
+            "Live Price": 125,
+            "_live_price_updated_at": 101.0,
+        }
 
         merged = _merge_trade_records(
             "NIFTY",
@@ -35,6 +46,7 @@ class TestOpenTradeRendering(unittest.TestCase):
         self.assertEqual(1, len(merged))
         self.assertEqual("OPEN", merged[0]["Status"])
         self.assertEqual(125, merged[0]["Live Price"])
+        self.assertEqual(101.0, merged[0]["_live_price_updated_at"])
 
     def test_database_closed_status_overrides_cached_open_status(self):
         database_trade = {"trade_id": "trade-1", "Status": "CLOSED"}
@@ -43,6 +55,25 @@ class TestOpenTradeRendering(unittest.TestCase):
         merged = _merge_trade_records("NIFTY", [database_trade], [], [cached_trade])
 
         self.assertEqual("CLOSED", merged[0]["Status"])
+
+    def test_older_browser_quote_cannot_replace_newer_database_quote(self):
+        database_trade = {
+            "trade_id": "trade-1",
+            "Status": "OPEN",
+            "Live Price": 130.0,
+            "_live_price_updated_at": 1000.0,
+        }
+        cached_trade = {
+            "trade_id": "trade-1",
+            "Status": "OPEN",
+            "Live Price": 125.0,
+            "_live_price_updated_at": 999.0,
+        }
+
+        merged = _merge_trade_records("NIFTY", [database_trade], [], [cached_trade])
+
+        self.assertEqual(130.0, merged[0]["Live Price"])
+        self.assertEqual(1000.0, merged[0]["_live_price_updated_at"])
 
     def test_successful_empty_database_does_not_resurrect_cached_open_trade(self):
         cached_trade = {

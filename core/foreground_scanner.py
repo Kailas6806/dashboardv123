@@ -347,10 +347,38 @@ def _scan_single_index(
     events = []
     try:
         events = trade_mgr.update_live_prices(
-            idx, tlog, records, now_ist, fetcher=fetcher
+            idx,
+            tlog,
+            records,
+            now_ist,
+            fetcher=fetcher,
+            quote_observed_at=data.get("_fetched_at"),
         )
     except Exception as e:
         logger.warning("Foreground SL/Target update error on %s: %s", idx, e)
+
+    trade_db = getattr(journal, "db", None)
+    if trade_db:
+        for trade in tlog:
+            if (
+                trade.get("Status") != "OPEN"
+                or trade.get("_live_price_is_stale")
+                or not trade.get("_live_price_updated_at")
+            ):
+                continue
+            try:
+                trade_db.update_trade_live_price(
+                    trade.get("trade_id") or trade.get("_journal_id", ""),
+                    trade.get("Live Price"),
+                    trade["_live_price_updated_at"],
+                )
+            except Exception as price_error:
+                logger.warning(
+                    "Failed to persist live price for %s trade %s: %s",
+                    idx,
+                    trade.get("trade_id") or trade.get("_journal_id", "unknown"),
+                    price_error,
+                )
 
     for trade in tlog:
         old_stop = stop_losses_before.get(id(trade))
@@ -469,12 +497,20 @@ def _scan_single_index(
             cap_info = {"base_capital": CAPITAL, "current_balance": CAPITAL}
             if hasattr(journal, "db") and journal.db:
                 cap_info = journal.db.get_or_init_capital(CAPITAL)
-            portfolio_stats = risk_mgr.calculate_portfolio_equity(
-                cap_info.get("base_capital", CAPITAL),
-                portfolio_today_trades,
-                all_time_pnl=cap_info.get("cumulative_realized_pnl", 0.0),
-            )
-            can_afford, _ = risk_mgr.can_afford_trade(ep, qty, portfolio_stats.get("available_margin", CAPITAL))
+            if cap_info.get("_source") == "local_cache":
+                margin_check_error = True
+                logger.warning(
+                    "[%s] Blocking entry because shared capital is unavailable; "
+                    "this process has only a local cache.",
+                    idx,
+                )
+            else:
+                portfolio_stats = risk_mgr.calculate_portfolio_equity(
+                    cap_info.get("base_capital", CAPITAL),
+                    portfolio_today_trades,
+                    all_time_pnl=cap_info.get("cumulative_realized_pnl", 0.0),
+                )
+                can_afford, _ = risk_mgr.can_afford_trade(ep, qty, portfolio_stats.get("available_margin", CAPITAL))
         except Exception:
             margin_check_error = True
 

@@ -208,6 +208,7 @@ class TradeManager:
         chain_records: Dict[float, Dict[str, Any]],
         now: datetime.datetime,
         fetcher: Optional[Any] = None,
+        quote_observed_at: Optional[float] = None,
         *args,
         **kwargs,
     ) -> List[Dict[str, Any]]:
@@ -266,6 +267,7 @@ class TradeManager:
                     strike = 0.0
 
                 signal = trade.get("Signal", "")
+                observed_at = None
 
                 # 1. Token discovery & auto-subscription to WebSocket
                 tok = trade.get("_token")
@@ -279,16 +281,24 @@ class TradeManager:
                 # 2. Check for real-time sub-50ms WebSocket live tick
                 lp = 0.0
                 if tok and fetcher and hasattr(fetcher, "ws_mgr") and fetcher.ws_mgr:
+                    ws_tick = fetcher.ws_mgr.get_live_tick(str(tok))
                     ws_lp = fetcher.ws_mgr.get_live_ltp(str(tok))
                     if ws_lp is not None and ws_lp > 0:
                         lp = round(float(ws_lp), 2)
+                        if ws_tick:
+                            observed_at = ws_tick.get("ltp_updated_at", ws_tick.get("updated_at"))
+                        if observed_at is None:
+                            observed_at = quote_observed_at
 
                 # 3. Fallback to Option Chain snapshot if no WS tick yet
                 if lp == 0.0:
                     item = chain_records.get(strike, {})
                     opt = (item.get("CE") or {}) if signal == "BUY CE" else (item.get("PE") or {})
                     lp = round(float(opt.get("lastPrice", 0) or 0), 2)
+                    if lp > 0:
+                        observed_at = quote_observed_at
 
+                has_fresh_quote = lp > 0 and observed_at is not None
                 if lp == 0.0:
                     # Fallback: keep previous live price
                     lp = float(
@@ -301,6 +311,14 @@ class TradeManager:
                 tgt = float(trade.get("Target") or 0)
 
                 trade["Live Price"] = lp
+                if has_fresh_quote:
+                    try:
+                        trade["_live_price_updated_at"] = float(observed_at)
+                        trade["_live_price_is_stale"] = False
+                    except (TypeError, ValueError, OverflowError):
+                        trade["_live_price_is_stale"] = True
+                else:
+                    trade["_live_price_is_stale"] = True
                 unrealized_pnl = round((lp - ep_t) * qty_t, 2)
                 risk_pts = round(abs(tgt - ep_t) / 2.0, 2)
                 if risk_pts < 1:
