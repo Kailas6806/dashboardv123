@@ -1,6 +1,7 @@
 import os
 import sys
 import datetime
+import time
 import importlib
 import importlib.util
 import pandas as pd
@@ -87,6 +88,7 @@ for _k, _default in [
 INDEX_CONFIG = getattr(config, "INDEX_CONFIG")
 IST = getattr(config, "IST")
 FRAGMENT_REFRESH_SECONDS = getattr(config, "FRAGMENT_REFRESH_SECONDS", 3)
+LIVE_UI_REFRESH_SECONDS = getattr(config, "LIVE_UI_REFRESH_SECONDS", 1)
 DAILY_REPORT_CHECK_SECS = getattr(config, "DAILY_REPORT_CHECK_SECS", 60)
 DAILY_REPORT_TIME = getattr(config, "DAILY_REPORT_TIME", datetime.time(15, 35))
 LOG_DIR = getattr(config, "LOG_DIR", os.path.join(BASE_DIR, "logs"))
@@ -394,6 +396,14 @@ def _run_scanner_for_fragment():
             idx: get_latest_index_state(idx)
             for idx in INDEX_CONFIG
         }
+    now_monotonic = time.monotonic()
+    last_scan = st.session_state.get("_last_foreground_scan_monotonic", 0.0)
+    if now_monotonic - last_scan < FRAGMENT_REFRESH_SECONDS:
+        return {
+            idx: get_latest_index_state(idx)
+            for idx in INDEX_CONFIG
+        }
+    st.session_state["_last_foreground_scan_monotonic"] = now_monotonic
     return run_foreground_market_scan(
         fetcher=fetcher,
         signal_engine=signal_engine,
@@ -409,26 +419,26 @@ if not navigation_changed:
     latest_scan_results = _run_scanner_for_fragment()
 
 # ── FOREGROUND MULTI-INDEX SCANNER & TAB FRAGMENTS ──
-# On every UI refresh cycle (run_every=FRAGMENT_REFRESH_SECONDS = 3s):
+# Live panels refresh every second; the foreground scanner remains throttled to FRAGMENT_REFRESH_SECONDS.
 # The foreground loop scans NIFTY, BANKNIFTY, FINNIFTY sequentially, evaluates signals,
 # checks SL/TP exits, executes autonomous entries (max 1 open trade per index), and persists state.
 
-@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
+@st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_open_trades():
     _run_scanner_for_fragment()
     render_open_trades_tab(trade_mgr, fetcher)
 
-@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
+@st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_nifty():
     _run_scanner_for_fragment()
     render_index("NIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
-@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
+@st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_banknifty():
     _run_scanner_for_fragment()
     render_index("BANKNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)
 
-@st.fragment(run_every=FRAGMENT_REFRESH_SECONDS)
+@st.fragment(run_every=LIVE_UI_REFRESH_SECONDS)
 def show_finnifty():
     _run_scanner_for_fragment()
     render_index("FINNIFTY", fetcher, signal_engine, risk_mgr, trade_mgr, journal, copilot)

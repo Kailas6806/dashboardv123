@@ -31,7 +31,7 @@ class AngelOneDataFetcher:
         self.totp_secret = ANGEL_TOTP_SECRET
         self.smartApi = SmartConnect(api_key=self.api_key, timeout=25)
         self.session = None
-        self._cache = TTLCache(default_ttl=1)
+        self._cache = TTLCache(default_ttl=config.CACHE_TTL_SECONDS)
         self._perm_cache = {}
         self.ws_mgr = None
         self._last_login_attempt = None
@@ -332,8 +332,9 @@ class AngelOneDataFetcher:
                         if isinstance(opt, dict) and "token" in opt:
                             tick = self.ws_mgr.get_live_tick(str(opt["token"]))
                             if tick:
-                                if tick.get("ltp", 0.0) > 0:
-                                    opt["lastPrice"] = tick["ltp"]
+                                live_ltp = self.ws_mgr.get_live_ltp(str(opt["token"]))
+                                if live_ltp is not None and live_ltp > 0:
+                                    opt["lastPrice"] = live_ltp
                                 if tick.get("oi", 0) > 0:
                                     opt["openInterest"] = tick["oi"]
             return cached
@@ -423,8 +424,9 @@ class AngelOneDataFetcher:
                 if self.ws_mgr:
                     ws_tick = self.ws_mgr.get_live_tick(token)
                     if ws_tick:
-                        if ws_tick.get("ltp", 0.0) > 0:
-                            ltp_val = ws_tick["ltp"]
+                        ws_ltp = self.ws_mgr.get_live_ltp(token)
+                        if ws_ltp is not None and ws_ltp > 0:
+                            ltp_val = ws_ltp
                         if ws_tick.get("oi", 0) > 0:
                             oi_val = ws_tick["oi"]
 

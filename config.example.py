@@ -81,7 +81,7 @@ import os
 ENABLE_WEBSOCKET = os.environ.get("ENABLE_WEBSOCKET", "True").lower() in ("true", "1", "yes")  # Set False to use REST API polling only
 
 # ── CACHING ──
-CACHE_TTL_SECONDS = 1            # option chain cache TTL
+CACHE_TTL_SECONDS = 3            # align option-chain REST refreshes with scanner cadence
 
 # ── NSE FETCH ──
 MAX_RETRIES            = 3       # retry attempts for NSE fetch
@@ -128,10 +128,12 @@ CONF_PENALTY_TRAP     = 10   # penalty points for trap detection
 # ── AUTONOMOUS MULTI-INDEX SCANNER ──
 ENABLE_BACKGROUND_SCANNER = True  # Enable automatic multi-index scanning and entries
 MAX_OPTION_CHAIN_AGE_SECONDS = 15
+LIVE_TICK_MAX_AGE_SECONDS = 10
 MIN_CONFIDENCE_SCORE      = 30    # Minimum rule engine score (0-100) to allow trade entry
 
 # ── STREAMLIT REFRESH ──
 FRAGMENT_REFRESH_SECONDS = 3   # @st.fragment(run_every=N)
+LIVE_UI_REFRESH_SECONDS = 1    # Refresh visible live-price panels between scanner cycles
 DAILY_REPORT_CHECK_SECS  = 60  # check for daily report every N seconds
 DAILY_REPORT_TIME        = datetime.time(15, 35)
 

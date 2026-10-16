@@ -9,6 +9,7 @@ Unit test suite verifying:
    - Pullback triggers exit with locked profit (PROFIT_LOCKED_EXIT).
 """
 import datetime
+import time
 import unittest
 from config import (
     IST, MAX_LOSS, MAX_DAILY_LOSS, DAILY_TGT, MAX_DAILY_TRADES,
@@ -211,6 +212,55 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual(trade["Status"], "CLOSED")
         self.assertEqual(trade["Result"], "🛡️ BREAKEVEN EXIT")
         self.assertEqual(trade["Actual P&L ₹"], 65.0)
+
+    def test_stale_websocket_price_falls_back_to_chain_snapshot(self):
+        from core.websocket_manager import SmartWebSocketManager
+
+        now = datetime.datetime.now(IST).replace(hour=10, minute=0)
+        ws_mgr = SmartWebSocketManager(
+            auth_token="dummy_token",
+            api_key="dummy_key",
+            client_code="dummy_client",
+            feed_token="dummy_feed",
+        )
+        ws_mgr._ticks["12345"] = {
+            "ltp": 180.0,
+            "oi": 0,
+            "vol": 0,
+            "updated_at": time.time() - 30,
+        }
+
+        class DummyFetcher:
+            index_tokens = {}
+
+            def __init__(self, manager):
+                self.ws_mgr = manager
+
+            def get_option_token(self, idx, strike, signal):
+                return "12345", "NIFTYTESTCE"
+
+        trade = {
+            "Entry Time": "10:00:00 AM",
+            "Index": "NIFTY",
+            "Signal": "BUY CE",
+            "Strike": 24500,
+            "Entry Price": 100.0,
+            "Live Price": 100.0,
+            "Stop Loss": 50.0,
+            "Target": 200.0,
+            "Qty": 1,
+            "Status": "OPEN",
+        }
+
+        self.trade_mgr.update_live_prices(
+            "NIFTY",
+            [trade],
+            {24500.0: {"CE": {"lastPrice": 110.0}}},
+            now,
+            fetcher=DummyFetcher(ws_mgr),
+        )
+
+        self.assertEqual(trade["Live Price"], 110.0)
 
     def test_15m_trend_filter(self):
         """

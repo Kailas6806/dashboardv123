@@ -257,6 +257,7 @@ class SmartWebSocketManager:
                 tick_entry = {
                     "token": token,
                     "ltp": ltp if ltp > 0 else existing.get("ltp", 0.0),
+                    "ltp_updated_at": now_ts if ltp > 0 else existing.get("ltp_updated_at", existing.get("updated_at")),
                     "oi": oi if oi > 0 else existing.get("oi", 0),
                     "vol": vol if vol > 0 else existing.get("vol", 0),
                     "exchange_type": exch_type,
@@ -369,16 +370,40 @@ class SmartWebSocketManager:
             log.warning("Unsubscribe error: %s", e)
             return False
 
-    def get_live_tick(self, token: str) -> Optional[Dict[str, Any]]:
-        """Return the latest live tick dict for token: {'ltp', 'oi', 'vol', 'updated_at'}."""
-        with self._lock:
-            return self._ticks.get(str(token))
-
-    def get_live_ltp(self, token: str) -> Optional[float]:
-        """Return the latest LTP in rupees for token if available."""
+    def get_live_tick(
+        self,
+        token: str,
+        max_age_seconds: Optional[float] = config.LIVE_TICK_MAX_AGE_SECONDS,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the latest sufficiently recent tick, or None when it is stale."""
         with self._lock:
             tick = self._ticks.get(str(token))
-            if tick and tick.get("ltp", 0.0) > 0:
+            if tick is None or max_age_seconds is None:
+                return tick
+            try:
+                age_seconds = time.time() - float(tick["updated_at"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            return tick if 0 <= age_seconds <= max_age_seconds else None
+
+    def get_live_ltp(
+        self,
+        token: str,
+        max_age_seconds: Optional[float] = config.LIVE_TICK_MAX_AGE_SECONDS,
+    ) -> Optional[float]:
+        """Return a recent LTP in rupees, or None when no fresh tick is available."""
+        with self._lock:
+            tick = self._ticks.get(str(token))
+            if tick is None:
+                return None
+            try:
+                updated_at = float(tick.get("ltp_updated_at", tick["updated_at"]))
+                age_seconds = time.time() - updated_at
+            except (KeyError, TypeError, ValueError):
+                return None
+            if max_age_seconds is not None and not 0 <= age_seconds <= max_age_seconds:
+                return None
+            if tick.get("ltp", 0.0) > 0:
                 return float(tick["ltp"])
         return None
 

@@ -2,7 +2,9 @@
 Unit & Integration tests for SmartWebSocket Manager & SignalEngine Data Pipeline.
 """
 import unittest
+import time
 import pandas as pd
+import config
 from core.websocket_manager import SmartWebSocketManager
 from core.angelone_fetcher import AngelOneDataFetcher
 from core.signal_engine import SignalEngine
@@ -36,6 +38,23 @@ class TestWebSocketIntegration(unittest.TestCase):
         self.assertIsNotNone(tick)
         self.assertEqual(tick["ltp"], 22520.45)
         self.assertEqual(tick["oi"], 116700055)
+
+    def test_stale_websocket_ticks_are_not_returned_as_live_prices(self):
+        ws_mgr = SmartWebSocketManager(
+            auth_token="dummy_token",
+            api_key="dummy_key",
+            client_code="dummy_client",
+            feed_token="dummy_feed",
+        )
+        ws_mgr._ticks["26000"] = {
+            "ltp": 22520.45,
+            "oi": 0,
+            "vol": 0,
+            "updated_at": time.time() - config.LIVE_TICK_MAX_AGE_SECONDS - 1,
+        }
+
+        self.assertIsNone(ws_mgr.get_live_ltp("26000"))
+        self.assertIsNone(ws_mgr.get_live_tick("26000"))
 
     def test_fetcher_token_lookup(self):
         """Test get_option_token resolves symbol and token from scrip master."""
@@ -137,8 +156,8 @@ class TestWebSocketIntegration(unittest.TestCase):
         
         # Inject WS tick
         if fetcher.ws_mgr:
-            fetcher.ws_mgr._ticks["99991"] = {"ltp": 125.50, "oi": 1500, "vol": 10, "updated_at": 12345}
-            fetcher.ws_mgr._ticks["26000"] = {"ltp": 22055.0, "oi": 0, "vol": 0, "updated_at": 12345}
+            fetcher.ws_mgr._ticks["99991"] = {"ltp": 125.50, "oi": 1500, "vol": 10, "updated_at": time.time()}
+            fetcher.ws_mgr._ticks["26000"] = {"ltp": 22055.0, "oi": 0, "vol": 0, "updated_at": time.time()}
 
             updated = fetcher.fetch_option_chain("NIFTY")
             self.assertEqual(updated["records"]["underlyingValue"], 22055.0)
@@ -182,5 +201,3 @@ class TestWebSocketIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
