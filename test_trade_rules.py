@@ -111,6 +111,7 @@ class TestTradeRules(unittest.TestCase):
         4. Pullback to 145 triggers PROFIT_LOCKED_EXIT with secured profit!
         """
         now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        observed_at = time.time()
         lot = 30
         ep = 100.0
         tgt = 200.0
@@ -142,7 +143,9 @@ class TestTradeRules(unittest.TestCase):
 
         # Step 1: Price reaches 210 (+110 pts); SL trails one risk unit below the peak.
         records = {51000.0: {"CE": {"lastPrice": 210.0}}}
-        events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log, records, now, quote_observed_at=observed_at
+        )
         self.assertEqual(len(events), 0, "Trade should stay OPEN while above trailing SL")
         self.assertTrue(trade.get("_profit_locked"))
         self.assertEqual(trade["Stop Loss"], 160.0)
@@ -150,7 +153,9 @@ class TestTradeRules(unittest.TestCase):
 
         # Step 2: Price pulls back to 148 (below 150 trailing SL) -> Exits with locked profit
         records = {51000.0: {"CE": {"lastPrice": 148.0}}}
-        events = self.trade_mgr.update_live_prices("BANKNIFTY", trade_log, records, now)
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY", trade_log, records, now, quote_observed_at=time.time()
+        )
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["type"], "PROFIT_LOCKED_EXIT")
         self.assertEqual(trade["Status"], "CLOSED")
@@ -203,9 +208,81 @@ class TestTradeRules(unittest.TestCase):
         self.assertEqual(observed_at, trade["_live_price_updated_at"])
         self.assertFalse(trade["_live_price_is_stale"])
 
+    def test_stale_quote_does_not_replace_trade_price_or_trigger_exit(self):
+        class FakeWebSocket:
+            def get_live_tick(self, token):
+                return {"ltp_updated_at": time.time() - 30}
+
+            def get_live_ltp(self, token):
+                return 80.0
+
+            def subscribe_tokens(self, exchange_type, tokens):
+                return True
+
+        class FakeFetcher:
+            ws_mgr = FakeWebSocket()
+
+            def get_option_token(self, idx, strike, signal):
+                return "option-token", "BANKNIFTY123CE"
+
+        trade = {
+            "trade_id": "trade-stale-price",
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 100.0,
+            "Stop Loss": 90.0,
+            "Target": 200.0,
+            "Qty": 1,
+            "Status": "OPEN",
+        }
+
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY",
+            [trade],
+            {},
+            datetime.datetime.now(IST).replace(hour=10, minute=30),
+            fetcher=FakeFetcher(),
+        )
+
+        self.assertEqual([], events)
+        self.assertEqual("OPEN", trade["Status"])
+        self.assertEqual(100.0, trade["Live Price"])
+        self.assertTrue(trade["_live_price_is_stale"])
+
+    def test_expired_chain_snapshot_is_not_used_as_live_trade_price(self):
+        trade = {
+            "Entry Time": "10:30:00 AM",
+            "Index": "BANKNIFTY",
+            "Signal": "BUY CE",
+            "Strike": 51000,
+            "Entry Price": 100.0,
+            "Live Price": 120.0,
+            "Stop Loss": 90.0,
+            "Target": 200.0,
+            "Qty": 1,
+            "Status": "OPEN",
+        }
+
+        events = self.trade_mgr.update_live_prices(
+            "BANKNIFTY",
+            [trade],
+            {51000.0: {"CE": {"lastPrice": 80.0}}},
+            datetime.datetime.now(IST).replace(hour=10, minute=30),
+            quote_observed_at=time.time() - 30,
+        )
+
+        self.assertEqual([], events)
+        self.assertEqual("OPEN", trade["Status"])
+        self.assertEqual(120.0, trade["Live Price"])
+        self.assertTrue(trade["_live_price_is_stale"])
+
 
     def test_trailing_stop_tracks_peak_and_never_moves_down(self):
         now = datetime.datetime.now(IST).replace(hour=10, minute=30)
+        observed_at = time.time()
         trade = {
             "Entry Time": "10:30:00 AM",
             "Index": "BANKNIFTY",
@@ -223,6 +300,7 @@ class TestTradeRules(unittest.TestCase):
         self.trade_mgr.update_live_prices(
             "BANKNIFTY", trade_log,
             {51000.0: {"CE": {"lastPrice": 210.0}}}, now,
+            quote_observed_at=observed_at,
         )
         self.assertEqual(trade["Stop Loss"], 160.0)
         self.assertEqual(trade["_peak_price"], 210.0)
@@ -230,12 +308,14 @@ class TestTradeRules(unittest.TestCase):
         self.trade_mgr.update_live_prices(
             "BANKNIFTY", trade_log,
             {51000.0: {"CE": {"lastPrice": 220.0}}}, now,
+            quote_observed_at=time.time(),
         )
         self.assertEqual(trade["Stop Loss"], 170.0)
 
         self.trade_mgr.update_live_prices(
             "BANKNIFTY", trade_log,
             {51000.0: {"CE": {"lastPrice": 215.0}}}, now,
+            quote_observed_at=time.time(),
         )
         self.assertEqual(trade["Stop Loss"], 170.0)
         self.assertEqual(trade["_peak_price"], 220.0)
@@ -243,6 +323,7 @@ class TestTradeRules(unittest.TestCase):
         events = self.trade_mgr.update_live_prices(
             "BANKNIFTY", trade_log,
             {51000.0: {"CE": {"lastPrice": 169.0}}}, now,
+            quote_observed_at=time.time(),
         )
         self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
         self.assertEqual(trade["Status"], "CLOSED")
@@ -265,6 +346,7 @@ class TestTradeRules(unittest.TestCase):
         events = self.trade_mgr.update_live_prices(
             "BANKNIFTY", [trade],
             {51000.0: {"CE": {"lastPrice": 169.0}}}, now,
+            quote_observed_at=time.time(),
         )
 
         self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
@@ -292,6 +374,7 @@ class TestTradeRules(unittest.TestCase):
             [trade],
             {51000.0: {"CE": {"lastPrice": 99.9}}},
             now,
+            quote_observed_at=time.time(),
         )
 
         self.assertEqual([event["type"] for event in events], ["PROFIT_LOCKED_EXIT"])
@@ -320,6 +403,7 @@ class TestTradeRules(unittest.TestCase):
             [trade],
             {23000.0: {"PE": {"lastPrice": 149.40}}},
             now,
+            quote_observed_at=time.time(),
         )
 
         self.assertEqual([event["type"] for event in events], ["BREAKEVEN_EXIT"])
@@ -336,6 +420,7 @@ class TestTradeRules(unittest.TestCase):
         3. Pullback to 101.0 triggers BREAKEVEN_EXIT without taking a loss!
         """
         now = datetime.datetime.now(IST).replace(hour=10, minute=0)
+        observed_at = time.time()
         lot = 65
         ep = 100.0
         tgt = 150.0
@@ -368,7 +453,9 @@ class TestTradeRules(unittest.TestCase):
 
         # Step 1: Price touches 116 (+₹1,040 unrealized profit >= ₹1,000)
         records = {24500.0: {"CE": {"lastPrice": 116.0}}}
-        events = self.trade_mgr.update_live_prices("NIFTY", trade_log, records, now)
+        events = self.trade_mgr.update_live_prices(
+            "NIFTY", trade_log, records, now, quote_observed_at=observed_at
+        )
         self.assertEqual(len(events), 0, "Trade should stay OPEN")
         self.assertTrue(trade.get("_breakeven_locked"))
         self.assertGreater(trade["Stop Loss"], ep)
@@ -376,7 +463,9 @@ class TestTradeRules(unittest.TestCase):
 
         # Step 2: Price pulls back to 101.0 (below 101.54 breakeven SL) -> Exits at breakeven
         records = {24500.0: {"CE": {"lastPrice": 101.0}}}
-        events = self.trade_mgr.update_live_prices("NIFTY", trade_log, records, now)
+        events = self.trade_mgr.update_live_prices(
+            "NIFTY", trade_log, records, now, quote_observed_at=time.time()
+        )
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["type"], "BREAKEVEN_EXIT")
         self.assertEqual(trade["Status"], "CLOSED")
@@ -428,6 +517,7 @@ class TestTradeRules(unittest.TestCase):
             {24500.0: {"CE": {"lastPrice": 110.0}}},
             now,
             fetcher=DummyFetcher(ws_mgr),
+            quote_observed_at=time.time(),
         )
 
         self.assertEqual(trade["Live Price"], 110.0)

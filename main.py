@@ -162,6 +162,8 @@ trade_mgr     = st.session_state["_trade_mgr"]
 journal       = st.session_state["_journal"]
 copilot       = st.session_state["_copilot"]
 fetcher       = get_fetcher()
+if journal and not getattr(journal, "db", None):
+    journal.db = st.session_state.get("_trade_db")
 
 # ── 100% FOREGROUND MULTI-INDEX SCANNER & AUDITOR ──
 from core.foreground_scanner import (

@@ -8,6 +8,7 @@ import datetime
 import math
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -19,6 +20,7 @@ from config import (
     NO_NEW_TRADE_TIME,
     MIN_ENTRY_PRICE,
     LOG_DIR,
+    LIVE_TICK_MAX_AGE_SECONDS,
     PROFIT_LOCK_START,
     PROFIT_LOCK_STEP,
     MAX_PROFIT_EXIT,
@@ -298,27 +300,38 @@ class TradeManager:
                     if lp > 0:
                         observed_at = quote_observed_at
 
-                has_fresh_quote = lp > 0 and observed_at is not None
-                if lp == 0.0:
-                    # Fallback: keep previous live price
+                observed_ts = None
+                if lp > 0 and observed_at is not None:
+                    try:
+                        observed_ts = float(observed_at)
+                    except (TypeError, ValueError, OverflowError):
+                        if isinstance(observed_at, datetime.datetime):
+                            observed_ts = observed_at.timestamp()
+                quote_age = time.time() - observed_ts if observed_ts is not None else float("inf")
+                has_fresh_quote = (
+                    lp > 0
+                    and 0 <= quote_age <= LIVE_TICK_MAX_AGE_SECONDS
+                )
+                if not has_fresh_quote:
                     lp = float(
                         trade.get("Live Price") or trade.get("Entry Price") or 0
                     )
+
+                trade["Live Price"] = lp
+                if has_fresh_quote:
+                    trade["_live_price_updated_at"] = observed_ts
+                    trade["_live_price_is_stale"] = False
+                else:
+                    trade["_live_price_is_stale"] = True
+
+                    # Never trail or close a position using an expired quote.
+                    continue
 
                 ep_t = float(trade.get("Entry Price") or 0)
                 qty_t = int(trade.get("Qty") or 0)
                 sl = float(trade.get("Stop Loss") or 0)
                 tgt = float(trade.get("Target") or 0)
 
-                trade["Live Price"] = lp
-                if has_fresh_quote:
-                    try:
-                        trade["_live_price_updated_at"] = float(observed_at)
-                        trade["_live_price_is_stale"] = False
-                    except (TypeError, ValueError, OverflowError):
-                        trade["_live_price_is_stale"] = True
-                else:
-                    trade["_live_price_is_stale"] = True
                 unrealized_pnl = round((lp - ep_t) * qty_t, 2)
                 risk_pts = round(abs(tgt - ep_t) / 2.0, 2)
                 if risk_pts < 1:
