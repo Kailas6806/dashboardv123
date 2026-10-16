@@ -97,6 +97,34 @@ _worker_thread: Optional[threading.Thread] = None
 _auto_trade_enabled = AI_AUTO_TRADE_DEFAULT
 
 
+def _trade_identity(trade: Dict[str, Any]) -> str:
+    return str(
+        trade.get("trade_id")
+        or trade.get("_journal_id")
+        or "_".join(
+            str(trade.get(field) or "")
+            for field in ("Index", "Entry Time", "Strike", "Signal")
+        )
+    )
+
+
+def _merge_refreshed_trade_log(
+    database_trades: List[Dict[str, Any]],
+    cached_trades: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep explicitly surfaced, unsynced open positions until DB reconciliation."""
+    database_ids = {_trade_identity(trade) for trade in database_trades}
+    retained = [
+        trade for trade in cached_trades
+        if (
+            str(trade.get("Status") or "").upper() == "OPEN"
+            and trade.get("_missing_from_shared_db")
+            and _trade_identity(trade) not in database_ids
+        )
+    ]
+    return [*database_trades, *retained]
+
+
 def get_scanner_status() -> Dict[str, Any]:
     """Return diagnostic telemetry for Activity/Health tab and app header."""
     enabled = bool(getattr(config, "ENABLE_BACKGROUND_SCANNER", True))
@@ -277,7 +305,10 @@ def _run_foreground_market_scan(
         except Exception as exc:
             logger.warning("Failed to refresh shared trade state for %s: %s", idx, exc)
         if loaded_trades is not None:
-            _scanner_state["trade_logs"][idx] = loaded_trades
+            _scanner_state["trade_logs"][idx] = _merge_refreshed_trade_log(
+                loaded_trades,
+                _scanner_state["trade_logs"][idx],
+            )
         elif not _scanner_state["trade_logs"][idx] and hasattr(trade_mgr, "load_log"):
             try:
                 _scanner_state["trade_logs"][idx] = trade_mgr.load_log(idx)

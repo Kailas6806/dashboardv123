@@ -2,6 +2,7 @@ import unittest
 import threading
 from unittest.mock import MagicMock, patch
 
+from config import INDEX_CONFIG
 from analytics.db import TradeDB
 from ui.renderer import _get_trades_for_date, _merge_trade_records, _safe_trade_pnl
 
@@ -84,6 +85,55 @@ class TestOpenTradeRendering(unittest.TestCase):
         }
 
         merged = _merge_trade_records("NIFTY", [], [], [cached_trade])
+
+        self.assertEqual([], merged)
+
+    def test_open_scanner_position_missing_from_database_remains_visible(self):
+        scanner_trade = {
+            "trade_id": "scanner-open-trade",
+            "Status": "OPEN",
+            "Index": "BANKNIFTY",
+            "Entry Time": "10:00 AM",
+            "Strike": 55000,
+            "Signal": "BUY CE",
+        }
+
+        merged = _merge_trade_records(
+            "BANKNIFTY",
+            [],
+            [scanner_trade],
+            [],
+        )
+
+        self.assertEqual(1, len(merged))
+        self.assertEqual("OPEN", merged[0]["Status"])
+        self.assertTrue(merged[0]["_missing_from_shared_db"])
+
+    def test_unsynced_open_positions_are_retained_for_every_index(self):
+        for idx in INDEX_CONFIG:
+            with self.subTest(index=idx):
+                scanner_trade = {
+                    "trade_id": f"{idx.lower()}-open",
+                    "Status": "OPEN",
+                    "Index": idx,
+                    "Entry Time": "10:00 AM",
+                    "Strike": 55000,
+                    "Signal": "BUY CE",
+                }
+                merged = _merge_trade_records(idx, [], [scanner_trade], [])
+                self.assertEqual([scanner_trade["trade_id"]], [
+                    trade["trade_id"] for trade in merged
+                ])
+                self.assertTrue(merged[0]["_missing_from_shared_db"])
+
+    def test_scanner_trade_from_another_index_is_not_shown(self):
+        wrong_index_trade = {
+            "trade_id": "banknifty-open",
+            "Status": "OPEN",
+            "Index": "BANKNIFTY",
+        }
+
+        merged = _merge_trade_records("NIFTY", [], [wrong_index_trade], [])
 
         self.assertEqual([], merged)
 

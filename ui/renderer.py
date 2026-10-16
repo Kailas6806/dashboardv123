@@ -89,11 +89,18 @@ def _merge_trade_records(
             or f"{idx}_{trade.get('Entry Time')}_{trade.get('Strike')}_{trade.get('Signal')}"
         )
 
+    def belongs_to_index(trade):
+        trade_idx = str(trade.get("Index") or trade.get("instrument") or idx).upper()
+        return trade_idx == idx.upper()
+
+    foreground_trades = [trade for trade in foreground_trades if belongs_to_index(trade)]
+    session_trades = [trade for trade in session_trades if belongs_to_index(trade)]
     local_trades = [*foreground_trades, *session_trades]
     local_by_id = {trade_key(trade): trade for trade in local_trades}
 
     if db_trades is not None:
         canonical_trades = []
+        db_trade_ids = {trade_key(trade) for trade in db_trades}
         for db_trade in db_trades:
             trade = dict(db_trade)
             local_trade = local_by_id.get(trade_key(db_trade))
@@ -108,6 +115,15 @@ def _merge_trade_records(
                 trade["Live Price"] = local_trade["Live Price"]
                 trade["_live_price_updated_at"] = local_trade["_live_price_updated_at"]
             canonical_trades.append(trade)
+        for foreground_trade in foreground_trades:
+            trade_id = trade_key(foreground_trade)
+            if (
+                str(foreground_trade.get("Status") or "").upper() == "OPEN"
+                and trade_id not in db_trade_ids
+            ):
+                trade = dict(foreground_trade)
+                trade["_missing_from_shared_db"] = True
+                canonical_trades.append(trade)
         return canonical_trades
 
     trades_by_id = {}
@@ -990,6 +1006,7 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
 
     # 2. Sync and merge trades across DB, foreground scanner, and session state
     from core.foreground_scanner import get_index_trade_log, set_index_trade_log
+    scanner_only_open_found = False
     if db_read_error:
         st.warning(
             "Shared trade data is temporarily unavailable. This browser is showing its "
@@ -1008,6 +1025,9 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
         )
         max_quote_age = getattr(config, "LIVE_TICK_MAX_AGE_SECONDS", 10)
         for trade in merged_list:
+            scanner_only_open_found = (
+                scanner_only_open_found or bool(trade.get("_missing_from_shared_db"))
+            )
             quote_timestamp = _quote_timestamp(trade.get("_live_price_updated_at"))
             trade["_live_price_is_stale"] = (
                 quote_timestamp == float("-inf")
@@ -1017,6 +1037,13 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
         st.session_state[sk(idx, "trade_log")] = merged_list
         if db_today_trades is not None:
             set_index_trade_log(idx, merged_list)
+
+    if scanner_only_open_found:
+        st.warning(
+            "An open position exists in the background scanner but is missing from the "
+            "shared database. It is shown here for visibility; other server instances "
+            "may not see it until database synchronization is restored."
+        )
 
     # Update prices for open trades
     for idx in INDEX_CONFIG:

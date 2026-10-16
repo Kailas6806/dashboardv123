@@ -48,6 +48,36 @@ class _FakeConnection:
 
 
 class TestForegroundScannerSafety(unittest.TestCase):
+    def test_database_refresh_retains_unsynced_open_trade(self):
+        unsynced_trade = {
+            "trade_id": "unsynced-open",
+            "Index": "BANKNIFTY",
+            "Status": "OPEN",
+            "_missing_from_shared_db": True,
+        }
+
+        refreshed = foreground_scanner._merge_refreshed_trade_log(
+            [],
+            [unsynced_trade],
+        )
+
+        self.assertEqual([unsynced_trade], refreshed)
+
+    def test_database_closed_trade_replaces_unsynced_open_copy(self):
+        unsynced_trade = {
+            "trade_id": "same-trade",
+            "Status": "OPEN",
+            "_missing_from_shared_db": True,
+        }
+        closed_trade = {"trade_id": "same-trade", "Status": "CLOSED"}
+
+        refreshed = foreground_scanner._merge_refreshed_trade_log(
+            [closed_trade],
+            [unsynced_trade],
+        )
+
+        self.assertEqual([closed_trade], refreshed)
+
     def test_ai_trade_metadata_preserves_detailed_rationale(self):
         metadata = build_ai_trade_metadata({
             "reasoning_summary": "Institutional flow favors calls.",
