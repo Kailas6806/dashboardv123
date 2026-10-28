@@ -2,7 +2,6 @@ import io
 import os
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from ml.model_manager import (
     get_model,
@@ -14,17 +13,16 @@ from ml.model_manager import (
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LOCAL_CSV_PATH = os.path.join(ROOT_DIR, "trades_rows.csv")
-LOCAL_DASHBOARD_HTML = os.path.join(ROOT_DIR, "dashboard.html")
 
 
 def render_ml_dashboard():
     st.markdown(
-        "<h3 style='color:#34D399;'>🤖 XGBOOST LIVE OBSERVER & ANALYTICS</h3>",
+        "<h3 style='color:#34D399;'>🤖 XGBOOST LIVE OBSERVER</h3>",
         unsafe_allow_html=True,
     )
     st.info(
-        "Evaluation only: live probabilities are displayed for confirmed signals. "
-        "XGBoost filters false breakouts and calculates quantitative win probability."
+        "Evaluation only: live probabilities are displayed for confirmed signals on trade cards. "
+        "XGBoost filters false breakouts and evaluates quantitative setup win probability."
     )
 
     metadata = get_model_metadata() or {}
@@ -45,7 +43,7 @@ def render_ml_dashboard():
     if metadata.get("training_source") == "trade_csv":
         metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
         with metrics_col1:
-            st.metric("Chronological Holdout Accuracy", f"{metadata.get('accuracy', 0) * 100:.1f}%")
+            st.metric("Holdout Accuracy", f"{metadata.get('accuracy', 0) * 100:.1f}%")
         with metrics_col2:
             st.metric("Precision", f"{metadata.get('precision', 0) * 100:.1f}%")
         with metrics_col3:
@@ -61,43 +59,36 @@ def render_ml_dashboard():
 
         importance = metadata.get("feature_importances", {})
         if importance:
-            with st.expander("Feature importances"):
+            with st.expander("Top Feature Importances", expanded=True):
                 importance_df = pd.DataFrame(
                     list(importance.items()),
-                    columns=["Feature", "Importance"],
-                ).sort_values("Importance", ascending=False)
+                    columns=["Feature Signal", "Relative Importance (Gain)"],
+                ).sort_values("Relative Importance (Gain)", ascending=False)
                 st.dataframe(importance_df, width="stretch", hide_index=True)
 
-    # ── EMBEDDED INTERACTIVE QUANT DASHBOARD ──
-    if os.path.exists(LOCAL_DASHBOARD_HTML):
-        with st.expander("📊 INTERACTIVE VISUAL ANALYTICS & THRESHOLD SIMULATOR", expanded=True):
-            st.caption("Drag the threshold slider below to simulate equity curve, win rate, and profit factor in real-time.")
-            try:
-                with open(LOCAL_DASHBOARD_HTML, "r", encoding="utf-8") as f:
-                    html_code = f.read()
-                components.html(html_code, height=880, scrolling=True)
-            except Exception as e:
-                st.warning(f"Could not load embedded dashboard: {e}")
-
-    # ── TRAINING & SYNC SECTION ──
-    st.markdown("#### Retrain or Update Model")
+    # ── TRAINING & DATA RETRAINING SECTION ──
+    st.markdown("#### Model Training from Trade History")
     
-    col_retrain, col_status = st.columns([1, 2])
+    col_retrain, col_info = st.columns([1.5, 2.5])
     with col_retrain:
         if os.path.exists(LOCAL_CSV_PATH):
-            if st.button("⚡ Quick Retrain from local trades_rows.csv", type="secondary"):
-                with st.spinner("Retraining XGBoost observer from local trades_rows.csv..."):
+            if st.button("⚡ Quick Retrain from local trades_rows.csv", type="primary"):
+                with st.spinner("Retraining XGBoost model from local trade history..."):
                     samples = load_trade_csv_samples(LOCAL_CSV_PATH)
                     trained, result = train_model(custom_data=samples, training_source="trade_csv")
                     if trained:
-                        st.success(f"Retrained on {result['samples']} trades!")
+                        st.success(f"Retrained on {result['samples']} trades ({result['positive_samples']} wins, {result['negative_samples']} losses)!")
                         st.rerun()
                     else:
-                        st.error(f"Failed: {result.get('error')}")
+                        st.error(f"Training failed: {result.get('error')}")
+
+    with col_info:
+        if os.path.exists(LOCAL_CSV_PATH):
+            st.caption(f"Using local dataset: `{LOCAL_CSV_PATH}` ({metadata.get('samples', 203)} records)")
 
     with st.expander("Upload Custom Trade CSV"):
         st.caption(
-            "Upload trades_rows.csv. Closed trades with positive actual P&L are labeled wins; "
+            "Upload any trades_rows.csv. Closed trades with positive actual P&L are labeled wins; "
             "zero or negative P&L are labeled non-wins."
         )
         uploaded_file = st.file_uploader(
@@ -114,7 +105,7 @@ def render_ml_dashboard():
                 st.write(f"Usable closed trades: **{len(samples)}** · Wins: **{wins}** · Losses: **{losses}**")
 
                 if len(samples) >= 20 and wins and losses:
-                    if st.button("Train from uploaded file", type="primary"):
+                    if st.button("Train from uploaded file"):
                         with st.spinner("Training model..."):
                             trained, result = train_model(custom_data=samples, training_source="trade_csv")
                             if trained:
