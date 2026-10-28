@@ -29,7 +29,7 @@ def render_ml_dashboard():
     model = get_model()
     observer_ready = bool(
         model is not None
-        and metadata.get("training_source") == "trade_csv"
+        and metadata.get("training_source") in ("trade_csv", "supabase_db")
     )
 
     status_col, samples_col, trained_col = st.columns(3)
@@ -40,7 +40,7 @@ def render_ml_dashboard():
     with trained_col:
         st.metric("Last Trained", metadata.get("trained_at", "—"))
 
-    if metadata.get("training_source") == "trade_csv":
+    if metadata.get("training_source") in ("trade_csv", "supabase_db"):
         metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
         with metrics_col1:
             st.metric("Holdout Accuracy", f"{metadata.get('accuracy', 0) * 100:.1f}%")
@@ -66,25 +66,27 @@ def render_ml_dashboard():
                 ).sort_values("Relative Importance (Gain)", ascending=False)
                 st.dataframe(importance_df, width="stretch", hide_index=True)
 
-    # ── TRAINING & DATA RETRAINING SECTION ──
-    st.markdown("#### Model Training from Trade History")
+    # ── TRAINING & DATA RETRAINING SECTION (SUPABASE DB DEFAULT) ──
+    st.markdown("#### Model Training from Database")
     
-    col_retrain, col_info = st.columns([1.5, 2.5])
+    col_retrain, col_info = st.columns([1.8, 2.2])
     with col_retrain:
-        if os.path.exists(LOCAL_CSV_PATH):
-            if st.button("⚡ Quick Retrain from local trades_rows.csv", type="primary"):
-                with st.spinner("Retraining XGBoost model from local trade history..."):
-                    samples = load_trade_csv_samples(LOCAL_CSV_PATH)
-                    trained, result = train_model(custom_data=samples, training_source="trade_csv")
-                    if trained:
-                        st.success(f"Retrained on {result['samples']} trades ({result['positive_samples']} wins, {result['negative_samples']} losses)!")
-                        st.rerun()
-                    else:
-                        st.error(f"Training failed: {result.get('error')}")
+        if st.button("🔄 Train / Retrain from Supabase Database", type="primary"):
+            with st.spinner("Connecting to Supabase PostgreSQL and fetching closed trades..."):
+                trained, result = train_model(training_source="supabase")
+                if trained:
+                    st.success(
+                        f"Observer model trained from Supabase on {result['samples']} closed trades "
+                        f"({result['positive_samples']} wins, {result['negative_samples']} losses)!"
+                    )
+                    st.rerun()
+                else:
+                    st.error(f"Training failed: {result.get('error')}")
 
     with col_info:
-        if os.path.exists(LOCAL_CSV_PATH):
-            st.caption(f"Using local dataset: `{LOCAL_CSV_PATH}` ({metadata.get('samples', 203)} records)")
+        src = metadata.get("training_source", "None")
+        src_label = "Cloud Supabase PostgreSQL" if "supabase" in src else "Local CSV File"
+        st.caption(f"Active Training Source: **{src_label}** ({metadata.get('samples', '—')} closed trades)")
 
     with st.expander("Upload Custom Trade CSV"):
         st.caption(

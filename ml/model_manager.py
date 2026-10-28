@@ -51,6 +51,45 @@ def load_trade_csv_samples(source):
     return samples
 
 
+def load_supabase_trade_samples():
+    """Load closed trade records directly from Supabase PostgreSQL database."""
+    try:
+        from analytics.db import TradeDB
+        db = TradeDB()
+        trades = db.get_all_trades(status="CLOSED")
+        if not trades:
+            logger.warning("No closed trades returned from Supabase.")
+            return []
+
+        sorted_trades = sorted(
+            trades,
+            key=lambda t: str(t.get("created_at") or t.get("Entry Time") or t.get("trade_date") or ""),
+        )
+
+        samples = []
+        for t in sorted_trades:
+            pnl = t.get("Actual P&L ₹", t.get("actual_pnl"))
+            if pnl is None:
+                continue
+            try:
+                pnl_val = float(pnl)
+            except (ValueError, TypeError):
+                continue
+            feats = observer_features_from_trade(t)
+            if feats:
+                samples.append({
+                    "idx": t.get("instrument") or t.get("Index"),
+                    "dt": str(t.get("created_at") or t.get("Entry Time") or t.get("trade_date") or ""),
+                    "features": feats,
+                    "target": int(pnl_val > 0),
+                })
+        logger.info("Loaded %d closed trade samples from Supabase database.", len(samples))
+        return samples
+    except Exception as exc:
+        logger.error(f"Failed to fetch trade samples from Supabase: {exc}")
+        return []
+
+
 def get_model_metadata():
     """Returns metadata about the currently trained model."""
     if os.path.exists(META_PATH):
@@ -78,11 +117,20 @@ def train_model(custom_data=None, training_source="supabase"):
         else:
             df = pd.DataFrame(custom_data)
     else:
-        data = get_training_data()
-        if len(data) < 50:
-            logger.warning(f"Not enough data to train. Need at least 50 samples, got {len(data)}")
-            return False, {"error": f"Insufficient data ({len(data)} samples, minimum 50 required)"}
-        df = pd.DataFrame(data)
+        # Default: Directly fetch closed trades from Supabase Database
+        samples = load_supabase_trade_samples()
+        if len(samples) >= 20:
+            df = pd.DataFrame(samples)
+            training_source = "supabase_db"
+        else:
+            # Fallback to ml_predictions if trade table is empty
+            data = get_training_data()
+            if len(data) >= 20:
+                df = pd.DataFrame(data)
+                training_source = "supabase_predictions"
+            else:
+                logger.warning(f"Not enough training data in Supabase. Got {len(samples)} closed trades.")
+                return False, {"error": f"Insufficient data in Supabase ({len(samples)} closed trades, minimum 20 required)"}
 
     if 'features' in df.columns:
         features_df = pd.json_normalize(df['features'])
@@ -96,7 +144,7 @@ def train_model(custom_data=None, training_source="supabase"):
     if len(X) < 20:
         return False, {"error": f"Insufficient samples ({len(X)} samples, minimum 20 required)"}
 
-    if training_source == "trade_csv":
+    if training_source in ("trade_csv", "supabase_db"):
         X = X.reindex(columns=OBSERVER_FEATURE_COLUMNS, fill_value=0.0)
     X = X.apply(pd.to_numeric, errors="coerce")
     X = X.replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
