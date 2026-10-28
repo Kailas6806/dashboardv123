@@ -26,6 +26,7 @@ class TradeJournal:
         "Entry Price", "Live Price", "Exit Price",
         "Stop Loss", "Target", "Qty", "Max Loss ₹", "Target P&L ₹",
         "Actual P&L ₹", "Status", "Result", "Confidence Score",
+        "xgboost_score", "xgboostscore",
     ]
 
     def __init__(self, journal_path: Optional[str] = None) -> None:
@@ -168,6 +169,32 @@ class TradeJournal:
                 or trade.get("ai_reasoning")
                 or ai_metadata.get("ai_reasoning")
                 or ""
+            )
+            entry["xgboost_score"] = (
+                trade.get("xgboost_score")
+                if trade.get("xgboost_score") is not None
+                else (
+                    trade.get("xgboostscore")
+                    if trade.get("xgboostscore") is not None
+                    else (
+                        trade.get("ml_probability")
+                        if trade.get("ml_probability") is not None
+                        else (
+                            ai_metadata.get("xgboost_score")
+                            if ai_metadata.get("xgboost_score") is not None
+                            else (
+                                ai_metadata.get("xgboostscore")
+                                if ai_metadata.get("xgboostscore") is not None
+                                else ai_metadata.get("ml_probability")
+                            )
+                        )
+                    )
+                )
+            )
+            entry["xgboostscore"] = (
+                int(round(entry["xgboost_score"] * 100))
+                if (entry["xgboost_score"] is not None and entry["xgboost_score"] <= 1.0)
+                else (int(round(entry["xgboost_score"])) if entry["xgboost_score"] is not None else None)
             )
             entry["recorded_at"] = now.isoformat()
 

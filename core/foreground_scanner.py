@@ -732,6 +732,8 @@ def _scan_single_index(
                     "_ai_generated": ai_auto_trade,
                     "_ai_conviction": ai_pre_score,
                     "_ai_reasoning": ai_pre_summary,
+                    "xgboost_score": ml_probability,
+                    "xgboostscore": int(round(ml_probability * 100)) if (ml_probability is not None and ml_probability <= 1.0) else (int(round(ml_probability)) if ml_probability is not None else None),
                 }
                 ai_metadata = build_ai_trade_metadata(
                     ai_analysis,
@@ -753,6 +755,9 @@ def _scan_single_index(
                             "pcr_momentum": md["pcr_momentum"],
                             "trap": trap, "buffer_state": updated_buf[-3:],
                             "ai_validated": ai_auto_trade,
+                            "xgboost_score": ml_probability,
+                            "xgboostscore": int(round(ml_probability * 100)) if (ml_probability is not None and ml_probability <= 1.0) else (int(round(ml_probability)) if ml_probability is not None else None),
+                            "ml_probability": ml_probability,
                             **ai_metadata,
                         }, require_no_open=True)
                 except Exception as e:
