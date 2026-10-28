@@ -474,13 +474,15 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
             if expected_recommendation not in recommendation:
                 ai_observation = None
 
-        observer_probability = observe_ml_signal(
-            idx,
-            final_signal,
-            md,
-            conf_score,
-            ai_analysis=ai_observation,
-        )
+        observer_probability = md.get('ml_probability')
+        if observer_probability is None:
+            observer_probability = observe_ml_signal(
+                idx,
+                final_signal,
+                md,
+                conf_score,
+                ai_analysis=ai_observation,
+            )
         if observer_probability is None:
             st.caption(
                 "XGBoost live observer unavailable: train a compatible model from the "

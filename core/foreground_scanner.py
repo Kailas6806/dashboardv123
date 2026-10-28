@@ -587,6 +587,29 @@ def _scan_single_index(
     )
     sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
+    # 8b. Real-Time XGBoost Live Observer Evaluation
+    ml_probability = None
+    if final_signal in ("BUY CE", "BUY PE"):
+        try:
+            from ml.predict import observe_ml_signal
+            ai_observation = _scanner_state.get("ai_analyses", {}).get(idx)
+            ml_probability = observe_ml_signal(
+                idx=idx,
+                signal=final_signal,
+                md=md,
+                strategy_score=conf_score,
+                ai_analysis=ai_observation,
+            )
+            if ml_probability is not None:
+                logger.info(
+                    "[%s] 🤖 XGBoost Live Observer: %s -> Win Probability: %.1f%%",
+                    idx,
+                    final_signal,
+                    ml_probability * 100,
+                )
+        except Exception as ml_err:
+            logger.debug("[%s] XGBoost observation skipped: %s", idx, ml_err)
+
     # Portfolio-wide trade checks
     portfolio_today_trades = []
     for _i in INDEX_CONFIG:
@@ -885,6 +908,7 @@ def _scan_single_index(
         "final_signal": final_signal,
         "final_conf": final_conf,
         "conf_score": conf_score,
+        "ml_probability": ml_probability,
         "trap": trap,
         "filter_reason": filter_reason,
         "sideways_info": sideways_info,

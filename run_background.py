@@ -75,11 +75,21 @@ def main():
                 exec_count = stats.get("executed", 0)
                 rej_count = stats.get("rejected", 0)
 
+                # Format real-time index signals and XGBoost observed probabilities
+                from core.foreground_scanner import get_latest_index_state
+                idx_summaries = []
+                for _idx in INDEX_CONFIG:
+                    st_snap = get_latest_index_state(_idx) or {}
+                    sig = st_snap.get("final_signal", "WAIT")
+                    prob = st_snap.get("ml_probability")
+                    if prob is not None:
+                        idx_summaries.append(f"{_idx}: {sig} [XGB: {prob*100:.1f}%]")
+                    else:
+                        idx_summaries.append(f"{_idx}: {sig}")
+
                 print(
                     f"[{now_ist.strftime('%I:%M:%S %p')}] "
-                    f"Scans: {status.get('total_scans', 0):,} | Setups Evaluated: {tot} | "
-                    f"Executed: {exec_count} | Filtered: {rej_count} | "
-                    f"Status: {status.get('status', 'RUNNING')}"
+                    f"Scans: {status.get('total_scans', 0):,} | " + " | ".join(idx_summaries) + f" | Evaluated: {tot} | Exec: {exec_count}"
                 )
 
     except KeyboardInterrupt:
