@@ -2,17 +2,54 @@ import os
 import pandas as pd
 import joblib
 from xgboost import XGBClassifier
-from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from analytics.ml_db import get_training_data
+from ml.feature_engineering import (
+    OBSERVER_FEATURE_COLUMNS,
+    observer_features_from_market,
+    observer_features_from_trade,
+)
 from utils.logger import get_logger
 
 logger = get_logger("ml_manager")
 
-MODELS_DIR = "models"
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MODELS_DIR = os.path.join(ROOT_DIR, "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "xgb_prod.joblib")
-
 META_PATH = os.path.join(MODELS_DIR, "xgb_meta.json")
+
+
+def load_trade_csv_samples(source):
+    """Load closed trade rows as labeled observer-only model samples."""
+    df = pd.read_csv(source)
+    required = {"status", "actual_pnl"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Trade CSV is missing required columns: {', '.join(sorted(missing))}")
+
+    df = df.copy()
+    df["_actual_pnl"] = pd.to_numeric(df["actual_pnl"], errors="coerce")
+    df = df[
+        df["status"].astype(str).str.strip().str.upper().eq("CLOSED")
+        & df["_actual_pnl"].notna()
+    ]
+    if "created_at" in df.columns:
+        df["_sort_time"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+        df = df.sort_values("_sort_time", kind="stable", na_position="last")
+
+    samples = []
+    for row in df.to_dict("records"):
+        features = observer_features_from_trade(row)
+        if features is None:
+            continue
+        samples.append({
+            "idx": row.get("instrument"),
+            "dt": row.get("created_at") or row.get("trade_date") or "",
+            "features": features,
+            "target": int(row["_actual_pnl"] > 0),
+        })
+    return samples
+
 
 def get_model_metadata():
     """Returns metadata about the currently trained model."""
@@ -25,9 +62,9 @@ def get_model_metadata():
             logger.error(f"Failed to load model metadata: {e}")
     return None
 
-def train_model(custom_data=None):
+def train_model(custom_data=None, training_source="supabase"):
     """
-    Trains XGBoost using Walk-Forward chronological validation.
+    Trains XGBoost using a chronological 80/20 holdout validation.
     Accepts custom_data (list of dicts or DataFrame with 'features' and 'target')
     or fetches from Supabase.
     """
@@ -59,10 +96,20 @@ def train_model(custom_data=None):
     if len(X) < 20:
         return False, {"error": f"Insufficient samples ({len(X)} samples, minimum 20 required)"}
 
+    if training_source == "trade_csv":
+        X = X.reindex(columns=OBSERVER_FEATURE_COLUMNS, fill_value=0.0)
+    X = X.apply(pd.to_numeric, errors="coerce")
+    X = X.replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
+    y = y.astype(int)
+    if y.nunique() != 2:
+        return False, {"error": "Training requires both winning and losing trade samples."}
+
     # Train test split (chronological Walk-Forward)
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    if y_train.nunique() != 2:
+        return False, {"error": "Chronological training split must contain both outcome classes."}
 
     # Optimized conservative XGBoost
     model = XGBClassifier(
@@ -80,8 +127,6 @@ def train_model(custom_data=None):
 
     # Evaluate
     y_pred = model.predict(X_test)
-    y_pred_proba = model.predict_proba(X_test)[:, 1] if len(X_test) > 0 else []
-
     # Calculate feature importances
     feat_names = list(X.columns)
     importances = model.feature_importances_.tolist()
@@ -97,6 +142,9 @@ def train_model(custom_data=None):
         "train_samples": int(len(X_train)),
         "test_samples": int(len(X_test)),
         "win_rate": float(y.mean()),
+        "training_source": training_source,
+        "positive_samples": int(y.sum()),
+        "negative_samples": int(len(y) - y.sum()),
         "trained_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "features": feat_names,
         "feature_importances": feat_imp_dict
@@ -140,14 +188,57 @@ def predict_probability(features: dict) -> float:
     try:
         df = pd.DataFrame([features])
         # Ensure column order matches training
-        expected_cols = model.feature_names_in_
+        expected_cols = getattr(model, "feature_names_in_", OBSERVER_FEATURE_COLUMNS)
+        missing_cols = [col for col in expected_cols if col not in features]
+        if missing_cols:
+            logger.warning(
+                "Loaded XGBoost model is incompatible with live observer features; missing %s",
+                ", ".join(missing_cols),
+            )
+            return -1.0
         for col in expected_cols:
             if col not in df.columns:
                 df[col] = 0.0
                 
         df = df[expected_cols]
-        prob = model.predict_proba(df)[0][1] # Probability of class 1
+        classes = list(model.classes_)
+        if 1 not in classes:
+            return -1.0
+        positive_class_index = classes.index(1)
+        prob = model.predict_proba(df)[0][positive_class_index]
         return float(prob)
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         return -1.0
+
+
+def predict_live_observer_probability(
+    idx,
+    signal,
+    market_data,
+    now,
+    confidence_score,
+    ai_analysis=None,
+):
+    """Return a live probability only for a compatible CSV-trained observer model."""
+    metadata = get_model_metadata() or {}
+    if metadata.get("training_source") != "trade_csv":
+        return None
+    if metadata.get("features") != list(OBSERVER_FEATURE_COLUMNS):
+        logger.warning("Live observer model feature schema does not match the current schema.")
+        return None
+
+    features = observer_features_from_market(
+        idx,
+        signal,
+        market_data,
+        now,
+        confidence_score,
+        ai_analysis=ai_analysis,
+    )
+    if features is None:
+        logger.warning("Live observer features are unavailable for signal %s.", signal)
+        return None
+
+    probability = predict_probability(features)
+    return probability if probability >= 0.0 else None

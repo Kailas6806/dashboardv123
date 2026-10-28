@@ -1,129 +1,126 @@
-import streamlit as st
-import datetime
+import io
 import os
-import json
 import pandas as pd
-import config
+import streamlit as st
+import streamlit.components.v1 as components
 
-ML_ENABLED = getattr(config, "ML_ENABLED", False)
-ML_MIN_PROBABILITY = getattr(config, "ML_MIN_PROBABILITY", 0.70)
-ML_FAIL_SAFE_BLOCK = getattr(config, "ML_FAIL_SAFE_BLOCK", False)
+from ml.model_manager import (
+    get_model,
+    get_model_metadata,
+    load_trade_csv_samples,
+    train_model,
+    MODEL_PATH,
+)
 
-from analytics.ml_db import get_training_data
-from ml.model_manager import get_model, get_model_metadata, train_model, MODEL_PATH
-from ml.historical_trainer import run_historical_training
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+LOCAL_CSV_PATH = os.path.join(ROOT_DIR, "trades_rows.csv")
+LOCAL_DASHBOARD_HTML = os.path.join(ROOT_DIR, "dashboard.html")
+
 
 def render_ml_dashboard():
-    st.markdown("<h3 style='color:#34D399;'>🤖 AI / ML FILTER (XGBOOST)</h3>", unsafe_allow_html=True)
-    st.write("XGBoost acts as a quantitative probabilistic filter to your V12 Strategy engine. It calculates the statistical probability that a trade setup will hit 1:2 Risk/Reward (₹3,000 Target) before hitting Stop Loss (₹1,500 Max Loss), taking into account both technical factors and AI Copilot quant verdicts.")
+    st.markdown(
+        "<h3 style='color:#34D399;'>🤖 XGBOOST LIVE OBSERVER & ANALYTICS</h3>",
+        unsafe_allow_html=True,
+    )
+    st.info(
+        "Evaluation only: live probabilities are displayed for confirmed signals. "
+        "XGBoost filters false breakouts and calculates quantitative win probability."
+    )
 
-    # Status Cards
-    model_loaded = get_model() is not None
-    meta = get_model_metadata() or {}
+    metadata = get_model_metadata() or {}
+    model = get_model()
+    observer_ready = bool(
+        model is not None
+        and metadata.get("training_source") == "trade_csv"
+    )
+
+    status_col, samples_col, trained_col = st.columns(3)
+    with status_col:
+        st.metric("Observer Model", "READY" if observer_ready else "NEEDS CSV TRAINING")
+    with samples_col:
+        st.metric("Closed Trade Samples", metadata.get("samples", "—"))
+    with trained_col:
+        st.metric("Last Trained", metadata.get("trained_at", "—"))
+
+    if metadata.get("training_source") == "trade_csv":
+        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
+        with metrics_col1:
+            st.metric("Chronological Holdout Accuracy", f"{metadata.get('accuracy', 0) * 100:.1f}%")
+        with metrics_col2:
+            st.metric("Precision", f"{metadata.get('precision', 0) * 100:.1f}%")
+        with metrics_col3:
+            st.metric("Validation Samples", metadata.get("test_samples", 0))
+        with metrics_col4:
+            st.metric(
+                "Historical Win Rate",
+                f"{metadata.get('win_rate', 0) * 100:.1f}%",
+            )
+        st.caption(
+            "Historical metrics calculated using 80/20 chronological holdout validation."
+        )
+
+        importance = metadata.get("feature_importances", {})
+        if importance:
+            with st.expander("Feature importances"):
+                importance_df = pd.DataFrame(
+                    list(importance.items()),
+                    columns=["Feature", "Importance"],
+                ).sort_values("Importance", ascending=False)
+                st.dataframe(importance_df, width="stretch", hide_index=True)
+
+    # ── EMBEDDED INTERACTIVE QUANT DASHBOARD ──
+    if os.path.exists(LOCAL_DASHBOARD_HTML):
+        with st.expander("📊 INTERACTIVE VISUAL ANALYTICS & THRESHOLD SIMULATOR", expanded=True):
+            st.caption("Drag the threshold slider below to simulate equity curve, win rate, and profit factor in real-time.")
+            try:
+                with open(LOCAL_DASHBOARD_HTML, "r", encoding="utf-8") as f:
+                    html_code = f.read()
+                components.html(html_code, height=880, scrolling=True)
+            except Exception as e:
+                st.warning(f"Could not load embedded dashboard: {e}")
+
+    # ── TRAINING & SYNC SECTION ──
+    st.markdown("#### Retrain or Update Model")
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("ML Filter Status", "🟢 ACTIVE" if ML_ENABLED else "🔴 DISABLED")
-    with col2:
-        st.metric("Model In Memory", "✅ LOADED" if model_loaded else "⚠️ MISSING")
-    with col3:
-        st.metric("Minimum Probability", f"{ML_MIN_PROBABILITY*100:.0f}%")
-    with col4:
-        st.metric("Fail-Safe Mode", "BLOCK" if ML_FAIL_SAFE_BLOCK else "PASS")
-        
-    st.divider()
+    col_retrain, col_status = st.columns([1, 2])
+    with col_retrain:
+        if os.path.exists(LOCAL_CSV_PATH):
+            if st.button("⚡ Quick Retrain from local trades_rows.csv", type="secondary"):
+                with st.spinner("Retraining XGBoost observer from local trades_rows.csv..."):
+                    samples = load_trade_csv_samples(LOCAL_CSV_PATH)
+                    trained, result = train_model(custom_data=samples, training_source="trade_csv")
+                    if trained:
+                        st.success(f"Retrained on {result['samples']} trades!")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed: {result.get('error')}")
 
-    # Model Performance & Metadata Card
-    if meta:
-        st.markdown("#### 📊 Production Model Metrics (Walk-Forward Validated)")
-        m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
-        with m_col1:
-            st.metric("Validation Accuracy", f"{meta.get('accuracy', 0)*100:.1f}%")
-        with m_col2:
-            st.metric("Precision", f"{meta.get('precision', 0)*100:.1f}%")
-        with m_col3:
-            st.metric("F1 Score", f"{meta.get('f1', 0):.2f}")
-        with m_col4:
-            st.metric("Training Samples", f"{meta.get('samples', 0)}")
-        with m_col5:
-            st.metric("Last Trained", str(meta.get('trained_at', 'N/A')).split(" ")[0])
+    with st.expander("Upload Custom Trade CSV"):
+        st.caption(
+            "Upload trades_rows.csv. Closed trades with positive actual P&L are labeled wins; "
+            "zero or negative P&L are labeled non-wins."
+        )
+        uploaded_file = st.file_uploader(
+            "Trade history CSV",
+            type=["csv"],
+            key="xgboost_observer_trade_csv",
+        )
 
-        # Feature Importances Expander
-        feat_imp = meta.get("feature_importances", {})
-        if feat_imp:
-            with st.expander("🔍 Top Predictive Features (XGBoost Feature Weights)", expanded=False):
-                imp_df = pd.DataFrame(list(feat_imp.items()), columns=["Feature", "Importance Weight"])
-                imp_df = imp_df.sort_values(by="Importance Weight", ascending=False).reset_index(drop=True)
-                st.dataframe(imp_df.head(10), width="stretch")
+        if uploaded_file is not None:
+            try:
+                samples = load_trade_csv_samples(io.BytesIO(uploaded_file.getvalue()))
+                wins = sum(sample["target"] for sample in samples)
+                losses = len(samples) - wins
+                st.write(f"Usable closed trades: **{len(samples)}** · Wins: **{wins}** · Losses: **{losses}**")
 
-    st.markdown("#### ⚡ Retrain Model with Historical Candles & AI Copilot")
-    st.caption("Connects to Angel One, downloads 5m candles for NIFTY & BANKNIFTY, replays your Rule Engine, evaluates setups with AI Copilot, labels 1:2 R:R outcomes, and updates `models/xgb_prod.joblib`.")
-    
-    col_opt1, col_opt2, col_opt3 = st.columns([1.5, 1.5, 2])
-    with col_opt1:
-        hist_days = st.selectbox("Replay Candle Window", [30, 60], index=1, format_func=lambda x: f"{x} Days (5m Candles)")
-    with col_opt2:
-        use_ai = st.checkbox("Include AI Copilot Intelligence", value=True, help="Queries NVIDIA / Gemini Copilot to incorporate quantitative conviction, market regime, and agreement scores into XGBoost features.")
-    with col_opt3:
-        st.write("") # Spacer
-        if st.button("🚀 Run Full Replay & Retrain XGBoost", width="stretch", type="primary"):
-            progress_bar = st.progress(0.0)
-            status_text = st.empty()
-            
-            def on_progress(msg, pct):
-                progress_bar.progress(min(1.0, max(0.0, pct)))
-                status_text.info(f"⏳ {msg}")
-
-            with st.spinner("Executing historical replay pipeline..."):
-                ok, res = run_historical_training(
-                    days=hist_days,
-                    include_ai=use_ai,
-                    max_ai_evals=20 if use_ai else 0,
-                    progress_callback=on_progress
-                )
-                if ok:
-                    progress_bar.progress(1.0)
-                    status_text.empty()
-                    st.success(f"🎉 **XGBoost Successfully Retrained!** Saved to `models/xgb_prod.joblib`. Walk-forward Accuracy: **{res.get('accuracy', 0)*100:.1f}%** across {res.get('samples', 0)} setups.")
-                    st.rerun()
-                else:
-                    status_text.empty()
-                    st.error(f"❌ Training failed: {res.get('error')}")
-
-    st.divider()
-
-    # Real-Time Live Logs Section
-    col_t1, col_t2 = st.columns(2)
-    data = get_training_data()
-    samples = len(data)
-
-    with col_t1:
-        st.markdown("#### 🧠 Live Streamlit Trades (Supabase)")
-        if samples < 50:
-            st.info(f"Currently have {samples}/50 live logged trades in Supabase. (Historical training above is fully active).")
-        else:
-            wins = sum(1 for d in data if d.get('target') == 1)
-            st.success(f"Supabase contains {samples} live samples ({wins} Wins / {samples-wins} Losses)")
-            
-    with col_t2:
-        st.markdown("#### ⚙️ Incremental Retrain")
-        if st.button("🔄 Retrain on Supabase Live Data Only"):
-            with st.spinner("Training model on Supabase Data..."):
-                success, metrics = train_model()
-                if success:
-                    st.success(f"Training Complete! Win Rate Baseline: {metrics.get('win_rate', 0)*100:.1f}% | F1: {metrics.get('f1', 0):.2f}")
-                    st.rerun()
-                else:
-                    st.error(metrics.get("error", "Unknown Error"))
-                    
-    # Log Table
-    st.markdown("#### 📡 Recent Live Predictions Log")
-    if samples == 0:
-        st.caption("No real-time predictions recorded in database yet.")
-    else:
-        df = pd.DataFrame(data)
-        if not df.empty:
-            df = df.sort_values(by="timestamp", ascending=False).head(20)
-            disp_df = df[['timestamp', 'idx', 'signal', 'strategy_score', 'xgb_probability', 'decision', 'target']]
-            disp_df['xgb_probability'] = (disp_df['xgb_probability'] * 100).round(1).astype(str) + "%"
-            st.dataframe(disp_df, width="stretch")
+                if len(samples) >= 20 and wins and losses:
+                    if st.button("Train from uploaded file", type="primary"):
+                        with st.spinner("Training model..."):
+                            trained, result = train_model(custom_data=samples, training_source="trade_csv")
+                            if trained:
+                                st.success("Observer model trained successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"Training failed: {result.get('error')}")
+            except Exception as exc:
+                st.error(f"Error reading CSV: {exc}")

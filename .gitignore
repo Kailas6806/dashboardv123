@@ -8,6 +8,8 @@ __pycache__/
 
 # Trade CSV logs
 trade_log_*.csv
+models/xgb_prod.joblib
+models/xgb_meta.json
 
 # VS Code
 .vscode/
