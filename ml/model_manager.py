@@ -270,7 +270,7 @@ def predict_live_observer_probability(
 ):
     """Return a live probability only for a compatible CSV-trained observer model."""
     metadata = get_model_metadata() or {}
-    if metadata.get("training_source") != "trade_csv":
+    if metadata.get("training_source") not in ("trade_csv", "supabase_db", "supabase"):
         return None
     if metadata.get("features") != list(OBSERVER_FEATURE_COLUMNS):
         logger.warning("Live observer model feature schema does not match the current schema.")
