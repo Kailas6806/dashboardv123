@@ -142,9 +142,11 @@ class TelegramNotifier:
         conf: str,
         score: str,
         time_str: str,
+        xgb_prob: Optional[float] = None,
     ) -> None:
         """Send a richly-formatted signal alert."""
         _e = self._escape_md
+        xgb_line = f"🤖 XGBoost Win Prob: {_e(f'{xgb_prob*100:.1f}%')}\n" if xgb_prob is not None else ""
         msg = (
             "━━━━━━━━━━━━━━━━━━\n"
             f"🟢 V12 SIGNAL — {_e(idx)}\n"
@@ -155,7 +157,8 @@ class TelegramNotifier:
             f"🔴 Stop Loss: ₹{_e(sl)}\n"
             f"🎯 Target: ₹{_e(tgt)}\n"
             f"📦 Qty: {_e(qty)} (1 Lot) | Max Loss: ₹{_e(ml)}\n"
-            f"💯 Confidence: {_e(conf)} (Score: {_e(score)}/100)\n"
+            f"💯 AI Conviction: {_e(conf)} (Score: {_e(score)}/100)\n"
+            f"{xgb_line}"
             f"⏰ {_e(time_str)}\n"
             "━━━━━━━━━━━━━━━━━━"
         )

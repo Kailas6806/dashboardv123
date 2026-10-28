@@ -785,6 +785,7 @@ def _scan_single_index(
                             qty=qty, ml=ml, tp=tp,
                             conf=final_conf, score=ai_pre_score if ai_auto_trade else conf_score,
                             time_str=now_str,
+                            xgb_prob=ml_probability,
                         )
                     except Exception as e:
                         logger.warning("Telegram alert error: %s", e)
