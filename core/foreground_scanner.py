@@ -581,34 +581,26 @@ def _scan_single_index(
         final_conf = "LOW"
 
     # 8. Confidence Score & Sideways Analysis
+    if ml_probability is None and final_signal in ("BUY CE", "BUY PE"):
+        try:
+            from ml.predict import observe_ml_signal
+            ai_cached = _scanner_state.get("ai_analyses", {}).get(idx)
+            ml_probability = observe_ml_signal(
+                idx=idx,
+                signal=final_signal,
+                md=md,
+                strategy_score=conf_score,
+                ai_analysis=ai_cached,
+            )
+        except Exception:
+            pass
     conf_score = signal_engine.compute_confidence_score(md, raw_signal, trap)
     sideways_is, sideways_strength = signal_engine.detect_sideways(
         md["spot_history"], md["pcr"]
     )
     sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
-    # 8b. Real-Time XGBoost Live Observer Evaluation
     ml_probability = None
-    if final_signal in ("BUY CE", "BUY PE"):
-        try:
-            from ml.predict import observe_ml_signal
-            ai_observation = _scanner_state.get("ai_analyses", {}).get(idx)
-            ml_probability = observe_ml_signal(
-                idx=idx,
-                signal=final_signal,
-                md=md,
-                strategy_score=conf_score,
-                ai_analysis=ai_observation,
-            )
-            if ml_probability is not None:
-                logger.info(
-                    "[%s] 🤖 XGBoost Live Observer: %s -> Win Probability: %.1f%%",
-                    idx,
-                    final_signal,
-                    ml_probability * 100,
-                )
-        except Exception as ml_err:
-            logger.debug("[%s] XGBoost observation skipped: %s", idx, ml_err)
 
     # Portfolio-wide trade checks
     portfolio_today_trades = []
@@ -681,6 +673,7 @@ def _scan_single_index(
         last_sig = _scanner_state["last_signals"].get(idx)
 
         if can_enter and final_signal != last_sig:
+            # ── 1. GEMINI AI VALIDATOR (EVALUATES FIRST) ──
             ai_conviction_ok, ai_pre_score, ai_pre_rec, ai_pre_summary, ai_analysis = _validate_ai_entry(
                 copilot=copilot,
                 idx=idx,
@@ -698,7 +691,35 @@ def _scan_single_index(
                     **ai_analysis,
                 }
             if ai_auto_trade and not ai_conviction_ok:
-                logger.info("[%s] AI blocked trade: conviction %d/%d, rec=%s", idx, ai_pre_score, AI_MIN_CONVICTION, ai_pre_rec)
+                logger.info(
+                    "[%s] ❌ Gemini AI blocked trade: conviction %d/%d, rec=%s",
+                    idx,
+                    ai_pre_score,
+                    getattr(config, "AI_MIN_CONVICTION", 60),
+                    ai_pre_rec,
+                )
+
+            # ── 2. XGBOOST EVALUATOR (EVALUATES AFTER GEMINI AI) ──
+            # Only evaluate XGBoost with the full context including Gemini AI output
+            try:
+                from ml.predict import observe_ml_signal
+                active_ai = _scanner_state.get("ai_analyses", {}).get(idx) or ai_analysis
+                ml_probability = observe_ml_signal(
+                    idx=idx,
+                    signal=final_signal,
+                    md=md,
+                    strategy_score=ai_pre_score if ai_auto_trade else conf_score,
+                    ai_analysis=active_ai,
+                )
+                if ml_probability is not None:
+                    logger.info(
+                        "[%s] 🤖 XGBoost Evaluation (Post-Gemini AI): %s -> Win Probability: %.1f%%",
+                        idx,
+                        final_signal,
+                        ml_probability * 100,
+                    )
+            except Exception as ml_err:
+                logger.debug("[%s] XGBoost post-AI observation skipped: %s", idx, ml_err)
 
             if ai_conviction_ok:
                 now_str = now_ist.strftime("%I:%M:%S %p")
