@@ -359,6 +359,7 @@ def _scan_single_index(
     min_conf_score: int,
 ) -> None:
     """Evaluate one index: option chain, signals, open trade exits, and autonomous entries."""
+    ml_probability = None
     cfg = INDEX_CONFIG[idx]
     lot = cfg["lot"]
     step = cfg["step"]
@@ -581,26 +582,12 @@ def _scan_single_index(
         final_conf = "LOW"
 
     # 8. Confidence Score & Sideways Analysis
-    if ml_probability is None and final_signal in ("BUY CE", "BUY PE"):
-        try:
-            from ml.predict import observe_ml_signal
-            ai_cached = _scanner_state.get("ai_analyses", {}).get(idx)
-            ml_probability = observe_ml_signal(
-                idx=idx,
-                signal=final_signal,
-                md=md,
-                strategy_score=conf_score,
-                ai_analysis=ai_cached,
-            )
-        except Exception:
-            pass
     conf_score = signal_engine.compute_confidence_score(md, raw_signal, trap)
     sideways_is, sideways_strength = signal_engine.detect_sideways(
         md["spot_history"], md["pcr"]
     )
     sideways_info = {"is_sideways": sideways_is, "strength": sideways_strength}
 
-    ml_probability = None
 
     # Portfolio-wide trade checks
     portfolio_today_trades = []
