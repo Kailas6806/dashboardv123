@@ -791,6 +791,8 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     "Actual P&L ₹": None, "Status": "OPEN",
                     "Result": "⏳ OPEN",
                     "Confidence Score": ai_pre_score if ai_auto_on else conf_score,
+                    "signal_score": conf_score,
+                    "signalscore": conf_score,
                 }
                 st.session_state[tlog_key].insert(0, trade_entry)
                 trade_mgr.save_log(idx, st.session_state[tlog_key])

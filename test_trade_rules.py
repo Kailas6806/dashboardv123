@@ -522,6 +522,114 @@ class TestTradeRules(unittest.TestCase):
 
         self.assertEqual(trade["Live Price"], 110.0)
 
+    def test_buy_ce_high_confidence_thresholds(self):
+        """
+        Verify BUY CE HIGH Confidence conditions:
+        - 1.20 < PCR <= 1.30
+        - Spot > Support
+        - Spot > VWAP (spot_vs_vwap == 'ABOVE')
+        - VWAP distance >= 0.10%
+        - PCR momentum in ('RISING', 'FLAT')
+        - OI Momentum Bullish
+        """
+        from core.signal_engine import SignalEngine
+        engine = SignalEngine()
+
+        base_valid = {
+            "pcr": 1.25,             # between 1.20 and 1.30
+            "spot": 24550.0,
+            "vwap_proxy": 24500.0,   # dist = +0.204% >= 0.10%
+            "support": 24400,
+            "resistance": 24700,
+            "spot_vs_vwap": "ABOVE",
+            "pcr_momentum": "RISING",
+            "oi_momentum_bullish": True,
+            "oi_momentum_bearish": False,
+            "bias": "Bullish",
+            "oi_active": True,
+        }
+
+        # Case 1: All criteria satisfied -> BUY CE HIGH
+        sig, conf, _ = engine.generate_signal(base_valid, in_window=True)
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "HIGH")
+
+        # Case 2: PCR > 1.30 (e.g. 1.35) -> Exceeds HIGH and MEDIUM max PCR (drops to LOW)
+        md_high_pcr = dict(base_valid, pcr=1.35)
+        sig, conf, _ = engine.generate_signal(md_high_pcr, in_window=True)
+        self.assertNotEqual(conf, "HIGH")
+        self.assertNotEqual(conf, "MEDIUM")
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "LOW")
+
+        # Case 3: VWAP distance < 0.10% (spot=24505, vwap=24500 -> 0.02%) -> Fails HIGH & MEDIUM VWAP dist (drops to LOW)
+        md_low_vwap_dist = dict(base_valid, spot=24505.0, vwap_proxy=24500.0)
+        sig, conf, _ = engine.generate_signal(md_low_vwap_dist, in_window=True)
+        self.assertNotEqual(conf, "HIGH")
+        self.assertNotEqual(conf, "MEDIUM")
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "LOW")
+
+        # Case 4: Valid MEDIUM (PCR = 1.18 between 1.15 and 1.20, VWAP dist = 0.20% >= 0.10%)
+        md_med = dict(base_valid, pcr=1.18)
+        sig, conf, _ = engine.generate_signal(md_med, in_window=True)
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "MEDIUM")
+
+        # Case 5: Valid MEDIUM when OI momentum not confirmed (PCR = 1.25, bearish OI momentum)
+        md_med_unconfirmed = dict(base_valid, pcr=1.25, oi_momentum_bullish=False, oi_momentum_bearish=True)
+        sig, conf, _ = engine.generate_signal(md_med_unconfirmed, in_window=True)
+        self.assertEqual(sig, "BUY CE")
+        self.assertEqual(conf, "MEDIUM")
+
+    def test_buy_pe_confidence_thresholds(self):
+        """
+        Verify BUY PE HIGH & MEDIUM confidence VWAP distance threshold (>= 0.10%):
+        - Spot must be at least 0.10% below VWAP
+        """
+        from core.signal_engine import SignalEngine
+        engine = SignalEngine()
+
+        base_pe_valid = {
+            "pcr": 0.75,             # < 0.80 for HIGH
+            "spot": 24950.0,
+            "vwap_proxy": 25000.0,   # dist = (25000-24950)/25000*100 = 0.20% >= 0.10%
+            "support": 24700,
+            "resistance": 25100,
+            "spot_vs_vwap": "BELOW",
+            "pcr_momentum": "FALLING",
+            "oi_momentum_bullish": False,
+            "oi_momentum_bearish": True,
+            "bias": "Bearish",
+            "oi_active": True,
+        }
+
+        # Case 1: Valid HIGH BUY PE (dist = 0.20% >= 0.10%)
+        sig, conf, _ = engine.generate_signal(base_pe_valid, in_window=True)
+        self.assertEqual(sig, "BUY PE")
+        self.assertEqual(conf, "HIGH")
+
+        # Case 2: Insufficient VWAP distance for HIGH (spot=24995, vwap=25000 -> 0.02% < 0.10%) -> Drops to LOW
+        md_low_dist_pe = dict(base_pe_valid, spot=24995.0, vwap_proxy=25000.0)
+        sig, conf, _ = engine.generate_signal(md_low_dist_pe, in_window=True)
+        self.assertNotEqual(conf, "HIGH")
+        self.assertNotEqual(conf, "MEDIUM")
+        self.assertEqual(sig, "BUY PE")
+        self.assertEqual(conf, "LOW")
+
+        # Case 3: Valid MEDIUM BUY PE (pcr=0.82 < 0.85, dist = 0.20% >= 0.10%)
+        md_med_pe = dict(base_pe_valid, pcr=0.82)
+        sig, conf, _ = engine.generate_signal(md_med_pe, in_window=True)
+        self.assertEqual(sig, "BUY PE")
+        self.assertEqual(conf, "MEDIUM")
+
+        # Case 4: Insufficient VWAP distance for MEDIUM (spot=24995, vwap=25000 -> 0.02% < 0.10%) -> Drops to LOW
+        md_med_low_dist = dict(base_pe_valid, pcr=0.82, spot=24995.0, vwap_proxy=25000.0)
+        sig, conf, _ = engine.generate_signal(md_med_low_dist, in_window=True)
+        self.assertNotEqual(conf, "MEDIUM")
+        self.assertEqual(sig, "BUY PE")
+        self.assertEqual(conf, "LOW")
+
     def test_15m_trend_filter(self):
         """
         Verify that 15m trend filter does not block counter-trend trades when disabled:
@@ -532,8 +640,9 @@ class TestTradeRules(unittest.TestCase):
         engine = SignalEngine()
 
         md_base = {
-            "pcr": 1.35,
+            "pcr": 1.25,
             "spot": 24550.0,
+            "vwap_proxy": 24500.0,
             "support": 24400,
             "resistance": 24700,
             "spot_vs_vwap": "ABOVE",

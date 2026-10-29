@@ -23,6 +23,14 @@ from config import (
     CONF_WEIGHT_SR_PROX,
     CONF_PENALTY_TRAP,
     USE_15M_TREND_FILTER,
+    BUY_CE_HIGH_PCR_MIN,
+    BUY_CE_HIGH_PCR_MAX,
+    BUY_CE_HIGH_VWAP_DIST_PCT,
+    BUY_CE_MED_PCR_MIN,
+    BUY_CE_MED_PCR_MAX,
+    BUY_CE_MED_VWAP_DIST_PCT,
+    BUY_PE_HIGH_VWAP_DIST_PCT,
+    BUY_PE_MED_VWAP_DIST_PCT,
 )
 
 try:
@@ -264,6 +272,8 @@ class SignalEngine:
         bias = market_data["bias"]
         oi_active = market_data["oi_active"]
         trend_15m = market_data.get("trend_15m", "NEUTRAL")
+        vwap_proxy = float(market_data.get("vwap_proxy") or 0.0)
+        vwap_dist_pct = (abs(spot - vwap_proxy) / vwap_proxy * 100.0) if vwap_proxy > 0 else 0.0
 
         # ── SIGNAL LOGIC (Fixed & Improved) ──
         # Primary logic: PCR + spot position relative to support/resistance + VWAP
@@ -274,18 +284,29 @@ class SignalEngine:
         elif not oi_active:
             filter_reason="📉 No OI data — market closed?"
         else:
-            # HIGH confidence: PCR + VWAP + OI momentum all align
-            if (pcr > 1.2 and spot > support and spot_vs_vwap == "ABOVE"
-                    and pcr_momentum in ("RISING", "FLAT") and oi_momentum_bullish):
+            # HIGH confidence: PCR (1.20 < PCR <= 1.30) + VWAP (dist >= 0.10%) + OI momentum all align
+            if (BUY_CE_HIGH_PCR_MIN < pcr <= BUY_CE_HIGH_PCR_MAX
+                    and spot > support
+                    and spot_vs_vwap == "ABOVE"
+                    and vwap_dist_pct >= BUY_CE_HIGH_VWAP_DIST_PCT
+                    and pcr_momentum in ("RISING", "FLAT")
+                    and oi_momentum_bullish):
                 signal="BUY CE"; confidence="HIGH"
+            # HIGH confidence: PCR + VWAP (dist >= 0.10%) + OI momentum all align
             elif (pcr < 0.8 and spot < resistance and spot_vs_vwap == "BELOW"
+                    and vwap_dist_pct >= BUY_PE_HIGH_VWAP_DIST_PCT
                     and pcr_momentum in ("FALLING", "FLAT") and oi_momentum_bearish):
                 signal="BUY PE"; confidence="HIGH"
 
-            # MEDIUM confidence: PCR + VWAP align (even if OI momentum not confirmed)
-            elif pcr > 1.15 and spot > support and spot_vs_vwap == "ABOVE":
+            # MEDIUM confidence: PCR (1.15 < PCR <= 1.30) + VWAP (dist >= 0.10%) align
+            elif (BUY_CE_MED_PCR_MIN < pcr <= BUY_CE_MED_PCR_MAX
+                    and spot > support
+                    and spot_vs_vwap == "ABOVE"
+                    and vwap_dist_pct >= BUY_CE_MED_VWAP_DIST_PCT):
                 signal="BUY CE"; confidence="MEDIUM"
-            elif pcr < 0.85 and spot < resistance and spot_vs_vwap == "BELOW":
+            # MEDIUM confidence: PCR + VWAP (dist >= 0.10%) align
+            elif (pcr < 0.85 and spot < resistance and spot_vs_vwap == "BELOW"
+                    and vwap_dist_pct >= BUY_PE_MED_VWAP_DIST_PCT):
                 signal="BUY PE"; confidence="MEDIUM"
 
             # LOW confidence: pure PCR signal

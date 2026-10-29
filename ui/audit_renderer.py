@@ -15,7 +15,7 @@ try:
 except ImportError:
     INDEX_CONFIG = {}
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-    AI_MIN_CONVICTION = 60
+    AI_MIN_CONVICTION = 65
 
 
 def render_audit_tab(auditor: Any = None, fetcher: Any = None, copilot: Any = None) -> None:

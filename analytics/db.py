@@ -106,6 +106,8 @@ class TradeDB:
                 )
                 cursor.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS xgboost_score REAL")
                 cursor.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS xgboostscore INTEGER")
+                cursor.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS signal_score INTEGER")
+                cursor.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS signalscore INTEGER")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(trade_date)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
@@ -408,6 +410,27 @@ class TradeDB:
                 if (xgb_score is not None and xgb_score <= 1.0)
                 else (int(round(xgb_score)) if xgb_score is not None else None)
             )
+            sig_score = self._safe_int(
+                trade.get("signal_score")
+                if trade.get("signal_score") is not None
+                else (
+                    trade.get("signalscore")
+                    if trade.get("signalscore") is not None
+                    else (
+                        meta_d.get("signal_score")
+                        if isinstance(meta_d, dict) and meta_d.get("signal_score") is not None
+                        else (
+                            meta_d.get("signalscore")
+                            if isinstance(meta_d, dict) and meta_d.get("signalscore") is not None
+                            else (
+                                meta_d.get("conf_score")
+                                if isinstance(meta_d, dict) and meta_d.get("conf_score") is not None
+                                else (conf if not ai_gen else None)
+                            )
+                        )
+                    )
+                )
+            )
             meta_json = json.dumps(meta_d, cls=NpEncoder) if meta_d else "{}"
 
             conn = self._get_connection()
@@ -428,10 +451,10 @@ class TradeDB:
                         spot, strike, entry_price, live_price, exit_price, stop_loss, target,
                         quantity, max_loss, target_pnl, actual_pnl, status, result,
                         confidence_score, ai_generated, ai_conviction, ai_reasoning,
-                        xgboost_score, xgboostscore,
+                        xgboost_score, xgboostscore, signal_score, signalscore,
                         metadata_json, created_at, updated_at
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT(trade_id) DO UPDATE SET
                         exit_time = COALESCE(EXCLUDED.exit_time, trades.exit_time),
@@ -445,12 +468,14 @@ class TradeDB:
                         result = EXCLUDED.result,
                         xgboost_score = COALESCE(EXCLUDED.xgboost_score, trades.xgboost_score),
                         xgboostscore = COALESCE(EXCLUDED.xgboostscore, trades.xgboostscore),
+                        signal_score = COALESCE(EXCLUDED.signal_score, trades.signal_score),
+                        signalscore = COALESCE(EXCLUDED.signalscore, trades.signalscore),
                         updated_at = EXCLUDED.updated_at
                 """, (
                     trade_id, raw_date, entry_time, trade.get("Exit Time") or trade.get("exit_time"),
                     idx, signal, spot, strike, ep, lp, xp, sl, tgt, qty, ml, tp, pnl,
                     status, result, conf, ai_gen, ai_conv, ai_reason,
-                    xgb_score, xgb_score_int, meta_json,
+                    xgb_score, xgb_score_int, sig_score, sig_score, meta_json,
                     created_at, updated_at
                 ))
                 conn.commit()
@@ -728,6 +753,8 @@ class TradeDB:
                         "_ai_conviction": t["ai_conviction"],
                         "_ai_reasoning": t["ai_reasoning"],
                         "xgboost_score": t.get("xgboost_score"),
+                        "signal_score": t.get("signal_score"),
+                        "signalscore": t.get("signalscore"),
                         "xgboostscore": t.get("xgboostscore"),
                         "ml_probability": t.get("xgboost_score"),
                         "recorded_at": t["created_at"],

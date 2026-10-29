@@ -30,7 +30,7 @@ IST = getattr(config, "IST", datetime.timezone(datetime.timedelta(hours=5, minut
 MIN_ENTRY_PRICE = getattr(config, "MIN_ENTRY_PRICE", 5.0)
 NO_NEW_TRADE_TIME = getattr(config, "NO_NEW_TRADE_TIME", datetime.time(15, 15))
 MAX_DAILY_TRADES = getattr(config, "MAX_DAILY_TRADES", 30)
-AI_MIN_CONVICTION = getattr(config, "AI_MIN_CONVICTION", 60)
+AI_MIN_CONVICTION = getattr(config, "AI_MIN_CONVICTION", 65)
 INDEX_CONFIG = getattr(config, "INDEX_CONFIG", {})
 is_expiry_day = getattr(config, "is_expiry_day", lambda idx, dt=None: False)
 
@@ -301,7 +301,7 @@ ANALYSIS RULES:
 5. VWAP Proximity Tolerance:
    - If spot is within ±0.15% (marginal range of ~10-15 points) of VWAP and institutional flow strongly aligns with the direction, treat this as a high-probability breakout or continuation opportunity rather than a hard barrier.
 6. Conviction Scoring:
-   - Do NOT rigidly anchor or clamp conviction to the technical Rule Score alone. The technical score is only one factor. If institutional OI accumulation, PCR trajectory, and risk-reward are favorable, assign a decisive conviction score (>= 60-80) reflecting institutional backing.
+   - Do NOT rigidly anchor or clamp conviction to the technical Rule Score alone. The technical score is only one factor. If institutional OI accumulation, PCR trajectory, and risk-reward are favorable, assign a decisive conviction score (>= 65-80) reflecting institutional backing.
 7. Setup Filter & Capital Protection:
    - Authorize actionable setups (EXECUTE_BUY_CE or EXECUTE_BUY_PE) when institutional flow is clearly one-sided and aligns with the signal, structuring a tight stop loss.
    - Only return "AVOID_WAIT" / NO_TRADE if the market is dead sideways with flat OI deltas and PCR ~ 1.0, or if institutional order flow directly opposes the signal (e.g. heavy Call writing during a buy signal).
@@ -489,8 +489,8 @@ OUTPUT (strict JSON):
 }}
 
 DECISION RULE:
-- Score >= 60: BUY CE (bullish) or BUY PE (bearish)
-- Score 30-59: WAIT (mixed signals)
+- Score >= 65: BUY CE (bullish) or BUY PE (bearish)
+- Score 30-64: WAIT (mixed signals)
 - Score < 30: WAIT (no clear edge)'''
 
         import time as _t

@@ -682,7 +682,7 @@ def _scan_single_index(
                     "[%s] ❌ Gemini AI blocked trade: conviction %d/%d, rec=%s",
                     idx,
                     ai_pre_score,
-                    getattr(config, "AI_MIN_CONVICTION", 60),
+                    getattr(config, "AI_MIN_CONVICTION", 65),
                     ai_pre_rec,
                 )
 
@@ -729,6 +729,8 @@ def _scan_single_index(
                     "Status": "OPEN",
                     "Result": "⏳ OPEN",
                     "Confidence Score": ai_pre_score if ai_auto_trade else conf_score,
+                    "signal_score": conf_score,
+                    "signalscore": conf_score,
                     "_ai_generated": ai_auto_trade,
                     "_ai_conviction": ai_pre_score,
                     "_ai_reasoning": ai_pre_summary,

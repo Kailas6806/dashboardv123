@@ -55,6 +55,18 @@ SIDEWAYS_PCR_LOW        = 0.85    # PCR below this + above high = sideways
 SIDEWAYS_PCR_HIGH      = 1.15
 SIDEWAYS_SPOT_STDEV_PCT = 0.001  # 0.1% stdev threshold for strong sideways
 
+# ── BUY CE CONFIDENCE THRESHOLDS ──
+BUY_CE_HIGH_PCR_MIN       = 1.20   # Minimum PCR for HIGH confidence BUY CE
+BUY_CE_HIGH_PCR_MAX       = 1.30   # Maximum PCR for HIGH confidence BUY CE (PCR <= 1.30)
+BUY_CE_HIGH_VWAP_DIST_PCT = 0.10   # Minimum spot % above VWAP for HIGH confidence BUY CE (>= 0.10%)
+BUY_CE_MED_PCR_MIN        = 1.15   # Minimum PCR for MEDIUM confidence BUY CE
+BUY_CE_MED_PCR_MAX        = 1.30   # Maximum PCR for MEDIUM confidence BUY CE (PCR <= 1.30)
+BUY_CE_MED_VWAP_DIST_PCT  = 0.10   # Minimum spot % above VWAP for MEDIUM confidence BUY CE (>= 0.10%)
+
+# ── BUY PE CONFIDENCE THRESHOLDS ──
+BUY_PE_HIGH_VWAP_DIST_PCT = 0.10   # Minimum spot % below VWAP for HIGH confidence BUY PE (>= 0.10%)
+BUY_PE_MED_VWAP_DIST_PCT  = 0.10   # Minimum spot % below VWAP for MEDIUM confidence BUY PE (>= 0.10%)
+
 # ── VWAP ──
 VWAP_HISTORY_SIZE = 50           # spot readings for volume-weighted VWAP proxy
 
@@ -149,7 +161,7 @@ except Exception:
 NVIDIA_BASE_URL         = "https://integrate.api.nvidia.com/v1"
 NVIDIA_MODEL            = "meta/llama-3.2-11b-vision-instruct"
 AI_AUTO_TRADE_DEFAULT   = True
-AI_MIN_CONVICTION       = 60   # Minimum conviction score (0-100) to recommend/execute trade
+AI_MIN_CONVICTION       = 65   # Minimum conviction score (0-100) to recommend/execute trade
 
 # ── GEMINI AI FALLBACK ──
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")

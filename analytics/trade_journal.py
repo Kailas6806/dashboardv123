@@ -26,7 +26,7 @@ class TradeJournal:
         "Entry Price", "Live Price", "Exit Price",
         "Stop Loss", "Target", "Qty", "Max Loss ₹", "Target P&L ₹",
         "Actual P&L ₹", "Status", "Result", "Confidence Score",
-        "xgboost_score", "xgboostscore",
+        "xgboost_score", "xgboostscore", "signal_score", "signalscore",
     ]
 
     def __init__(self, journal_path: Optional[str] = None) -> None:
@@ -196,6 +196,28 @@ class TradeJournal:
                 if (entry["xgboost_score"] is not None and entry["xgboost_score"] <= 1.0)
                 else (int(round(entry["xgboost_score"])) if entry["xgboost_score"] is not None else None)
             )
+            entry["signal_score"] = (
+                trade.get("signal_score")
+                if trade.get("signal_score") is not None
+                else (
+                    trade.get("signalscore")
+                    if trade.get("signalscore") is not None
+                    else (
+                        ai_metadata.get("signal_score")
+                        if ai_metadata.get("signal_score") is not None
+                        else (
+                            ai_metadata.get("signalscore")
+                            if ai_metadata.get("signalscore") is not None
+                            else (
+                                ai_metadata.get("conf_score")
+                                if ai_metadata.get("conf_score") is not None
+                                else (trade.get("Confidence Score") if not entry.get("_ai_generated") else None)
+                            )
+                        )
+                    )
+                )
+            )
+            entry["signalscore"] = entry["signal_score"]
             entry["recorded_at"] = now.isoformat()
 
             if require_no_open:
