@@ -416,14 +416,14 @@ class SignalEngine:
         S/R proximity         : 0-10   (how close spot is to S/R)
         Trap penalty          : -10    (if trap detected)
         """
-        pcr = market_data["pcr"]
-        spot = market_data["spot"]
-        vwap_proxy = market_data["vwap_proxy"]
-        total_ce_delta = market_data["total_ce_delta"]
-        total_pe_delta = market_data["total_pe_delta"]
-        pcr_momentum = market_data["pcr_momentum"]
-        support = market_data["support"]
-        resistance = market_data["resistance"]
+        pcr = float(market_data.get("pcr", 1.0))
+        spot = float(market_data.get("spot", 0.0))
+        vwap_proxy = float(market_data.get("vwap_proxy") or market_data.get("vwap") or spot)
+        total_ce_delta = float(market_data.get("total_ce_delta") if market_data.get("total_ce_delta") is not None else market_data.get("oi_delta_ce", 0.0))
+        total_pe_delta = float(market_data.get("total_pe_delta") if market_data.get("total_pe_delta") is not None else market_data.get("oi_delta_pe", 0.0))
+        pcr_momentum = str(market_data.get("pcr_momentum", "FLAT"))
+        support = float(market_data.get("support", spot - 50 if spot else 0.0))
+        resistance = float(market_data.get("resistance", spot + 50 if spot else 0.0))
 
         score = 0
 

@@ -217,7 +217,23 @@ class TradeJournal:
                     )
                 )
             )
+            if entry["signal_score"] is None:
+                try:
+                    from core.signal_engine import SignalEngine
+                    se = SignalEngine()
+                    entry["signal_score"] = se.compute_confidence_score(ai_metadata or trade, entry.get("Signal"), ai_metadata.get("trap", "NONE") if ai_metadata else "NONE")
+                except Exception:
+                    entry["signal_score"] = trade.get("Confidence Score") or ai_metadata.get("confidence_score")
             entry["signalscore"] = entry["signal_score"]
+
+            if signal_metadata is not None:
+                signal_metadata["signal_score"] = entry["signal_score"]
+                signal_metadata["signalscore"] = entry["signal_score"]
+                signal_metadata["conf_score"] = entry["signal_score"]
+            entry["signal_metadata"]["signal_score"] = entry["signal_score"]
+            entry["signal_metadata"]["signalscore"] = entry["signal_score"]
+            entry["signal_metadata"]["conf_score"] = entry["signal_score"]
+
             entry["recorded_at"] = now.isoformat()
 
             if require_no_open:
@@ -225,7 +241,7 @@ class TradeJournal:
                     logger.error("Cannot atomically record %s without an available trade database", idx)
                     return ""
                 try:
-                    trade_id = self.db.upsert_trade(entry, signal_metadata, reject_if_open=True)
+                    trade_id = self.db.upsert_trade(entry, entry["signal_metadata"], reject_if_open=True)
                 except Exception as e:
                     logger.error("Atomic open-position check failed for %s: %s", idx, e)
                     raise
@@ -239,7 +255,7 @@ class TradeJournal:
             self._save()
             if self.db and not require_no_open:
                 try:
-                    self.db.upsert_trade(entry, signal_metadata)
+                    self.db.upsert_trade(entry, entry["signal_metadata"])
                 except Exception as e:
                     logger.warning("TradeDB upsert error: %s", e)
             logger.info("Recorded trade %s", trade_id)

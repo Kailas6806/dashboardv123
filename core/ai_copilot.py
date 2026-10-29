@@ -743,6 +743,14 @@ DECISION RULE:
         if recorded_conviction is None:
             recorded_conviction = ai_conviction
 
+        rule_score = md.get("conf_score")
+        if rule_score is None:
+            try:
+                from core.signal_engine import SignalEngine
+                rule_score = SignalEngine().compute_confidence_score(md, signal_type, md.get("trap", "NONE"))
+            except Exception:
+                rule_score = recorded_conviction
+
         # 4. Construct Trade Entry
         trade_entry = {
             "Entry Time": now_str,
@@ -763,6 +771,8 @@ DECISION RULE:
             "Status": "OPEN",
             "Result": "⏳ OPEN",
             "Confidence Score": recorded_conviction,
+            "signal_score": rule_score,
+            "signalscore": rule_score,
             "_ai_generated": True,
             "_ai_conviction": recorded_conviction,
             "_ai_reasoning": recorded_reasoning,
@@ -786,6 +796,9 @@ DECISION RULE:
                         "oi_delta_ce": md.get("total_ce_delta"),
                         "oi_delta_pe": md.get("total_pe_delta"),
                         "confidence_score": recorded_conviction,
+                        "signal_score": rule_score,
+                        "signalscore": rule_score,
+                        "conf_score": rule_score,
                         "pcr_momentum": md.get("pcr_momentum"),
                         "ai_generated": True,
                         **ai_metadata,

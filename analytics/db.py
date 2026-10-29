@@ -431,6 +431,22 @@ class TradeDB:
                     )
                 )
             )
+            if sig_score is None and meta_d:
+                try:
+                    from core.signal_engine import SignalEngine
+                    se = SignalEngine()
+                    sig_score = se.compute_confidence_score(meta_d, signal, meta_d.get("trap", "NONE"))
+                except Exception:
+                    sig_score = None
+            if sig_score is None:
+                sig_score = conf
+
+            if isinstance(meta_d, dict):
+                meta_d["signal_score"] = sig_score
+                meta_d["signalscore"] = sig_score
+                if "conf_score" not in meta_d:
+                    meta_d["conf_score"] = sig_score
+
             meta_json = json.dumps(meta_d, cls=NpEncoder) if meta_d else "{}"
 
             conn = self._get_connection()
