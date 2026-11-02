@@ -476,12 +476,20 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
 
         observer_probability = md.get('ml_probability')
         if observer_probability is None:
+            atm_row = md.get("atm_row", {})
+            ce_p = round(float(atm_row.get("CE LTP", 0)), 2) if isinstance(atm_row, dict) else 0.0
+            pe_p = round(float(atm_row.get("PE LTP", 0)), 2) if isinstance(atm_row, dict) else 0.0
+            ep_ui = ce_p if final_signal == "BUY CE" else pe_p
+            sl_ui = round(ep_ui * 0.85, 2)
             observer_probability = observe_ml_signal(
                 idx,
                 final_signal,
                 md,
                 conf_score,
                 ai_analysis=ai_observation,
+                entry_price=ep_ui,
+                stop_loss=sl_ui,
+                buffer_state=updated_buf,
             )
         if observer_probability is None:
             st.caption(

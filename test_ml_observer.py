@@ -1,140 +1,167 @@
-"""Tests for the XGBoost evaluation-only trade observer."""
-import io
+"""Tests for the XGBoost 11-feature evaluation-only trade observer."""
 import json
 import os
 import unittest
-from unittest.mock import patch
-
-os.environ.setdefault(
-    "SUPABASE_URI",
-    "******db.pooler.supabase.com:5432/test",
-)
-
+import datetime
+import numpy as np
 import pandas as pd
 
 from ml.feature_engineering import (
-    OBSERVER_FEATURE_COLUMNS,
-    observer_features_from_market,
-    observer_features_from_trade,
+    FEATURES,
+    DROP_COLUMNS,
+    build,
+    build_live_features,
 )
-from ml.model_manager import load_trade_csv_samples, predict_live_observer_probability
+from ml.model_manager import (
+    train_model,
+    predict_probability,
+    predict_live_observer_probability,
+    get_model_metadata,
+)
 from ml.predict import observe_ml_signal
 
 
 class TestMlObserver(unittest.TestCase):
-    def test_csv_loader_excludes_open_and_unlabeled_rows(self):
-        closed_trade = {
-            "status": "CLOSED",
-            "actual_pnl": "125.50",
-            "instrument": "NIFTY",
-            "signal": "BUY CE",
-            "spot": 22000,
-            "strike": 22000,
-            "entry_price": 100,
-            "created_at": "2026-10-15T10:00:00+05:30",
-            "metadata_json": json.dumps({"pcr": 1.1}),
-        }
-        open_trade = {**closed_trade, "status": "OPEN", "actual_pnl": ""}
-        missing_pnl_trade = {**closed_trade, "actual_pnl": ""}
-        csv_content = pd.DataFrame(
-            [closed_trade, open_trade, missing_pnl_trade]
-        ).to_csv(index=False)
+    def setUp(self):
+        self.sample_rows = [
+            {
+                "trade_id": "T1",
+                "trade_date": "2026-10-15",
+                "entry_time": "10:00:00 AM",
+                "instrument": "NIFTY",
+                "signal": "BUY CE",
+                "spot": 22000.0,
+                "strike": 22050.0,
+                "entry_price": 100.0,
+                "stop_loss": 85.0,
+                "target": 130.0,
+                "actual_pnl": 1500.0,
+                "status": "CLOSED",
+                "metadata_json": json.dumps({
+                    "pcr": 1.2,
+                    "vwap": 21980.0,
+                    "oi_delta_ce": 10000.0,
+                    "oi_delta_pe": 25000.0,
+                    "pcr_momentum": "RISING",
+                    "buffer_state": ["BUY CE", "BUY CE"],
+                }),
+            },
+            {
+                "trade_id": "T2",
+                "trade_date": "2026-10-16",
+                "entry_time": "11:30:00 AM",
+                "instrument": "BANKNIFTY",
+                "signal": "BUY PE",
+                "spot": 48000.0,
+                "strike": 47900.0,
+                "entry_price": 250.0,
+                "stop_loss": 220.0,
+                "target": 310.0,
+                "actual_pnl": -750.0,
+                "status": "CLOSED",
+                "metadata_json": json.dumps({
+                    "pcr": 0.8,
+                    "vwap": 48050.0,
+                    "oi_delta_ce": 30000.0,
+                    "oi_delta_pe": 10000.0,
+                    "pcr_momentum": "FALLING",
+                    "buffer_state": ["SIDEWAYS", "BUY PE"],
+                }),
+            },
+        ]
 
-        samples = load_trade_csv_samples(io.StringIO(csv_content))
+    def test_build_extracts_11_features_and_no_leakage(self):
+        df = pd.DataFrame(self.sample_rows)
+        X = build(df)
+        self.assertEqual(list(FEATURES), list(X.columns))
+        self.assertEqual(11, len(X.columns))
+        # Leakage check: no DROP_COLUMNS in X
+        leaked = set(X.columns) & set(DROP_COLUMNS)
+        self.assertEqual(set(), leaked)
 
-        self.assertEqual(1, len(samples))
-        self.assertEqual(1, samples[0]["target"])
-        self.assertEqual(list(OBSERVER_FEATURE_COLUMNS), list(samples[0]["features"]))
+    def test_live_features_match_batch_features(self):
+        row = self.sample_rows[0]
+        meta = json.loads(row["metadata_json"])
+        dt = datetime.datetime(2026, 10, 15, 10, 0, 0)
 
-    def test_historical_and_live_features_share_one_schema(self):
-        timestamp = "2026-10-15T10:00:00+05:30"
-        metadata = {
-            "pcr": 1.1,
-            "vwap": 21990,
-            "oi_delta_ce": 120,
-            "oi_delta_pe": 240,
-            "pcr_momentum": "RISING",
-            "trap": "NONE",
-            "recommendation": "EXECUTE_BUY_CE",
-            "market_bias": "BULLISH",
-        }
-        trade = {
-            "instrument": "NIFTY",
-            "signal": "BUY CE",
-            "spot": 22000,
-            "strike": 22000,
-            "entry_price": 100,
-            "confidence_score": 70,
-            "ai_generated": 1,
-            "ai_conviction": 80,
-            "created_at": timestamp,
-            "metadata_json": json.dumps(metadata),
-        }
-        live_market = {
-            "spot": 22000,
-            "atm_actual": 22000,
-            "atm_row": pd.Series({"CE LTP": 100, "PE LTP": 90}),
-            "pcr": 1.1,
-            "vwap_proxy": 21990,
-            "total_ce_delta": 120,
-            "total_pe_delta": 240,
-            "pcr_momentum": "RISING",
-            "trap": "NONE",
-        }
-        ai_analysis = {
-            "provider": "Gemini",
-            "conviction_score": 80,
-            "recommendation": "EXECUTE_BUY_CE",
-            "market_bias": "BULLISH",
-        }
-        now = pd.Timestamp(timestamp).to_pydatetime()
-
-        historical_features = observer_features_from_trade(trade)
-        live_features = observer_features_from_market(
-            "NIFTY",
-            "BUY CE",
-            live_market,
-            now,
-            70,
-            ai_analysis=ai_analysis,
+        live_f = build_live_features(
+            signal=row["signal"],
+            entry_price=row["entry_price"],
+            stop_loss=row["stop_loss"],
+            spot=row["spot"],
+            strike=row["strike"],
+            now=dt,
+            vwap=meta["vwap"],
+            pcr=meta["pcr"],
+            oi_delta_ce=meta["oi_delta_ce"],
+            oi_delta_pe=meta["oi_delta_pe"],
+            pcr_momentum=meta["pcr_momentum"],
+            buffer_state=meta["buffer_state"],
         )
 
-        self.assertEqual(list(OBSERVER_FEATURE_COLUMNS), list(historical_features))
-        self.assertEqual(list(OBSERVER_FEATURE_COLUMNS), list(live_features))
-        self.assertEqual(historical_features, live_features)
+        df = pd.DataFrame([row])
+        batch_f = build(df).iloc[0].to_dict()
 
-    def test_live_probability_is_returned_without_threshold_decision(self):
-        metadata = {
-            "training_source": "trade_csv",
-            "features": list(OBSERVER_FEATURE_COLUMNS),
+        for k in FEATURES:
+            self.assertAlmostEqual(live_f[k], batch_f[k], places=4, msg=f"Mismatch on {k}")
+
+    def test_model_training_and_live_inference(self):
+        # Generate 24 synthetic rows across 3 days to test LeaveOneGroupOut CV
+        rows = []
+        for i in range(24):
+            day = 15 + (i % 3)
+            is_win = (i % 2 == 0)
+            rows.append({
+                "trade_id": f"T{i}",
+                "trade_date": f"2026-10-{day}",
+                "entry_time": f"10:{i:02d}:00 AM",
+                "instrument": "NIFTY",
+                "signal": "BUY CE" if is_win else "BUY PE",
+                "spot": 22000.0 + i * 10,
+                "strike": 22000.0,
+                "entry_price": 100.0,
+                "stop_loss": 85.0,
+                "target": 130.0,
+                "actual_pnl": 500.0 if is_win else -300.0,
+                "status": "CLOSED",
+                "metadata_json": json.dumps({
+                    "pcr": 1.2 if is_win else 0.8,
+                    "vwap": 21950.0,
+                    "oi_delta_ce": 5000.0,
+                    "oi_delta_pe": 15000.0,
+                    "pcr_momentum": "RISING" if is_win else "FALLING",
+                    "buffer_state": ["BUY CE"] if is_win else ["SIDEWAYS"],
+                }),
+            })
+
+        df = pd.DataFrame(rows)
+        success, metrics = train_model(custom_data=df, training_source="trade_csv")
+        self.assertTrue(success)
+        self.assertIn("oof_auc", metrics)
+        self.assertIn("break_even_threshold", metrics)
+        self.assertEqual(list(FEATURES), metrics["features"])
+
+        # Test live observer prediction
+        market_data = {
+            "spot": 22050.0,
+            "atm_actual": 22000.0,
+            "vwap_proxy": 21950.0,
+            "pcr": 1.25,
+            "total_ce_delta": 4000.0,
+            "total_pe_delta": 18000.0,
+            "pcr_momentum": "RISING",
         }
-        with (
-            patch("ml.model_manager.get_model_metadata", return_value=metadata),
-            patch(
-                "ml.model_manager.observer_features_from_market",
-                return_value={column: 0.0 for column in OBSERVER_FEATURE_COLUMNS},
-            ),
-            patch("ml.model_manager.predict_probability", return_value=0.12),
-        ):
-            probability = predict_live_observer_probability(
-                "NIFTY", "BUY CE", {}, pd.Timestamp.now().to_pydatetime(), 50
-            )
-
-        self.assertEqual(0.12, probability)
-
-    def test_observer_wrapper_never_returns_a_trade_decision(self):
-        with patch("ml.predict.predict_live_observer_probability", return_value=0.12):
-            probability = observe_ml_signal("NIFTY", "BUY CE", {}, 50)
-
-        self.assertEqual(0.12, probability)
-
-    def test_live_prediction_rejects_non_csv_models(self):
-        with patch("ml.model_manager.get_model_metadata", return_value={"training_source": "supabase"}):
-            probability = predict_live_observer_probability(
-                "NIFTY", "BUY CE", {}, pd.Timestamp.now().to_pydatetime(), 50
-            )
-
-        self.assertIsNone(probability)
+        prob = observe_ml_signal(
+            idx="NIFTY",
+            signal="BUY CE",
+            md=market_data,
+            strategy_score=75.0,
+            entry_price=105.0,
+            stop_loss=90.0,
+            buffer_state=["BUY CE", "BUY CE"],
+        )
+        self.assertIsNotNone(prob)
+        self.assertTrue(0.0 <= prob <= 1.0)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,22 @@
+"""
+V12 PRO MAX — XGBoost Model Manager.
+
+Trains with Leave-One-Day-Out CV, evaluates AUC / Brier / break-even,
+and serves live win-probability predictions using 11 direction-aware features.
+"""
 import os
+import json
+import datetime
+import numpy as np
 import pandas as pd
 import joblib
 from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from analytics.ml_db import get_training_data
-from ml.feature_engineering import (
-    OBSERVER_FEATURE_COLUMNS,
-    observer_features_from_market,
-    observer_features_from_trade,
+from sklearn.model_selection import LeaveOneGroupOut
+from sklearn.metrics import (
+    roc_auc_score, brier_score_loss,
+    accuracy_score, precision_score, recall_score, f1_score,
 )
+from ml.feature_engineering import FEATURES, PARAMS, build, build_live_features
 from utils.logger import get_logger
 
 logger = get_logger("ml_manager")
@@ -18,275 +26,311 @@ MODELS_DIR = os.path.join(ROOT_DIR, "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "xgb_prod.joblib")
 META_PATH = os.path.join(MODELS_DIR, "xgb_meta.json")
 
-
-def load_trade_csv_samples(source):
-    """Load closed trade rows as labeled observer-only model samples."""
-    df = pd.read_csv(source)
-    required = {"status", "actual_pnl"}
-    missing = required.difference(df.columns)
-    if missing:
-        raise ValueError(f"Trade CSV is missing required columns: {', '.join(sorted(missing))}")
-
-    df = df.copy()
-    df["_actual_pnl"] = pd.to_numeric(df["actual_pnl"], errors="coerce")
-    df = df[
-        df["status"].astype(str).str.strip().str.upper().eq("CLOSED")
-        & df["_actual_pnl"].notna()
-    ]
-    if "created_at" in df.columns:
-        df["_sort_time"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-        df = df.sort_values("_sort_time", kind="stable", na_position="last")
-
-    samples = []
-    for row in df.to_dict("records"):
-        features = observer_features_from_trade(row)
-        if features is None:
-            continue
-        samples.append({
-            "idx": row.get("instrument"),
-            "dt": row.get("created_at") or row.get("trade_date") or "",
-            "features": features,
-            "target": int(row["_actual_pnl"] > 0),
-        })
-    return samples
+_cached_model = None
 
 
-def load_supabase_trade_samples():
-    """Load closed trade records directly from Supabase PostgreSQL database."""
-    try:
-        from analytics.db import TradeDB
-        db = TradeDB()
-        trades = db.get_all_trades(status="CLOSED")
-        if not trades:
-            logger.warning("No closed trades returned from Supabase.")
-            return []
-
-        sorted_trades = sorted(
-            trades,
-            key=lambda t: str(t.get("created_at") or t.get("Entry Time") or t.get("trade_date") or ""),
-        )
-
-        samples = []
-        for t in sorted_trades:
-            pnl = t.get("Actual P&L ₹", t.get("actual_pnl"))
-            if pnl is None:
-                continue
-            try:
-                pnl_val = float(pnl)
-            except (ValueError, TypeError):
-                continue
-            feats = observer_features_from_trade(t)
-            if feats:
-                samples.append({
-                    "idx": t.get("instrument") or t.get("Index"),
-                    "dt": str(t.get("created_at") or t.get("Entry Time") or t.get("trade_date") or ""),
-                    "features": feats,
-                    "target": int(pnl_val > 0),
-                })
-        logger.info("Loaded %d closed trade samples from Supabase database.", len(samples))
-        return samples
-    except Exception as exc:
-        logger.error(f"Failed to fetch trade samples from Supabase: {exc}")
-        return []
-
-
+# ── Metadata ──────────────────────────────────────────────────────────────────
 def get_model_metadata():
     """Returns metadata about the currently trained model."""
     if os.path.exists(META_PATH):
         try:
-            import json
             with open(META_PATH, "r") as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Failed to load model metadata: {e}")
+            logger.error("Failed to load model metadata: %s", e)
     return None
 
+
+# ── Data loading ──────────────────────────────────────────────────────────────
+def _load_supabase_dataframe() -> pd.DataFrame:
+    """Fetch all closed trades directly from Supabase PostgreSQL as a DataFrame."""
+    try:
+        from analytics.db import TradeDB
+        from psycopg2.extras import RealDictCursor
+        db = TradeDB()
+        conn = db._get_connection()
+        if not conn:
+            logger.warning("No connection to Supabase database.")
+            return pd.DataFrame()
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT * FROM trades WHERE status = %s AND actual_pnl IS NOT NULL ORDER BY trade_date ASC, entry_time ASC",
+                ("CLOSED",),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                logger.warning("No closed trades returned from Supabase trades table.")
+                return pd.DataFrame()
+            df = pd.DataFrame(rows)
+            for col in ("entry_price", "stop_loss", "strike", "spot", "actual_pnl"):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            df = df[df.actual_pnl.notna()].reset_index(drop=True)
+            logger.info("Loaded %d closed trades directly from Supabase PostgreSQL.", len(df))
+            return df
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.error("Failed to fetch trades from Supabase PostgreSQL: %s", exc)
+        return pd.DataFrame()
+
+
+def load_trade_csv_samples(source):
+    """Backward-compat wrapper: load CSV and return list of {features, target} dicts."""
+    df = pd.read_csv(source)
+    df["actual_pnl"] = pd.to_numeric(df.get("actual_pnl"), errors="coerce")
+    df = df[df.actual_pnl.notna()].reset_index(drop=True)
+    if df.empty:
+        return []
+    try:
+        X = build(df)
+    except Exception:
+        return []
+    y = (df.actual_pnl > 0).astype(int)
+    samples = []
+    for i in range(len(df)):
+        samples.append({"features": X.iloc[i].to_dict(), "target": int(y.iloc[i])})
+    return samples
+
+
+# ── Training ──────────────────────────────────────────────────────────────────
 def train_model(custom_data=None, training_source="supabase"):
     """
-    Trains XGBoost using a chronological 80/20 holdout validation.
-    Accepts custom_data (list of dicts or DataFrame with 'features' and 'target')
-    or fetches from Supabase.
+    Train XGBoost using Leave-One-Day-Out CV with 11 direction-aware features.
+
+    custom_data: DataFrame, CSV file path (str), or None (fetches from Supabase).
+    Returns: (success: bool, metrics: dict)
     """
     global _cached_model
-    import datetime
-    import json
-    
+
+    # 1. Load data
     if custom_data is not None:
-        if isinstance(custom_data, pd.DataFrame):
+        if isinstance(custom_data, str):
+            df = pd.read_csv(custom_data)
+        elif isinstance(custom_data, pd.DataFrame):
             df = custom_data.copy()
         else:
             df = pd.DataFrame(custom_data)
     else:
-        # Default: Directly fetch closed trades from Supabase Database
-        samples = load_supabase_trade_samples()
-        if len(samples) >= 20:
-            df = pd.DataFrame(samples)
+        df = _load_supabase_dataframe()
+        if len(df) >= 20:
             training_source = "supabase_db"
         else:
-            # Fallback to ml_predictions if trade table is empty
-            data = get_training_data()
-            if len(data) >= 20:
-                df = pd.DataFrame(data)
-                training_source = "supabase_predictions"
-            else:
-                logger.warning(f"Not enough training data in Supabase. Got {len(samples)} closed trades.")
-                return False, {"error": f"Insufficient data in Supabase ({len(samples)} closed trades, minimum 20 required)"}
+            # Fallback: try legacy ml_predictions table
+            try:
+                from analytics.ml_db import get_training_data
+                data = get_training_data()
+                if len(data) >= 20:
+                    df = pd.DataFrame(data)
+                    training_source = "supabase_predictions"
+                else:
+                    return False, {
+                        "error": f"Insufficient data ({len(df)} closed trades, minimum 20 required)"
+                    }
+            except Exception:
+                return False, {
+                    "error": f"Insufficient data ({len(df)} closed trades, minimum 20 required)"
+                }
 
-    if 'features' in df.columns:
-        features_df = pd.json_normalize(df['features'])
-    else:
-        # Features might be direct columns except 'target'
-        features_df = df.drop(columns=[c for c in ['target', 'idx', 'signal', 'timestamp', 'id', 'dt'] if c in df.columns])
+    # Ensure numeric actual_pnl and filter
+    if "actual_pnl" in df.columns:
+        df["actual_pnl"] = pd.to_numeric(df["actual_pnl"], errors="coerce")
+        df = df[df.actual_pnl.notna()].reset_index(drop=True)
 
-    X = features_df
-    y = df['target'].astype(int)
+    if len(df) < 20:
+        return False, {"error": f"Insufficient samples ({len(df)}, minimum 20 required)"}
 
-    if len(X) < 20:
-        return False, {"error": f"Insufficient samples ({len(X)} samples, minimum 20 required)"}
+    # 2. Build features
+    try:
+        X = build(df)
+    except Exception as e:
+        logger.error("Feature build failed: %s", e, exc_info=True)
+        return False, {"error": f"Feature engineering failed: {e}"}
 
-    if training_source in ("trade_csv", "supabase_db"):
-        X = X.reindex(columns=OBSERVER_FEATURE_COLUMNS, fill_value=0.0)
-    X = X.apply(pd.to_numeric, errors="coerce")
-    X = X.replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
-    y = y.astype(int)
-    if y.nunique() != 2:
+    y = (df.actual_pnl > 0).astype(int).values
+
+    if len(np.unique(y)) != 2:
         return False, {"error": "Training requires both winning and losing trade samples."}
 
-    # Train test split (chronological Walk-Forward)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    if y_train.nunique() != 2:
-        return False, {"error": "Chronological training split must contain both outcome classes."}
+    # Handle NaN/Inf in features
+    X = X.apply(pd.to_numeric, errors="coerce")
+    X = X.replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
 
-    # Optimized conservative XGBoost
-    model = XGBClassifier(
-        n_estimators=100,
-        max_depth=3,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        n_jobs=1,
-        tree_method='hist'
-    )
+    # 3. Leave-One-Day-Out CV
+    days = df.trade_date.values if "trade_date" in df.columns else np.arange(len(df))
+    unique_days = len(np.unique(days))
 
-    model.fit(X_train, y_train)
+    oof = np.full(len(y), 0.5)  # default 0.5 for un-evaluated folds
+    cv_method = "leave_one_day_out"
 
-    # Evaluate
-    y_pred = model.predict(X_test)
-    # Calculate feature importances
-    feat_names = list(X.columns)
-    importances = model.feature_importances_.tolist()
-    feat_imp = sorted(zip(feat_names, importances), key=lambda x: x[1], reverse=True)
-    feat_imp_dict = {k: round(v, 4) for k, v in feat_imp}
+    if unique_days >= 3:
+        for tr, te in LeaveOneGroupOut().split(X, y, days):
+            # Skip fold if training set has only one class
+            if len(np.unique(y[tr])) < 2:
+                continue
+            clf = XGBClassifier(**PARAMS).fit(X.iloc[tr], y[tr])
+            oof[te] = clf.predict_proba(X.iloc[te])[:, 1]
+        oof_auc = float(roc_auc_score(y, oof))
+        oof_brier = float(brier_score_loss(y, oof))
+    else:
+        # Fallback: 80/20 chronological split if too few days
+        cv_method = "chronological_80_20"
+        split = int(len(X) * 0.8)
+        X_tr, X_te = X.iloc[:split], X.iloc[split:]
+        y_tr, y_te = y[:split], y[split:]
+        if len(np.unique(y_tr)) >= 2 and len(X_te) > 0:
+            clf = XGBClassifier(**PARAMS).fit(X_tr, y_tr)
+            oof[split:] = clf.predict_proba(X_te)[:, 1]
+            oof_auc = float(roc_auc_score(y_te, oof[split:])) if len(np.unique(y_te)) == 2 else 0.5
+            oof_brier = float(brier_score_loss(y_te, oof[split:]))
+        else:
+            oof_auc = 0.5
+            oof_brier = 0.25
+
+    # 4. Break-even analysis
+    wins_pnl = df.actual_pnl[df.actual_pnl > 0]
+    losses_pnl = df.actual_pnl[df.actual_pnl <= 0]
+    avg_win = float(wins_pnl.mean()) if len(wins_pnl) > 0 else 0
+    avg_loss = float(-losses_pnl.mean()) if len(losses_pnl) > 0 else 0
+    break_even = avg_loss / (avg_win + avg_loss) if (avg_win + avg_loss) > 0 else 0.5
+
+    # Threshold analysis
+    threshold_analysis = {}
+    for thr in (break_even, 0.45, 0.50):
+        mask = oof >= thr
+        if mask.sum() > 0:
+            threshold_analysis[f"p>={thr:.2f}"] = {
+                "trades": int(mask.sum()),
+                "pnl": float(df.actual_pnl[mask].sum()),
+                "win_rate": float(y[mask].mean()),
+                "avg_pnl": float(df.actual_pnl[mask].mean()),
+            }
+
+    # 5. Train final model on ALL data
+    final_model = XGBClassifier(**PARAMS).fit(X, y)
+
+    # Feature importances
+    imp = pd.Series(final_model.feature_importances_, index=FEATURES).sort_values(ascending=False)
+    feat_imp_dict = {k: round(float(v), 4) for k, v in imp.items()}
+
+    # Hard classification metrics from OOF predictions
+    y_pred_oof = (oof >= 0.5).astype(int)
 
     metrics = {
-        "accuracy": float(accuracy_score(y_test, y_pred)),
-        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
-        "f1": float(f1_score(y_test, y_pred, zero_division=0)),
+        "oof_auc": oof_auc,
+        "oof_brier": oof_brier,
+        "accuracy": float(accuracy_score(y, y_pred_oof)),
+        "precision": float(precision_score(y, y_pred_oof, zero_division=0)),
+        "recall": float(recall_score(y, y_pred_oof, zero_division=0)),
+        "f1": float(f1_score(y, y_pred_oof, zero_division=0)),
         "samples": int(len(df)),
-        "train_samples": int(len(X_train)),
-        "test_samples": int(len(X_test)),
         "win_rate": float(y.mean()),
-        "training_source": training_source,
         "positive_samples": int(y.sum()),
         "negative_samples": int(len(y) - y.sum()),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "break_even_threshold": round(break_even, 3),
+        "threshold_analysis": threshold_analysis,
+        "training_source": training_source,
         "trained_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "features": feat_names,
-        "feature_importances": feat_imp_dict
+        "features": list(FEATURES),
+        "feature_importances": feat_imp_dict,
+        "cv_method": cv_method,
     }
 
-    if not os.path.exists(MODELS_DIR):
-        os.makedirs(MODELS_DIR)
-
-    joblib.dump(model, MODEL_PATH, compress=3)
-    _cached_model = model
+    # 6. Save
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    joblib.dump(final_model, MODEL_PATH, compress=3)
+    _cached_model = final_model
 
     with open(META_PATH, "w") as f:
         json.dump(metrics, f, indent=2)
 
-    logger.info(f"Model trained and saved. Metrics: {metrics}")
+    logger.info(
+        "Model trained. AUC=%.3f Brier=%.3f Break-even=%.1f%%",
+        oof_auc, oof_brier, break_even * 100,
+    )
     return True, metrics
 
-_cached_model = None
 
+# ── Inference ─────────────────────────────────────────────────────────────────
 def get_model():
-    """Loads the production model with caching for performance."""
+    """Load the production model with caching."""
     global _cached_model
     if _cached_model is not None:
         return _cached_model
-        
     if os.path.exists(MODEL_PATH):
         try:
             _cached_model = joblib.load(MODEL_PATH)
             return _cached_model
         except Exception as e:
-            logger.error(f"Failed to load ML model: {e}")
+            logger.error("Failed to load ML model: %s", e)
             return None
     return None
 
+
 def predict_probability(features: dict) -> float:
-    """Predicts the probability of success for a given feature dictionary."""
+    """Predict win probability from a feature dictionary (11 features)."""
     model = get_model()
     if model is None:
-        return -1.0  # Indicates model unavailable
-        
+        return -1.0
+
     try:
         df = pd.DataFrame([features])
-        # Ensure column order matches training
-        expected_cols = getattr(model, "feature_names_in_", OBSERVER_FEATURE_COLUMNS)
-        missing_cols = [col for col in expected_cols if col not in features]
-        if missing_cols:
-            logger.warning(
-                "Loaded XGBoost model is incompatible with live observer features; missing %s",
-                ", ".join(missing_cols),
-            )
-            return -1.0
-        for col in expected_cols:
+        # Ensure correct column order
+        for col in FEATURES:
             if col not in df.columns:
                 df[col] = 0.0
-                
-        df = df[expected_cols]
+        df = df[FEATURES]
+        df = df.apply(pd.to_numeric, errors="coerce")
+        df = df.replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
+
         classes = list(model.classes_)
         if 1 not in classes:
             return -1.0
-        positive_class_index = classes.index(1)
-        prob = model.predict_proba(df)[0][positive_class_index]
+        pos_idx = classes.index(1)
+        prob = model.predict_proba(df)[0][pos_idx]
         return float(prob)
     except Exception as e:
-        logger.error(f"Prediction failed: {e}")
+        logger.error("Prediction failed: %s", e)
         return -1.0
 
 
 def predict_live_observer_probability(
-    idx,
-    signal,
-    market_data,
-    now,
-    confidence_score,
+    idx, signal, market_data, now, confidence_score,
+    entry_price=None, stop_loss=None, buffer_state=None,
     ai_analysis=None,
 ):
-    """Return a live probability only for a compatible CSV-trained observer model."""
+    """Return live win probability using the 11-feature observer model."""
     metadata = get_model_metadata() or {}
-    if metadata.get("training_source") not in ("trade_csv", "supabase_db", "supabase"):
-        return None
-    if metadata.get("features") != list(OBSERVER_FEATURE_COLUMNS):
-        logger.warning("Live observer model feature schema does not match the current schema.")
+    if metadata.get("features") != list(FEATURES):
+        # Model was trained with a different feature schema
+        if metadata.get("features"):
+            logger.debug("Model feature schema mismatch: expected %s", FEATURES)
         return None
 
-    features = observer_features_from_market(
-        idx,
-        signal,
-        market_data,
-        now,
-        confidence_score,
-        ai_analysis=ai_analysis,
-    )
-    if features is None:
-        logger.warning("Live observer features are unavailable for signal %s.", signal)
+    if signal not in ("BUY CE", "BUY PE"):
         return None
+    if entry_price is None or stop_loss is None:
+        logger.debug("Cannot compute XGBoost features: missing entry_price or stop_loss")
+        return None
+
+    spot = market_data.get("spot", 0)
+    features = build_live_features(
+        signal=signal,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        spot=spot,
+        strike=market_data.get("atm_actual", 0),
+        now=now,
+        vwap=market_data.get("vwap_proxy", 0),
+        pcr=market_data.get("pcr", 1.0),
+        oi_delta_ce=market_data.get("total_ce_delta", 0),
+        oi_delta_pe=market_data.get("total_pe_delta", 0),
+        pcr_momentum=market_data.get("pcr_momentum", ""),
+        buffer_state=buffer_state,
+    )
 
     probability = predict_probability(features)
     return probability if probability >= 0.0 else None

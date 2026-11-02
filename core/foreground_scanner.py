@@ -697,7 +697,11 @@ def _scan_single_index(
                     md=md,
                     strategy_score=ai_pre_score if ai_auto_trade else conf_score,
                     ai_analysis=active_ai,
+                    entry_price=ep,
+                    stop_loss=sl_p,
+                    buffer_state=updated_buf,
                 )
+                md["ml_probability"] = ml_probability
                 if ml_probability is not None:
                     logger.info(
                         "[%s] 🤖 XGBoost Evaluation (Post-Gemini AI): %s -> Win Probability: %.1f%%",
