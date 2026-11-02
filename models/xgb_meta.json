@@ -1,0 +1,64 @@
+{
+  "oof_auc": 0.6288159111933395,
+  "oof_brier": 0.2327465821770548,
+  "accuracy": 0.6394849785407726,
+  "precision": 0.5555555555555556,
+  "recall": 0.43478260869565216,
+  "f1": 0.4878048780487805,
+  "samples": 233,
+  "win_rate": 0.3948497854077253,
+  "positive_samples": 92,
+  "negative_samples": 141,
+  "avg_win": 1275.2472826086957,
+  "avg_loss": 780.3705673758865,
+  "break_even_threshold": 0.38,
+  "threshold_analysis": {
+    "p>=0.38": {
+      "trades": 112,
+      "pnl": 40993.25,
+      "win_rate": 0.48214285714285715,
+      "avg_pnl": 366.0111607142857
+    },
+    "p>=0.45": {
+      "trades": 85,
+      "pnl": 40592.25,
+      "win_rate": 0.5058823529411764,
+      "avg_pnl": 477.5558823529412
+    },
+    "p>=0.50": {
+      "trades": 72,
+      "pnl": 42285.75,
+      "win_rate": 0.5555555555555556,
+      "avg_pnl": 587.3020833333334
+    }
+  },
+  "training_source": "supabase_db",
+  "trained_at": "2026-11-02 11:20:59",
+  "features": [
+    "sl_pct",
+    "strike_off",
+    "hour",
+    "vwap_dist_abs",
+    "vwap_dist_dir",
+    "pcr_dir",
+    "oi_imb_dir",
+    "oi_pe",
+    "oi_ce",
+    "mom_dir",
+    "sideways"
+  ],
+  "feature_importances": {
+    "sl_pct": 0.182,
+    "strike_off": 0.1059,
+    "hour": 0.0948,
+    "vwap_dist_abs": 0.086,
+    "oi_imb_dir": 0.0833,
+    "vwap_dist_dir": 0.0832,
+    "mom_dir": 0.0814,
+    "oi_pe": 0.0811,
+    "sideways": 0.0766,
+    "pcr_dir": 0.0653,
+    "oi_ce": 0.0605
+  },
+  "cv_method": "leave_one_day_out"
+}
