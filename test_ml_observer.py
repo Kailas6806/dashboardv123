@@ -1,4 +1,4 @@
-"""Tests for the XGBoost 11-feature evaluation-only trade observer."""
+"""Tests for the XGBoost 10-feature evaluation-only trade observer."""
 import json
 import os
 import unittest
@@ -70,11 +70,11 @@ class TestMlObserver(unittest.TestCase):
             },
         ]
 
-    def test_build_extracts_11_features_and_no_leakage(self):
+    def test_build_extracts_10_features_and_no_leakage(self):
         df = pd.DataFrame(self.sample_rows)
         X = build(df)
         self.assertEqual(list(FEATURES), list(X.columns))
-        self.assertEqual(11, len(X.columns))
+        self.assertEqual(10, len(X.columns))
         # Leakage check: no DROP_COLUMNS in X
         leaked = set(X.columns) & set(DROP_COLUMNS)
         self.assertEqual(set(), leaked)

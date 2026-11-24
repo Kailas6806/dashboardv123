@@ -1,41 +1,40 @@
 {
-  "oof_auc": 0.6291847784641195,
-  "oof_brier": 0.23307735589759693,
-  "accuracy": 0.6153846153846154,
-  "precision": 0.5211267605633803,
-  "recall": 0.3978494623655914,
-  "f1": 0.45121951219512196,
-  "samples": 234,
-  "win_rate": 0.3974358974358974,
-  "positive_samples": 93,
-  "negative_samples": 141,
-  "avg_win": 1268.6639784946237,
-  "avg_loss": 780.3705673758865,
-  "break_even_threshold": 0.381,
+  "oof_auc": 0.458890290037831,
+  "oof_brier": 0.2612760291611921,
+  "accuracy": 0.5425867507886435,
+  "precision": 0.3333333333333333,
+  "recall": 0.1885245901639344,
+  "f1": 0.24083769633507854,
+  "samples": 317,
+  "win_rate": 0.38485804416403785,
+  "positive_samples": 122,
+  "negative_samples": 195,
+  "avg_win": 1283.7909836065573,
+  "avg_loss": 800.0,
+  "break_even_threshold": 0.384,
   "threshold_analysis": {
     "p>=0.38": {
-      "trades": 109,
-      "pnl": 44338.75,
-      "win_rate": 0.48623853211009177,
-      "avg_pnl": 406.7775229357798
+      "trades": 157,
+      "pnl": -6317.0,
+      "win_rate": 0.3503184713375796,
+      "avg_pnl": -40.23566878980892
     },
     "p>=0.45": {
-      "trades": 90,
-      "pnl": 40798.25,
-      "win_rate": 0.5111111111111111,
-      "avg_pnl": 453.31388888888887
+      "trades": 103,
+      "pnl": -11320.25,
+      "win_rate": 0.33980582524271846,
+      "avg_pnl": -109.90533980582525
     },
     "p>=0.50": {
-      "trades": 71,
-      "pnl": 39169.75,
-      "win_rate": 0.5211267605633803,
-      "avg_pnl": 551.6866197183099
+      "trades": 69,
+      "pnl": -14907.75,
+      "win_rate": 0.3333333333333333,
+      "avg_pnl": -216.05434782608697
     }
   },
   "training_source": "supabase_db",
-  "trained_at": "2026-11-02 11:32:07",
+  "trained_at": "2026-11-24 21:12:44",
   "features": [
-    "sl_pct",
     "strike_off",
     "hour",
     "vwap_dist_abs",
@@ -48,17 +47,16 @@
     "sideways"
   ],
   "feature_importances": {
-    "sl_pct": 0.1919,
-    "strike_off": 0.1059,
-    "hour": 0.0981,
-    "oi_imb_dir": 0.0874,
-    "vwap_dist_abs": 0.085,
-    "pcr_dir": 0.0847,
-    "vwap_dist_dir": 0.0818,
-    "oi_pe": 0.075,
-    "sideways": 0.0724,
-    "mom_dir": 0.0625,
-    "oi_ce": 0.0553
+    "strike_off": 0.1241,
+    "vwap_dist_abs": 0.1148,
+    "vwap_dist_dir": 0.1114,
+    "hour": 0.1092,
+    "sideways": 0.1025,
+    "oi_imb_dir": 0.0977,
+    "oi_ce": 0.092,
+    "pcr_dir": 0.0904,
+    "oi_pe": 0.083,
+    "mom_dir": 0.0748
   },
   "cv_method": "leave_one_day_out"
 }

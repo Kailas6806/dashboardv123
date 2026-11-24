@@ -33,7 +33,7 @@ def render_ml_dashboard():
 
     status_col, samples_col, trained_col = st.columns(3)
     with status_col:
-        st.metric("Observer Model", "READY (11 Features)" if observer_ready else "NEEDS TRAINING")
+        st.metric("Observer Model", "READY (10 Features)" if observer_ready else "NEEDS TRAINING")
     with samples_col:
         st.metric("Closed Trade Samples", metadata.get("samples", "—"))
     with trained_col:
@@ -112,7 +112,7 @@ def render_ml_dashboard():
         with st.expander("Train from Local trades_rows.csv"):
             st.caption(f"Found local file `{LOCAL_CSV_PATH}`")
             if st.button("Train from trades_rows.csv", key="btn_train_local_csv"):
-                with st.spinner("Training 11-feature XGBoost on local trades_rows.csv..."):
+                with st.spinner("Training 10-feature XGBoost on local trades_rows.csv..."):
                     trained, result = train_model(custom_data=LOCAL_CSV_PATH, training_source="trade_csv")
                     if trained:
                         st.success(

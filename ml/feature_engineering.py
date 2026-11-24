@@ -1,7 +1,7 @@
 """
 V12 PRO MAX — Feature Engineering for XGBoost Win Probability Model.
 
-Production pipeline (11 direction-aware, normalized features):
+Production pipeline (10 direction-aware, normalized features):
   build(df)                  – batch feature extraction from trade DataFrame
   build_live_features(...)   – single-row feature extraction for live prediction
 
@@ -16,9 +16,8 @@ import pandas as pd
 from config import IST
 
 
-# ── 11 PRODUCTION FEATURES (all known at entry time) ──────────────────────────
+# ── 10 PRODUCTION FEATURES (all known at entry time) ──────────────────────────
 FEATURES = [
-    "sl_pct",          # |entry - stop| / entry premium * 100
     "strike_off",      # |strike - spot| / spot * 100
     "hour",            # entry time as decimal hour
     "vwap_dist_abs",   # |spot - vwap| / vwap * 100
@@ -36,7 +35,7 @@ DROP_COLUMNS = [
     "exit_time", "exit_price", "live_price", "actual_pnl", "result", "status",
     "updated_at", "live_price_updated_at",
     # derived from other columns
-    "target_pnl", "max_loss", "target", "stop_loss", "entry_price", "quantity",
+    "target_pnl", "max_loss", "target", "stop_loss", "sl_pct", "entry_price", "quantity",  # stop/target are trailed after entry -> leak
     "spot", "strike", "entry_time",
     # duplicates
     "xgboostscore", "signalscore", "confidence_score",
@@ -84,7 +83,7 @@ def _safe_json(val):
 
 # ── BATCH FEATURE BUILDER (training from CSV / Supabase DataFrame) ────────────
 def build(df: pd.DataFrame) -> pd.DataFrame:
-    """Build 11 direction-aware features from a trade-history DataFrame.
+    """Build 10 direction-aware features from a trade-history DataFrame.
 
     Expects columns: signal, entry_price, stop_loss, strike, spot,
     trade_date, entry_time, metadata_json (str or dict with pcr, vwap,
@@ -99,8 +98,7 @@ def build(df: pd.DataFrame) -> pd.DataFrame:
     tot = (m.oi_delta_pe.abs() + m.oi_delta_ce.abs()).replace(0, np.nan)
 
     X = pd.DataFrame(index=df.index)
-    X["sl_pct"] = (df.entry_price - df.stop_loss).abs() / df.entry_price * 100
-    X["strike_off"] = (df.strike - df.spot).abs() / df.spot * 100
+    X["strike_off"] = (df.strike.astype(float) - df.spot.astype(float)).abs() / df.spot.astype(float) * 100
     X["hour"] = et.dt.hour + et.dt.minute / 60
     X["vwap_dist_dir"] = sg * (df.spot - m.vwap) / m.vwap * 100
     X["vwap_dist_abs"] = X.vwap_dist_dir.abs()
@@ -131,7 +129,7 @@ def build_live_features(
     pcr_momentum: str,
     buffer_state,
 ) -> dict:
-    """Build the same 11 features from live market data for a single trade setup."""
+    """Build the same 10 features from live market data for a single trade setup."""
     sg = 1 if "CE" in str(signal).upper() else -1
     entry_price = float(entry_price or 0)
     stop_loss = float(stop_loss or 0)

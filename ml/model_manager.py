@@ -2,7 +2,7 @@
 V12 PRO MAX — XGBoost Model Manager.
 
 Trains with Leave-One-Day-Out CV, evaluates AUC / Brier / break-even,
-and serves live win-probability predictions using 11 direction-aware features.
+and serves live win-probability predictions using 10 direction-aware features.
 """
 import os
 import json
@@ -97,7 +97,7 @@ def load_trade_csv_samples(source):
 # ── Training ──────────────────────────────────────────────────────────────────
 def train_model(custom_data=None, training_source="supabase"):
     """
-    Train XGBoost using Leave-One-Day-Out CV with 11 direction-aware features.
+    Train XGBoost using Leave-One-Day-Out CV with 10 direction-aware features.
 
     custom_data: DataFrame, CSV file path (str), or None (fetches from Supabase).
     Returns: (success: bool, metrics: dict)
@@ -271,7 +271,7 @@ def get_model():
 
 
 def predict_probability(features: dict) -> float:
-    """Predict win probability from a feature dictionary (11 features)."""
+    """Predict win probability from a feature dictionary (10 features)."""
     model = get_model()
     if model is None:
         return -1.0
@@ -302,7 +302,7 @@ def predict_live_observer_probability(
     entry_price=None, stop_loss=None, buffer_state=None,
     ai_analysis=None,
 ):
-    """Return live win probability using the 11-feature observer model."""
+    """Return live win probability using the 10-feature observer model."""
     metadata = get_model_metadata() or {}
     if metadata.get("features") != list(FEATURES):
         # Model was trained with a different feature schema
@@ -311,9 +311,6 @@ def predict_live_observer_probability(
         return None
 
     if signal not in ("BUY CE", "BUY PE"):
-        return None
-    if entry_price is None or stop_loss is None:
-        logger.debug("Cannot compute XGBoost features: missing entry_price or stop_loss")
         return None
 
     spot = market_data.get("spot", 0)
