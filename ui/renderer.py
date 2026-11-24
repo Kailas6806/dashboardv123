@@ -948,7 +948,7 @@ def render_index(idx, fetcher, signal_engine, risk_mgr, trade_mgr, journal, copi
                     st.session_state[sk(idx, "signal_buffer")] = []
                     st.session_state[sk(idx, "last_signal")] = "WAIT"
                     trade_mgr.save_log(idx, st.session_state[tlog_key])
-                    journal.update_trade(ot.get("_journal_id", ""), {
+                    journal.update_trade(ot.get("trade_id") or ot.get("_journal_id", ""), {
                         "Exit Time": ot.get("Exit Time"),
                         "Exit Price": ot.get("Exit Price"),
                         "Actual P&L ₹": ot.get("Actual P&L ₹"),
@@ -1323,7 +1323,7 @@ def render_open_trades_tab(trade_mgr, fetcher, bg_engine=None):
                             journal = st.session_state.get("_journal")
                             if journal:
                                 journal.update_trade(
-                                    t.get("_journal_id", ""),
+                                    t.get("trade_id") or t.get("_journal_id", ""),
                                     {
                                         "Exit Time": t.get("Exit Time"),
                                         "Exit Price": t.get("Exit Price"),

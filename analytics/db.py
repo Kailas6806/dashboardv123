@@ -43,6 +43,17 @@ import os
 if not SUPABASE_URI:
     SUPABASE_URI = os.environ.get("SUPABASE_URI", "").strip()
 
+if not SUPABASE_URI:
+    try:
+        import tomllib
+        secrets_path = os.path.join(BASE_DIR, ".streamlit", "secrets.toml")
+        if os.path.exists(secrets_path):
+            with open(secrets_path, "rb") as f:
+                sec = tomllib.load(f)
+                SUPABASE_URI = str(sec.get("SUPABASE_URI", "")).strip()
+    except Exception:
+        pass
+
 if not SUPABASE_URI or "pooler.supabase.com" not in SUPABASE_URI:
     raise ValueError(
         "CRITICAL ERROR: Valid SUPABASE_URI (IPv4 pooler) not found in Streamlit Secrets! "
@@ -541,8 +552,23 @@ class TradeDB:
                     """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, trade_id))
                     updated_trade = cursor.fetchone()
 
-                # Fallback: Match by instrument, strike, signal and entry_time if trade_dict provided
-                if not updated_trade and not trade_id and trade_dict:
+                # Fallback: Match by trade_dict (by ID or by instrument, strike, signal, entry_time)
+                if not updated_trade and trade_dict:
+                    dict_tid = str(trade_dict.get("trade_id") or trade_dict.get("_journal_id") or "")
+                    if dict_tid and dict_tid != trade_id:
+                        cursor.execute("""
+                            UPDATE trades SET
+                                exit_time = COALESCE(%s, exit_time),
+                                exit_price = COALESCE(%s, exit_price),
+                                live_price = COALESCE(%s, live_price),
+                                actual_pnl = COALESCE(%s, actual_pnl),
+                                status = %s,
+                                result = %s,
+                                updated_at = %s
+                            WHERE trade_id = %s AND status = 'OPEN'
+                            RETURNING trade_id
+                        """, (exit_time, exit_price, exit_price, actual_pnl, status, result, now_ist, dict_tid))
+                        updated_trade = cursor.fetchone()
                     idx = str(trade_dict.get("Index") or trade_dict.get("instrument") or "").upper()
                     strike = self._safe_float(trade_dict.get("Strike") or trade_dict.get("strike"))
                     etime = trade_dict.get("Entry Time")
@@ -746,6 +772,7 @@ class TradeDB:
                     # Convert to V12 LOG_COLS standard format
                     trade_dict = {
                         "trade_id": t["trade_id"],
+                        "_journal_id": t["trade_id"],
                         "Entry Time": t["entry_time"],
                         "Exit Time": t["exit_time"],
                         "Index": t["instrument"],

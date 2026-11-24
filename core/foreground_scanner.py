@@ -524,7 +524,7 @@ def _scan_single_index(
             stop_changed = trade.get("Stop Loss") != old_stop
         if stop_changed and journal and hasattr(journal, "update_trade_stop_loss"):
             journal.update_trade_stop_loss(
-                trade.get("_journal_id", ""),
+                trade.get("trade_id") or trade.get("_journal_id", ""),
                 float(trade.get("Stop Loss") or 0),
                 trade,
             )
@@ -542,7 +542,7 @@ def _scan_single_index(
             if journal:
                 try:
                     journal.update_trade(
-                        trade.get("_journal_id", ""),
+                        trade.get("trade_id") or trade.get("_journal_id", ""),
                         {
                             "Exit Time": trade.get("Exit Time"),
                             "Exit Price": trade.get("Exit Price"),

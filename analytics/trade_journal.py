@@ -278,6 +278,8 @@ class TradeJournal:
         self._lock.acquire()
         try:
             self._load()
+            if not trade_id and trade_dict:
+                trade_id = str(trade_dict.get("trade_id") or trade_dict.get("_journal_id") or "")
             # Try finding by trade_id first
             if trade_id:
                 for entry in self.trades:
@@ -362,6 +364,8 @@ class TradeJournal:
         """Persist a trailing stop update without marking the trade as closed."""
         with self._lock:
             self._load()
+            if not trade_id and trade_dict:
+                trade_id = str(trade_dict.get("trade_id") or trade_dict.get("_journal_id") or "")
             matched = None
             for entry in self.trades:
                 if trade_id and entry.get("trade_id") == trade_id:

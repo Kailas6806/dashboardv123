@@ -192,6 +192,34 @@ TELEGRAM_CHAT_ID = ''
 # SUPABASE CREDENTIALS
 SUPABASE_URI = os.environ.get("SUPABASE_URI", "").strip()
 
+# Direct fallback to local .streamlit/secrets.toml using tomllib
+try:
+    import tomllib
+    _sec_file = os.path.join(BASE_DIR, ".streamlit", "secrets.toml")
+    if os.path.exists(_sec_file):
+        with open(_sec_file, "rb") as _f:
+            _local_sec = tomllib.load(_f)
+            if not ANGEL_API_KEY and "ANGEL_API_KEY" in _local_sec:
+                ANGEL_API_KEY = str(_local_sec["ANGEL_API_KEY"])
+            if not ANGEL_CLIENT_ID and "ANGEL_CLIENT_ID" in _local_sec:
+                ANGEL_CLIENT_ID = str(_local_sec["ANGEL_CLIENT_ID"])
+            if not ANGEL_PASSWORD and "ANGEL_PASSWORD" in _local_sec:
+                ANGEL_PASSWORD = str(_local_sec["ANGEL_PASSWORD"])
+            if not ANGEL_TOTP_SECRET and "ANGEL_TOTP_SECRET" in _local_sec:
+                ANGEL_TOTP_SECRET = str(_local_sec["ANGEL_TOTP_SECRET"])
+            if not NVIDIA_API_KEY and "NVIDIA_API_KEY" in _local_sec:
+                NVIDIA_API_KEY = str(_local_sec["NVIDIA_API_KEY"])
+            if not TELEGRAM_TOKEN and "TELEGRAM_TOKEN" in _local_sec:
+                TELEGRAM_TOKEN = str(_local_sec["TELEGRAM_TOKEN"])
+            if not TELEGRAM_CHAT_ID and "TELEGRAM_CHAT_ID" in _local_sec:
+                TELEGRAM_CHAT_ID = str(_local_sec["TELEGRAM_CHAT_ID"])
+            if not SUPABASE_URI and "SUPABASE_URI" in _local_sec:
+                SUPABASE_URI = str(_local_sec["SUPABASE_URI"]).strip()
+            if not GEMINI_API_KEY and "GEMINI_API_KEY" in _local_sec:
+                GEMINI_API_KEY = str(_local_sec["GEMINI_API_KEY"]).strip()
+except Exception:
+    pass
+
 # Fallback to Streamlit Secrets
 try:
     import streamlit as _st
